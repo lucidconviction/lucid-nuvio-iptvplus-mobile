@@ -10,8 +10,11 @@ import com.nuvio.app.features.player.skip.segmentCategory
  * the segment label itself (with an optional number suffix) are matched, to avoid
  * false positives on scene-named chapters like "The Opening" or "Alternate Ending".
  *
- * Matched types: OP/Opening, ED/Ending/Credits, Recap/Previously, Intro, Post-Credits.
+ * Matched types: OP/Opening, ED/Ending/Credits, Recap/Previously, Intro.
  * "Intro" is promoted to opening only when no dedicated OP/Opening chapter exists.
+ *
+ * Titles containing "post-credits", "mid-credits", or "after-credits" are classified
+ * but excluded from skip intervals, so a post-credits scene is never skipped.
  */
 internal object ChapterSkipIntervals {
 
@@ -59,12 +62,15 @@ internal object ChapterSkipIntervals {
         }
 
         return resolved.mapNotNull { c ->
-            val skipType = c.type?.skipIntervalType ?: return@mapNotNull null
+            val type = c.type ?: return@mapNotNull null
+            // Post-credits scenes are classified but are content, not a skip target.
+            if (type == ChapterType.POST_CREDITS) return@mapNotNull null
+            val skipType = type.skipIntervalType
             val startSec = c.chapter.startMs / 1000.0
             val endSec = c.endMs / 1000.0
             val duration = endSec - startSec
             if (duration < MIN_DURATION_SEC) return@mapNotNull null
-            if (c.type != ChapterType.POST_CREDITS && duration > MAX_DURATION_SEC) return@mapNotNull null
+            if (duration > MAX_DURATION_SEC) return@mapNotNull null
             SkipInterval(
                 startTime = startSec,
                 endTime = endSec,
