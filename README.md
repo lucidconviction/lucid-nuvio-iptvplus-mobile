@@ -174,7 +174,7 @@ This project builds on the work of:
 
 - **[NuvioMedia / Nuvio Mobile](https://github.com/NuvioMedia/NuvioMobile)** — the upstream Nuvio client.
 - **[Nuvio + IPTV](https://github.com/homelessbrian/NuvioPlusIPTV)** and **[Nuvio + IPTV Mobile](https://github.com/homelessbrian/NuvioPlusIPTV-Mobile)** — Live TV, Sports, On Demand and the IPTV foundations.
-- **[Nuvio One](https://github.com/zoga2o3-ops/Nuvio-One)** — inspiration for bringing IPTV, YouTube and music together.
+- **[Nuvio One](https://github.com/zoga2o3-ops/Nuvio-One)** — inspiration for bringing IPTV and YouTube together.
 - **[ghbarker / NuvioMobile-IPTV](https://github.com/ghbarker/NuvioMobile-IPTV)** — the original IPTV port of Nuvio Mobile.
 
 Thank you to every developer, tester and contributor in those projects. This fork is unofficial and is **not affiliated with or endorsed by NuvioMedia**. Please report issues with this fork here, not to the upstream teams.
