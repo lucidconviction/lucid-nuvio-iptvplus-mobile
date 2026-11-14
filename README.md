@@ -124,7 +124,7 @@
 - Multiple profiles with their own library, progress and settings.
 - Trakt, Simkl and MDBList integrations.
 - Scrobble playback and sync watch progress, libraries and lists across devices.
-- Optional Nuvio account sync for library, progress, add-ons and plugins.
+- Optional Nuvio account (Nuvio Sync) for watch progress across devices.
 - Episode release alerts for saved shows.
 - Parental controls and PIN-locked profiles.
 
