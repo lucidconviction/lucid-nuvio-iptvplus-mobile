@@ -2,7 +2,7 @@
 
 # Lucid Nuvio IPTV+ Mobile
 
-**Live TV, sports, movies, series and YouTube — in one Android app.**
+**Live TV, Lucid TV, sports, movies, series, YouTube and a built-in web browser — in one Android app.**
 
 [![Latest release](https://img.shields.io/github/v/release/lucidconviction/lucid-nuvio-iptvplus-mobile?style=for-the-badge)](https://github.com/lucidconviction/lucid-nuvio-iptvplus-mobile/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge)](LICENSE)
@@ -18,11 +18,13 @@
 
 <div align="center">
 
-| Live TV | Sports | YouTube |
+| Live TV | Lucid TV | Web-Apps |
 |:---:|:---:|:---:|
-| <img src="screenshots/live-tv.jpg" width="240" alt="Live TV and channel groups"> | <img src="screenshots/sports.jpg" width="240" alt="Sports scores and live events"> | <img src="screenshots/youtube.jpg" width="240" alt="YouTube search and videos"> |
-| **Player** | **Video info** | |
-| <img src="screenshots/player.jpg" width="240" alt="Player with Info, More Videos and Comments"> | <img src="screenshots/youtube-info.jpg" width="240" alt="Video details panel"> | |
+| <img src="screenshots/live-tv.jpg" width="220" alt="Live TV channels, groups and quick channels"> | <img src="screenshots/lucid-tv.jpg" width="220" alt="Lucid TV guide with episode EPG"> | <img src="screenshots/web-apps.jpg" width="220" alt="Saved Web-Apps with page screenshots"> |
+| **Video detection** | **Browser playback** | **Sports** |
+| <img src="screenshots/video-detection.jpg" width="220" alt="Detected videos ranked by duration and resolution"> | <img src="screenshots/browser-player.jpg" width="300" alt="HLS video playing inside the browser"> | <img src="screenshots/sports.jpg" width="220" alt="Live scores, schedules and league tables"> |
+| **YouTube** | **Player** | **Video info** |
+| <img src="screenshots/youtube.jpg" width="220" alt="YouTube search and videos"> | <img src="screenshots/player.jpg" width="220" alt="Player with gestures and controls"> | <img src="screenshots/youtube-info.jpg" width="220" alt="Video details panel"> |
 
 </div>
 
@@ -30,7 +32,7 @@
 
 ## ✨ Features
 
-### 📺 Live TV your way
+### 📺 Live TV and DVR
 - A full TV guide with channels, now/next programmes and a live time line.
 - Multiple M3U playlists and XMLTV guides, merged into one guide.
 - Xtream logins, including your provider's movies and series.
@@ -41,41 +43,97 @@
 - Top 10 and “Because you watched” rows on Home when a matching catalog is available.
 - Catalogs marked as adult are hidden from Home by default.
 - Channels access for every Live TV source, including catch-up and recordings.
-- Multi-view for watching more than one channel at once.
-- **Lucid TV:** virtual channels built from add-on catalogs, series marathons and playlist
-  relays, with a generated guide, join-in-progress playback, HTTP-first tuning, optional debrid
-  and next-2 prefetch.
-- **Web-Apps:** a built-in browser for saved streaming sites, with screenshot preview cards,
-  popup blocking, userscripts, adblock, HLS support and one-tap playback of detected videos in
-  Nuvio's player.
+- **Multi-view** for watching more than one channel at once.
+- Parental controls for locked groups and adult content.
+
+### 🎬 Lucid TV
+- Virtual channels built from add-on catalogs, series marathons, playlist relays and hand-picked collections.
+- A Lucid TV studio for creating, editing, reordering and deleting channels.
+- Series catalogs expand into real episodes with titles, season/episode numbers and runtimes.
+- Generated guide with join-in-progress playback.
+- Smart pools: genre, year, rating, keyword filters, shuffle, release order and air order.
+- HTTP-first tuning, optional debrid, cached winners and next-two prefetch.
+- Plays movies, series and existing Live TV channels as 24/7 channels.
+- Cached pools repair automatically after upgrades.
+
+### 🌐 Web-Apps and browser
+- A Web-Apps tab for saved streaming sites, with wide browser-style cards.
+- Each card starts with a site preview and is replaced by a real local screenshot after the first visit.
+- Favicon, title and site URL over the top of each card.
+- Add, edit and delete saved sites; sessions, cookies and settings persist.
+- Android WebView with the stock user agent by default (Cloudflare-friendly) and an optional desktop mode.
+- App navigation bar hides while browsing; the page keeps a bottom margin above the system navigation bar.
+- **uBlock-style ad blocking:** hosts lists, curated uBO network rules and optional EasyList, EasyPrivacy and uBlock Origin filter lists.
+- Media, top-level pages, Cloudflare challenge traffic, framework CDNs, the site's own scripts and XHR requests, and player frames are protected from broad filter rules.
+- **Redirect and popup protection:** cross-site main-frame redirects and popups ask **Allow once / Always allow / Block always / Cancel** instead of silently breaking the page.
+- Editable allow list for links and popups, plus per-site quick actions in the browser menu.
+- Userscripts with Tampermonkey-style `@match` / `@include` / `@exclude` / `@run-at` and a GM_* shim.
+- **Scan for videos** with a ranked detected-video picker, external-browser escape hatch and per-site adblock disable.
+- **Play in Nuvio's player** with Referer, Origin, User-Agent, Cookie and custom `X-*`/`Authorization` headers.
+- **Play in browser** for HLS through hls.js, direct files through a native video wrapper, and blob/MSE sources in the WebView.
+- WebView renderer recovery: if Android kills the renderer, the browser rebuilds it instead of leaving a dead page.
+
+### 🎞️ Movies, series and more
+- On Demand with categories, search, sorting and quality tags.
+- Stremio add-ons for catalogs, metadata and streams.
+- Plugin repositories and external stream providers.
+- Jellyfin and Emby media servers for browsing and playing your own library.
+- Debrid: Real-Debrid, Premiumize and TorBox with cached checks, file selection and direct playback.
+- P2P/torrent playback support and configurable stream selection.
+- Trailers, Continue Watching, Library, watch progress and collections.
+- Subtitles, audio tracks, playback speed, aspect ratio and next-episode autoplay.
+- Offline downloads with pause/resume and process-death recovery.
+- Title-based search and filters for quality, source and language.
 
 ### 🏆 Sports
 - Scores, schedules and which of your channels are showing each game.
 - Follow teams and leagues, with reminders and scoring alerts.
 - A Replays tab with highlights and event videos.
 - Pre-event and post-event videos on every game page.
+- League tables and team cards.
+- Live game cards with channels, scores and status.
 
 ### ▶️ YouTube
 - Home, Subscriptions, History, Playlists, Channels, Live, Music, Gaming, News, Sports and Shorts.
 - Search and play videos in the app's own player.
 - Info, More Videos and Comments panels on the player.
-- Last/Next video, Subscribe, Like/Dislike, Quality, and Watch later buttons, with playlists you
-  create in the app.
+- Last/Next video, Subscribe, Like/Dislike, Quality and Watch Later buttons, with playlists you create in the app.
 - Resume playback, and progress reported to your YouTube account as well as kept on the device.
 - Auto-play the next video when one finishes.
 - YouTube videos in Continue Watching.
 
-### 🎞️ Player
+### 🎥 Player
+- Media3/ExoPlayer playback for HLS, MP4, MKV and other common formats.
+- Gesture controls, subtitles, audio tracks, playback speed, aspect ratio and stream info.
+- In-app picture-in-picture and Multi-view.
 - Chapter markers, a chapter list and a Titles on/off toggle.
-- Startup progress steps while the app is loading.
-- Gesture controls, subtitles, in-app PiP and Multi-view.
+- Skip intro, recap and outro segments; post-credits scenes are never skipped.
+- Next-episode countdown with autoplay.
+- Startup progress steps while a stream is loading.
+- Sleep timer, backup streams, stream reload and playback diagnostics.
+- External player handoff.
 
-### 🎬 Movies, series and more
-- On Demand with categories, search, sorting and quality tags.
-- Addons, Library, Continue Watching and watch progress.
+### 👥 Watch party
+- Create or join a party with a short code.
+- Up to three seats with host controls.
+- Synced playback with member drift shown.
+- Party chat with delivery status.
+- Works with movies, series and Live TV.
+
+### 🔄 Tracking, sync and profiles
+- Multiple profiles with their own library, progress and settings.
 - Trakt, Simkl and MDBList integrations.
-- Subtitles, parental controls and multiple profiles.
-- A player that follows your device orientation, with in-app PiP and gesture controls.
+- Scrobble playback and sync watch progress, libraries and lists across devices.
+- Optional Nuvio account sync for library, progress, add-ons and plugins.
+- Episode release alerts for saved shows.
+- Parental controls and PIN-locked profiles.
+
+### 🎛️ Make it yours
+- Themes, accent colours, poster customization and multiple Home layouts.
+- Choose which Home rows appear and how Continue Watching looks.
+- Playback settings for player, stream selection, up next, skip segments, audio, subtitles, video, buffer and P2P.
+- Notification settings and per-profile add-on management.
+- Built-in updater: check for and install new releases from **Settings → About**.
 
 ---
 
@@ -83,11 +141,12 @@
 
 1. Open the [latest release](https://github.com/lucidconviction/lucid-nuvio-iptvplus-mobile/releases/latest).
 2. Download the APK for your device:
+   - **universal** — works on any device, largest download
    - **arm64-v8a** — most modern phones and tablets
    - **armeabi-v7a** — older 32-bit devices
-   - **x86_64** — emulators and x86 devices
+   - **x86_64 / x86** — emulators and x86 devices
 3. Open the downloaded APK and allow installs from your browser or file manager if Android asks.
-4. Launch **Lucid Nuvio IPTV+ Mobile** and add your own playlist or provider.
+4. Launch **Lucid Nuvio IPTV+ Mobile** and add your own playlist, provider or add-on.
 
 **Requirements:** Android 7.0 or newer.
 
