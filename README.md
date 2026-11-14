@@ -83,7 +83,7 @@
 - Trailers, Continue Watching, Library, watch progress and collections.
 - Subtitles, audio tracks, playback speed, aspect ratio and next-episode autoplay.
 - Offline downloads with pause/resume and process-death recovery.
-- Title-based search and filters for quality, source and language.
+- Provider filters for stream results, with quality and source badges.
 
 ### 🏆 Sports
 - Scores, schedules and which of your channels are showing each game.
@@ -118,7 +118,7 @@
 - Up to three seats with host controls.
 - Synced playback with member drift shown.
 - Party chat with delivery status.
-- Works with movies, series and Live TV.
+- Works with the regular player.
 
 ### 🔄 Tracking, sync and profiles
 - Multiple profiles with their own library, progress and settings.
