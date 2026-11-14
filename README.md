@@ -21,10 +21,10 @@
 | Live TV | Lucid TV | Web-Apps |
 |:---:|:---:|:---:|
 | <img src="screenshots/live-tv.jpg" width="220" alt="Live TV channels, groups and quick channels"> | <img src="screenshots/lucid-tv.jpg" width="220" alt="Lucid TV guide with episode EPG"> | <img src="screenshots/web-apps.jpg" width="220" alt="Saved Web-Apps with page screenshots"> |
-| **Video detection** | **Browser playback** | **Sports** |
-| <img src="screenshots/video-detection.jpg" width="220" alt="Detected videos ranked by duration and resolution"> | <img src="screenshots/browser-player.jpg" width="300" alt="HLS video playing inside the browser"> | <img src="screenshots/sports.jpg" width="220" alt="Live scores, schedules and league tables"> |
-| **YouTube** | **Player** | **Video info** |
-| <img src="screenshots/youtube.jpg" width="220" alt="YouTube search and videos"> | <img src="screenshots/player.jpg" width="220" alt="Player with gestures and controls"> | <img src="screenshots/youtube-info.jpg" width="220" alt="Video details panel"> |
+| **Discover** | **Sports** | **YouTube** |
+| <img src="screenshots/discover.jpg" width="220" alt="Discover movies with posters, filters and catalogs"> | <img src="screenshots/sports.jpg" width="220" alt="Live scores, schedules and league tables"> | <img src="screenshots/youtube.jpg" width="220" alt="YouTube search and videos"> |
+| **Video detection** | **Browser playback** | **Player** |
+| <img src="screenshots/video-detection.jpg" width="220" alt="Detected videos ranked by duration and resolution"> | <img src="screenshots/browser-player.jpg" width="300" alt="HLS video playing inside the browser"> | <img src="screenshots/player.jpg" width="220" alt="Player with gestures and controls"> |
 
 </div>
 
