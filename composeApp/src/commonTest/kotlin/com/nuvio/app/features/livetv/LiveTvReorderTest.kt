@@ -4,6 +4,7 @@ import com.nuvio.app.features.livetv.data.LiveTvCodec
 import com.nuvio.app.features.livetv.data.LiveTvKeys
 import com.nuvio.app.features.livetv.data.LiveTvPreferencesStore
 import com.nuvio.app.features.livetv.data.PrefValue
+import com.nuvio.app.features.livetv.model.ChannelGroup
 import com.nuvio.app.features.livetv.model.LiveChannel
 import com.nuvio.app.features.livetv.model.LiveTvSettings
 import com.nuvio.app.features.livetv.ui.LiveTvViewState
@@ -78,7 +79,9 @@ class LiveTvReorderTest {
         store.setChannelHidden("b", true)
         store.setGroupOrder(listOf("Sports", "News"))
         val state = LiveTvViewState.build(channels, store.currentUserState(), store.currentSettings(), hasSources = true)
-        assertEquals(listOf("Sports", "News"), state.sections.map { it.group.id })
+        // "All Groups" is a fixed special section above the saved group order.
+        assertEquals(ChannelGroup.ALL, state.sections.first().group.id)
+        assertEquals(listOf("Sports", "News"), state.sections.filterNot { it.group.special }.map { it.group.id })
         assertEquals(listOf("c", "a"), state.sections.first { it.group.id == "News" }.channels.map { it.key })
         // Channels never placed follow the placed ones, in the sort order.
         val unhidden = LiveTvViewState.build(channels, store.currentUserState().copy(hiddenChannels = emptySet()), LiveTvSettings(groupSort = "custom"), hasSources = true)

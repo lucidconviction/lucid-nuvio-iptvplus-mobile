@@ -19,7 +19,9 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34, 36])
+// SDK 36 requires a Java 21 test JVM; this project builds and tests on Java 17.
+// Keep a second SDK in the matrix by using 35, which Java 17 supports.
+@Config(sdk = [34, 35])
 class AndroidDownloadLifecycleTest {
     @get:Rule val temporary = TemporaryFolder()
 
