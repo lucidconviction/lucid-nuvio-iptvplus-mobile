@@ -309,7 +309,6 @@ object PlayerStreamsRepository {
             val pluginFirstErrorByAddonId = mutableMapOf<String, String>()
             val totalTasks = streamAddons.size + pluginProviderGroups.sumOf { it.scrapers.size } + serverSources.size
             val completions = Channel<StreamLoadCompletion>(capacity = Channel.BUFFERED)
-            val debridAvailabilityJobs = mutableListOf<Job>()
 
             fun publishCompletion(completion: StreamLoadCompletion) {
                 if (completions.trySend(completion).isFailure) {
@@ -347,34 +346,9 @@ object PlayerStreamsRepository {
             }
 
             fun publishStreamGroupAfterCacheCheck(group: AddonStreamGroup) {
-                if (group.addonId !in installedAddonIds || group.streams.isEmpty()) {
-                    publishStreamGroup(presentStreamGroup(group))
-                    return
-                }
-
-                val eligibleGroupIds = setOf(group.addonId)
-                val shouldWaitForCacheCheck = LocalDebridAvailabilityService.hasPendingCacheCheck(
-                    groups = listOf(group),
-                    eligibleGroupIds = eligibleGroupIds,
-                )
-                if (!shouldWaitForCacheCheck) {
-                    publishStreamGroup(presentStreamGroup(group))
-                    return
-                }
-
-                val checkingGroup = LocalDebridAvailabilityService.markChecking(
-                    groups = listOf(group),
-                    eligibleGroupIds = eligibleGroupIds,
-                ).firstOrNull() ?: group
-
-                val availabilityJob = launch {
-                    val availabilityGroup = LocalDebridAvailabilityService.annotateCachedAvailability(
-                        groups = listOf(checkingGroup),
-                        eligibleGroupIds = eligibleGroupIds,
-                    ).firstOrNull() ?: checkingGroup
-                    publishStreamGroup(presentStreamGroup(availabilityGroup))
-                }
-                debridAvailabilityJobs += availabilityJob
+                // Publish immediately so the panel is never held for a cache lookup. The single
+                // batch below stamps the badges after every source has reported.
+                publishStreamGroup(presentStreamGroup(group))
             }
 
             streamAddons.forEach { addon ->
@@ -509,8 +483,15 @@ object PlayerStreamsRepository {
                 }
             }
 
-            for (availabilityJob in debridAvailabilityJobs) {
-                availabilityJob.join()
+            // One cache check for the whole search, shared by every group. A previous screen's
+            // search reuses the short-lived hash cache, so opening the panel does not re-ask.
+            val groupsForCache = stateFlow.value.groups
+                .filter { it.addonId in installedAddonIds && it.streams.isNotEmpty() }
+            if (LocalDebridAvailabilityService.hasPendingCacheCheck(groupsForCache, installedAddonIds)) {
+                LocalDebridAvailabilityService.annotateCachedAvailability(
+                    groups = groupsForCache,
+                    eligibleGroupIds = installedAddonIds,
+                ).forEach { group -> publishStreamGroup(presentStreamGroup(group)) }
             }
             launch {
                 DirectDebridStreamPreparer.prepare(
