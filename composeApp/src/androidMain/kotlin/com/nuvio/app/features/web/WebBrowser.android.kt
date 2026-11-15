@@ -87,6 +87,9 @@ private val TWO_LEVEL_PUBLIC_SUFFIXES = setOf(
 
 internal fun registrableDomain(host: String): String {
     val clean = host.trim().trimEnd('.').lowercase()
+    // IP literals have no registrable domain; comparing their last labels would treat
+    // unrelated addresses as the same site.
+    if (clean.contains(':') || clean.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))) return clean
     val parts = clean.split('.').filter { it.isNotBlank() }
     if (parts.size <= 2) return clean
     val lastTwo = parts.takeLast(2).joinToString(".")
