@@ -262,7 +262,9 @@ object VirtualChannelCodec {
 
     fun encodePlaybackSettings(settings: VirtualPlaybackSettings): String = buildJsonObject {
         put("allowDebrid", settings.allowDebrid)
-        put("preferDebrid", settings.preferDebrid)
+        put("sourceOrder", settings.sourceOrder.name)
+        // Older builds read this flag; keep it in sync for forward/backward compatibility.
+        put("preferDebrid", settings.sourceOrder == VirtualSourceOrder.DEBRID_TORRENT_HTTP)
         put("prefetchNext", settings.prefetchNext)
     }.toString()
 
@@ -270,9 +272,16 @@ object VirtualChannelCodec {
         if (raw.isNullOrBlank()) return VirtualPlaybackSettings()
         return runCatching {
             val o = parseObject(raw)
+            val sourceOrder = o.optString("sourceOrder").let { value ->
+                enumValues<VirtualSourceOrder>().firstOrNull { it.name.equals(value, ignoreCase = true) }
+            } ?: if (o.optBoolean("preferDebrid", true)) {
+                VirtualSourceOrder.DEBRID_TORRENT_HTTP
+            } else {
+                VirtualSourceOrder.HTTP_FIRST
+            }
             VirtualPlaybackSettings(
                 allowDebrid = o.optBoolean("allowDebrid", true),
-                preferDebrid = o.optBoolean("preferDebrid", true),
+                sourceOrder = sourceOrder,
                 prefetchNext = o.optInt("prefetchNext", 2)
                     .coerceIn(VirtualPlaybackSettings.MIN_PREFETCH, VirtualPlaybackSettings.MAX_PREFETCH),
             )

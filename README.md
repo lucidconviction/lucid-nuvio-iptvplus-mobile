@@ -54,7 +54,7 @@
 - Generated guide on each item's real runtime, so now/next and the stream stay on one clock.
 - Join-in-progress playback, dead-item skipping and automatic advance when a film ends early.
 - Smart pools: genre, year, rating, keyword filters, shuffle, release order and air order.
-- Direct HTTP first, then debrid/cached torrents, then the built-in P2P engine when it is enabled.
+- Manual picks win when present; otherwise cached debrid → torrent P2P → direct HTTP.
 - Cached winners, next-two prefetch and cached pools that repair automatically after upgrades.
 
 ### 🌐 Web-Apps and browser

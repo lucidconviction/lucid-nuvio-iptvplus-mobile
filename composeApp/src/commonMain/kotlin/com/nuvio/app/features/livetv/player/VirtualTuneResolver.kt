@@ -13,12 +13,14 @@ import com.nuvio.app.features.livetv.virtual.VirtualChannelRepository
 import com.nuvio.app.features.livetv.virtual.VirtualPlaybackSettings
 import com.nuvio.app.features.livetv.virtual.VirtualTune
 import com.nuvio.app.features.livetv.virtual.VirtualChannels
+import com.nuvio.app.features.livetv.virtual.VirtualSourceOrder
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
 import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
 import com.nuvio.app.features.servers.ServerPlayback
 import com.nuvio.app.features.streams.StreamBehaviorHints
+import com.nuvio.app.features.streams.StreamDebridCacheState
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.streams.StreamProxyHeaders
@@ -307,17 +309,10 @@ internal object VirtualTuneResolver {
         return result
     }
 
-    private data class Candidate(
-        val stream: StreamItem,
-        val priority: Int,
-        val debrid: Boolean,
-    )
-
     /**
-     * Resolves a small set of sources in parallel, the way the TV player does. Direct links,
-     * server sources and debrid resolutions all start together; the source order setting decides
-     * which result is allowed to win, and a short grace period keeps a fast direct link from
-     * beating a debrid source that is about to resolve.
+     * Resolves a small set of sources in parallel and returns the first playable one. Lucid TV's
+     * default order is manual/debrid cache → torrent P2P → HTTP; each stage only starts when the
+     * previous one has nothing playable.
      */
     private suspend fun resolveCandidates(
         tune: VirtualTune,
@@ -327,10 +322,11 @@ internal object VirtualTuneResolver {
     ): StreamResult {
         if (candidates.isEmpty()) return failureForEmptyCandidates(tune, settings)
         val deadline = epochMs() + remainingBudgetMs.coerceAtLeast(2_000L)
-        fun remaining(): Long = (deadline - epochMs()).coerceAtLeast(500L)
 
         DebridSettingsRepository.ensureLoaded()
         P2pSettingsRepository.ensureLoaded()
+
+        val directDebridLinks = candidates.filter { it.isDirectDebridStream && it.playableDirectUrl != null }
         val debridCandidates = if (settings.allowDebrid) {
             candidates
                 .filter { DirectDebridPlaybackResolver.shouldResolveToPlayableStream(it) }
@@ -348,58 +344,96 @@ internal object VirtualTuneResolver {
             .filter { it.playableDirectUrl == null && it.youTubeIdToResolve != null }
             .distinctBy { it.preparationIdentity() }
 
-        val plans = buildList {
-            // Priority 0 wins first; 1 is direct/server; 2 is fallback debrid.
-            if (settings.preferDebrid) {
-                debridCandidates.forEach { add(Candidate(it, 0, debrid = true)) }
-                directCandidates.forEach { add(Candidate(it, 1, debrid = false)) }
-            } else {
-                directCandidates.forEach { add(Candidate(it, 0, debrid = false)) }
-                debridCandidates.forEach { add(Candidate(it, 2, debrid = true)) }
-            }
-            serverCandidates.forEach { add(Candidate(it, 1, debrid = false)) }
-            youTubeCandidates.forEach { add(Candidate(it, 1, debrid = false)) }
-        }.distinctBy { it.stream.preparationIdentity() }.take(MAX_PARALLEL_SOURCES)
-
-        val p2pFallback = if (AppFeaturePolicy.p2pEnabled) {
-            candidates.firstOrNull { it.p2pInfoHash != null && it.playableDirectUrl == null }
-        } else {
-            null
-        }
-
-        if (plans.isEmpty()) {
-            p2pFallback?.let { return StreamResult(it) }
+        if (settings.sourceOrder == VirtualSourceOrder.HTTP_FIRST) {
+            val http = resolveOneOf(
+                directCandidates + serverCandidates + youTubeCandidates,
+                tune,
+                deadline,
+            )
+            if (http != null) return StreamResult(http)
+            val debrid = resolveOneOf(debridCandidates, tune, deadline)
+            if (debrid != null) return StreamResult(debrid)
+            p2pCandidate(candidates) { P2pSettingsRepository.uiState.value.p2pEnabled }
+                ?.let { return StreamResult(it) }
             return failureForCandidates(tune, settings, candidates)
         }
 
-        val results = kotlinx.coroutines.channels.Channel<Pair<Int, StreamItem>>(
+        // 1. A cached debrid link that is already an HTTP URL.
+        directDebridLinks.firstOrNull()?.let { return StreamResult(it) }
+
+        // 2. Cached debrid streams. Their cache check / link lookup should be quick, so don't
+        //    hold the channel while an uncached or slow provider responds.
+        val cachedDebrid = debridCandidates.filter { stream ->
+            stream.isDirectDebridStream || stream.debridCacheStatus?.state == StreamDebridCacheState.CACHED
+        }
+        if (settings.allowDebrid && cachedDebrid.isNotEmpty()) {
+            val cacheDeadline = minOf(deadline, epochMs() + DEBRID_CACHE_GRACE_MS)
+            resolveOneOf(cachedDebrid, tune, cacheDeadline)?.let { return StreamResult(it) }
+        }
+
+        // 3. Torrent P2P, but only when the viewer has P2P turned on. If it is off, a direct
+        //    HTTP source is better than surprising them with the consent dialog on every zap.
+        p2pCandidate(candidates) { P2pSettingsRepository.uiState.value.p2pEnabled }
+            ?.let { return StreamResult(it) }
+
+        // 4. Direct HTTP, server-hosted and YouTube-only sources.
+        resolveOneOf(
+            directCandidates + serverCandidates + youTubeCandidates,
+            tune,
+            deadline,
+        )?.let { return StreamResult(it) }
+
+        // 5. Debrid streams whose cache status was unknown, as a last resort before failing.
+        if (settings.allowDebrid) {
+            val uncached = debridCandidates.filterNot { stream ->
+                stream.isDirectDebridStream || stream.debridCacheStatus?.state == StreamDebridCacheState.CACHED
+            }
+            resolveOneOf(uncached, tune, deadline)?.let { return StreamResult(it) }
+        }
+
+        p2pCandidate(candidates) { AppFeaturePolicy.p2pEnabled }
+            ?.let { return StreamResult(it) }
+        return failureForCandidates(tune, settings, candidates)
+    }
+
+    /** The first torrent that has no direct URL and is not a debrid resolve target. */
+    private fun p2pCandidate(
+        candidates: List<StreamItem>,
+        enabled: () -> Boolean,
+    ): StreamItem? {
+        if (!AppFeaturePolicy.p2pEnabled || !enabled()) return null
+        return candidates.firstOrNull {
+            it.p2pInfoHash != null && it.playableDirectUrl == null && !it.isDirectDebridStream
+        }
+    }
+
+    /** Resolves a set of candidates concurrently and returns the first playable result. */
+    private suspend fun resolveOneOf(
+        streams: List<StreamItem>,
+        tune: VirtualTune,
+        deadlineMs: Long,
+    ): StreamItem? {
+        val unique = streams.distinctBy { it.preparationIdentity() }.take(MAX_PARALLEL_SOURCES)
+        if (unique.isEmpty()) return null
+        val results = kotlinx.coroutines.channels.Channel<StreamItem>(
             kotlinx.coroutines.channels.Channel.UNLIMITED,
         )
-        val jobs = plans.map { plan ->
+        val jobs = unique.map { stream ->
             scope.async {
-                val resolved = resolveCandidate(plan.stream, tune, remaining())
-                if (resolved != null) results.send(plan.priority to resolved)
+                val resolved = resolveCandidate(
+                    stream = stream,
+                    tune = tune,
+                    remainingMs = (deadlineMs - epochMs()).coerceAtLeast(500L),
+                )
+                if (resolved != null) results.send(resolved)
             }
         }
-        val graceMs = if (settings.preferDebrid && plans.any { it.priority == 0 }) 1_500L else 250L
-        var chosen = withTimeoutOrNull(graceMs.coerceAtMost(remaining())) { results.receive() }
-        if (chosen == null) {
-            chosen = withTimeoutOrNull(remaining()) { results.receive() }
-        }
-        // A fast HTTP result must not hide a debrid result that was already on its way.
-        if (
-            chosen != null && settings.preferDebrid && plans.any { it.priority == 0 } &&
-            chosen!!.first > 0
-        ) {
-            val debridResult = withTimeoutOrNull(graceMs) { results.receive() }
-            if (debridResult != null && debridResult.first == 0) chosen = debridResult
+        val result = withTimeoutOrNull((deadlineMs - epochMs()).coerceAtLeast(500L)) {
+            results.receive()
         }
         jobs.forEach { it.cancel() }
         results.close()
-
-        chosen?.second?.let { return StreamResult(it) }
-        p2pFallback?.let { return StreamResult(it) }
-        return failureForCandidates(tune, settings, candidates)
+        return result
     }
 
     private suspend fun resolveCandidate(
@@ -670,6 +704,7 @@ internal object VirtualTuneResolver {
     private val BLOCKED_TTL_MS = 5L * 60_000L
     private const val MAX_PARALLEL_SOURCES = 12
     private const val MAX_DEBRID_RESOLVE_MS = 20_000L
+    private const val DEBRID_CACHE_GRACE_MS = 4_000L
     private const val MAX_ITEM_SKIPS = 2
 
     private const val OFFLINE = "This Lucid TV channel is offline right now"

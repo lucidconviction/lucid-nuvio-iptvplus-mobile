@@ -57,6 +57,7 @@ import com.nuvio.app.features.livetv.model.LiveTvClock
 import com.nuvio.app.features.livetv.ui.formatClock
 import com.nuvio.app.features.livetv.ui.liveTvSideInsets
 import com.nuvio.app.features.livetv.virtual.VirtualChannelRepository
+import com.nuvio.app.features.livetv.virtual.VirtualSourceOrder
 import com.nuvio.app.features.livetv.virtual.VirtualChannelSpec
 import com.nuvio.app.features.livetv.virtual.VirtualChannels
 import nuvio.composeapp.generated.resources.Res
@@ -335,7 +336,7 @@ fun VirtualChannelsScreen(
                         color = tokens.colors.textPrimary,
                     )
                     Text(
-                        text = "Direct HTTP is always tried first. When it isn't available, torrent/debrid sources are resolved; P2P torrents play through the app's built-in engine when it is turned on.",
+                        text = "Manual picks win when present. Otherwise Lucid TV tries a cached debrid source, then a torrent through the P2P engine, then direct HTTP.",
                         style = MaterialTheme.typography.bodySmall,
                         color = tokens.colors.textMuted,
                     )
@@ -354,22 +355,26 @@ fun VirtualChannelsScreen(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6)) {
                 Chip(
-                    label = "Debrid first",
-                    selected = playbackSettings.preferDebrid,
+                    label = "Debrid → Torrent → HTTP",
+                    selected = playbackSettings.sourceOrder == VirtualSourceOrder.DEBRID_TORRENT_HTTP,
                     onClick = {
-                        VirtualChannelRepository.updateSettings(playbackSettings.copy(preferDebrid = true))
+                        VirtualChannelRepository.updateSettings(
+                            playbackSettings.copy(sourceOrder = VirtualSourceOrder.DEBRID_TORRENT_HTTP)
+                        )
                     },
                 )
                 Chip(
                     label = "HTTP first",
-                    selected = !playbackSettings.preferDebrid,
+                    selected = playbackSettings.sourceOrder == VirtualSourceOrder.HTTP_FIRST,
                     onClick = {
-                        VirtualChannelRepository.updateSettings(playbackSettings.copy(preferDebrid = false))
+                        VirtualChannelRepository.updateSettings(
+                            playbackSettings.copy(sourceOrder = VirtualSourceOrder.HTTP_FIRST)
+                        )
                     },
                 )
             }
             Text(
-                text = "Debrid first gives debrid links a short head start, then falls back to HTTP. HTTP first starts a direct link immediately.",
+                text = "Debrid → Torrent → HTTP uses cached debrid first, then the P2P engine when it is on, and only then a direct link. HTTP first starts a direct or server link immediately.",
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.colors.textMuted,
             )

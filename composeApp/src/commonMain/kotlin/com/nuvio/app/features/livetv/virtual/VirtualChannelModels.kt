@@ -131,12 +131,21 @@ data class VirtualJoin(
     val jitter: Boolean = true,
 )
 
-/** How Lucid TV turns a channel into a stream. Direct HTTP is always tried first. */
+/** How Lucid TV orders source types while tuning a channel. */
+enum class VirtualSourceOrder {
+    /** Cached debrid, then torrent P2P, then HTTP. Manual picks always win when present. */
+    DEBRID_TORRENT_HTTP,
+
+    /** Direct HTTP and server sources first; debrid and P2P only when they fail. */
+    HTTP_FIRST,
+}
+
+/** How Lucid TV turns a channel into a stream. */
 data class VirtualPlaybackSettings(
     /** When no direct stream is available, allow debrid/torrent sources to be resolved. */
     val allowDebrid: Boolean = true,
-    /** Try debrid before HTTP. Off means HTTP first, debrid only as fallback. */
-    val preferDebrid: Boolean = true,
+    /** The source order used when a channel has more than one kind of source. */
+    val sourceOrder: VirtualSourceOrder = VirtualSourceOrder.DEBRID_TORRENT_HTTP,
     /** How many upcoming items to resolve in the background (0–4). */
     val prefetchNext: Int = 2,
 ) {

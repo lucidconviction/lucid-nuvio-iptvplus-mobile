@@ -109,6 +109,31 @@ class VirtualChannelCodecTest {
     }
 
     @Test
+    fun sourceOrderRoundTripsAndLegacyPreferDebridStillWorks() {
+        assertEquals(
+            VirtualSourceOrder.DEBRID_TORRENT_HTTP,
+            VirtualChannelCodec.decodePlaybackSettings(null).sourceOrder,
+        )
+        val encoded = VirtualChannelCodec.encodePlaybackSettings(
+            VirtualPlaybackSettings(sourceOrder = VirtualSourceOrder.HTTP_FIRST)
+        )
+        assertTrue(encoded.contains("\"sourceOrder\":\"HTTP_FIRST\""))
+        assertEquals(
+            VirtualSourceOrder.HTTP_FIRST,
+            VirtualChannelCodec.decodePlaybackSettings(encoded).sourceOrder,
+        )
+        // Settings saved by the previous build only had preferDebrid.
+        assertEquals(
+            VirtualSourceOrder.HTTP_FIRST,
+            VirtualChannelCodec.decodePlaybackSettings("""{"preferDebrid":false}""").sourceOrder,
+        )
+        assertEquals(
+            VirtualSourceOrder.DEBRID_TORRENT_HTTP,
+            VirtualChannelCodec.decodePlaybackSettings("""{"preferDebrid":true}""").sourceOrder,
+        )
+    }
+
+    @Test
     fun aPackCarriesEveryChannel() {
         val pack = VirtualChannelPack(
             schemaVersion = 1,
