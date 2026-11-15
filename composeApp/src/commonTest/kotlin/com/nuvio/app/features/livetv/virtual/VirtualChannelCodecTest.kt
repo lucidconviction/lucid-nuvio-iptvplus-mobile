@@ -101,6 +101,14 @@ class VirtualChannelCodecTest {
     }
 
     @Test
+    fun theAutomaticFlagSurvivesACodecRoundTrip() {
+        val auto = catalogSpec().copy(id = "vc_auto", name = "Cinemeta · Popular", auto = true)
+        val decoded = VirtualChannelCodec.decodeSpecs(VirtualChannelCodec.encodeSpecs(listOf(auto))).single()
+        assertTrue(decoded.auto)
+        assertTrue(!VirtualChannelCodec.decodeSpecs(VirtualChannelCodec.encodeSpecs(listOf(catalogSpec()))).single().auto)
+    }
+
+    @Test
     fun aPackCarriesEveryChannel() {
         val pack = VirtualChannelPack(
             schemaVersion = 1,

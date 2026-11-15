@@ -11,6 +11,7 @@ import com.nuvio.app.features.livetv.player.LiveTvPlayback
 import com.nuvio.app.features.livetv.player.VirtualChannelPlayback
 import com.nuvio.app.features.livetv.ui.LiveTvPlayerOverlay
 import com.nuvio.app.features.livetv.ui.LiveTvViewState
+import com.nuvio.app.features.livetv.virtual.VirtualChannelRepository
 import com.nuvio.app.features.livetv.virtual.VirtualChannels
 import kotlinx.coroutines.launch
 
@@ -172,20 +173,47 @@ internal fun PlayerScreenRuntime.RenderLiveTvChannels() {
         scope.launch { VirtualChannelPlayback.prefetchCurrent(key) }
         var prefetchedSlotStart = Long.MIN_VALUE
         while (true) {
-            kotlinx.coroutines.delay(15_000L)
             val now = LiveTvClock.nowMs()
-            val tune = com.nuvio.app.features.livetv.virtual.VirtualChannelRepository.tune(key, now) ?: continue
+            val tune = com.nuvio.app.features.livetv.virtual.VirtualChannelRepository.tune(key, now)
+            if (tune == null) {
+                kotlinx.coroutines.delay(15_000L)
+                continue
+            }
             // Resolve the next two items shortly before the slot changes.
             if (now >= tune.slotEndMs - 30_000L && tune.slotStartMs != prefetchedSlotStart) {
                 prefetchedSlotStart = tune.slotStartMs
                 scope.launch { VirtualChannelPlayback.prefetch(key, now) }
             }
-            if (now < tune.slotEndMs) continue
-            if (!playbackSnapshot.isPlaying && !playbackSnapshot.isEnded) continue
-            val channel = LiveTvViewState.list.value.visible.firstOrNull { it.key == key } ?: break
-            prefetchedSlotStart = Long.MIN_VALUE
-            switchLiveChannel(channel, tune.title)
+            if (now >= tune.slotEndMs) {
+                if (!playbackSnapshot.isPlaying && !playbackSnapshot.isEnded) {
+                    kotlinx.coroutines.delay(1_000L)
+                    continue
+                }
+                val channel = LiveTvViewState.list.value.visible.firstOrNull { it.key == key } ?: break
+                prefetchedSlotStart = Long.MIN_VALUE
+                switchLiveChannel(channel, tune.title)
+                kotlinx.coroutines.delay(1_000L)
+                continue
+            }
+            // Wake at the prefetch point or the boundary, not on a fixed 15-second tick.
+            val nextWake = when {
+                now < tune.slotEndMs - 30_000L -> tune.slotEndMs - 30_000L - now
+                else -> tune.slotEndMs - now
+            }
+            kotlinx.coroutines.delay(nextWake.coerceIn(1_000L, 15_000L))
         }
+    }
+    // A file that ends before the guide says it should (a shorter encode, or a dead source that
+    // stopped) moves the queue to the next programme instead of leaving a finished film on screen.
+    LaunchedEffect(activeVideoId, isLiveTv, playbackSnapshot.isEnded) {
+        val key = activeVideoId ?: return@LaunchedEffect
+        if (!isLiveTv || !playbackSnapshot.isEnded || !VirtualChannels.isVirtualKey(key)) return@LaunchedEffect
+        val now = LiveTvClock.nowMs()
+        val tune = VirtualChannelRepository.tune(key, now) ?: return@LaunchedEffect
+        if (tune.relay || now >= tune.slotEndMs - 2_000L) return@LaunchedEffect
+        if (!VirtualChannelRepository.advanceAfter(key, tune.item.id)) return@LaunchedEffect
+        val channel = LiveTvViewState.list.value.visible.firstOrNull { it.key == key } ?: return@LaunchedEffect
+        switchLiveChannel(channel, tune.title)
     }
     LiveTvPlayerOverlay(
         currentKey = activeVideoId,

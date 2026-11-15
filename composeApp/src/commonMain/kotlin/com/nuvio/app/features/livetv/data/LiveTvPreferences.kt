@@ -93,6 +93,8 @@ internal object LiveTvKeys {
     const val vodSearchCatalog = "vod_search_catalog"
     const val vodSearchOnDemand = "vod_search_ondemand"
     const val showAllGroup = "show_all_group"
+    const val lucidTvEnabled = "lucid_tv_enabled"
+    const val lucidAutoSeries = "lucid_auto_series"
     const val resumeInPreview = "resume_in_preview"
     const val showGroupCounts = "show_group_counts"
     const val smallHeader = "small_header"
@@ -804,6 +806,8 @@ internal open class LiveTvPreferencesStore {
             onDemandSearchCatalog = p.bool(LiveTvKeys.vodSearchCatalog) ?: d.onDemandSearchCatalog,
             onDemandSearchOnDemand = p.bool(LiveTvKeys.vodSearchOnDemand) ?: d.onDemandSearchOnDemand,
             showAllChannelsGroup = p.bool(LiveTvKeys.showAllGroup) ?: d.showAllChannelsGroup,
+            lucidTvEnabled = p.bool(LiveTvKeys.lucidTvEnabled) ?: d.lucidTvEnabled,
+            lucidAutoSeriesCatalogs = p.bool(LiveTvKeys.lucidAutoSeries) ?: d.lucidAutoSeriesCatalogs,
             resumeLastInPreview = p.bool(LiveTvKeys.resumeInPreview) ?: d.resumeLastInPreview,
             showGroupCounts = p.bool(LiveTvKeys.showGroupCounts) ?: d.showGroupCounts,
             smallHeader = p.bool(LiveTvKeys.smallHeader) ?: d.smallHeader,
@@ -1062,6 +1066,8 @@ internal open class LiveTvPreferencesStore {
         p[LiveTvKeys.vodSearchCatalog] = s.onDemandSearchCatalog
         p[LiveTvKeys.vodSearchOnDemand] = s.onDemandSearchOnDemand
         p[LiveTvKeys.showAllGroup] = s.showAllChannelsGroup
+        p[LiveTvKeys.lucidTvEnabled] = s.lucidTvEnabled
+        p[LiveTvKeys.lucidAutoSeries] = s.lucidAutoSeriesCatalogs
         p[LiveTvKeys.resumeInPreview] = s.resumeLastInPreview
         p[LiveTvKeys.showGroupCounts] = s.showGroupCounts
         p[LiveTvKeys.smallHeader] = s.smallHeader

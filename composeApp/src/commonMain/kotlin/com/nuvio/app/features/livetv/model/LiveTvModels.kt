@@ -282,6 +282,10 @@ data class LiveTvSettings(
     val onDemandSearchCatalog: Boolean = false,
     val onDemandSearchOnDemand: Boolean = true,
     val showAllChannelsGroup: Boolean = true,
+    /** Add-on movie catalogs as always-on Lucid TV channels, with their own generated guide. */
+    val lucidTvEnabled: Boolean = true,
+    /** Also turn series catalogs into automatic Lucid TV channels (one episode queue each). */
+    val lucidAutoSeriesCatalogs: Boolean = false,
     /** When Live TV opens, start the last channel in the preview window and highlight it. */
     val resumeLastInPreview: Boolean = true,
     /** Show how many channels each group has in the guide's group list. */

@@ -86,8 +86,6 @@ import nuvio.composeapp.generated.resources.lucid_tv_max_items
 import nuvio.composeapp.generated.resources.lucid_tv_name
 import nuvio.composeapp.generated.resources.lucid_tv_number
 import nuvio.composeapp.generated.resources.lucid_tv_playout
-import nuvio.composeapp.generated.resources.lucid_tv_playout_loop
-import nuvio.composeapp.generated.resources.lucid_tv_playout_rotate
 import nuvio.composeapp.generated.resources.lucid_tv_pool_count
 import nuvio.composeapp.generated.resources.lucid_tv_pool_empty
 import nuvio.composeapp.generated.resources.lucid_tv_pool_loading
@@ -291,20 +289,19 @@ fun VirtualChannelEditorScreen(
             }
             item {
                 EditorSection(title = stringResource(Res.string.lucid_tv_playout)) {
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
-                    ) {
-                        Chip(stringResource(Res.string.lucid_tv_playout_rotate), playout.mode == VirtualPlayoutMode.ROTATE, {
-                            playout = playout.copy(mode = VirtualPlayoutMode.ROTATE)
-                        })
-                        Chip(stringResource(Res.string.lucid_tv_playout_loop), playout.mode == VirtualPlayoutMode.LOOP, {
-                            playout = playout.copy(mode = VirtualPlayoutMode.LOOP)
-                        })
-                    }
+                    Text(
+                        text = "Every Lucid TV channel runs as a 24/7 queue. The guide uses each film or episode's real runtime, so the programme changes exactly when the stream ends.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                    )
                     Text(
                         text = stringResource(Res.string.lucid_tv_slot_minutes),
                         style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
+                    )
+                    Text(
+                        text = "Fallback length when an item's runtime is unknown.",
+                        style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,
                     )
                     Row(
@@ -430,7 +427,7 @@ fun VirtualChannelEditorScreen(
                     playout = playout.copy(
                         // A series catalog is expanded into episodes. Running it as a LOOP makes
                         // the guide use each episode's real runtime instead of a fixed block.
-                        mode = if (seriesCatalog) VirtualPlayoutMode.LOOP else VirtualPlayoutMode.ROTATE,
+                        mode = VirtualPlayoutMode.LOOP,
                         slotMinutes = if (seriesCatalog) 45 else 90,
                         seriesSlotMinutes = 45,
                         order = if (seriesCatalog) VirtualOrder.AIR else playout.order,

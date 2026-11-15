@@ -2374,6 +2374,7 @@
     <string name="p2p_consent_enable">Enable P2P</string>
     <string name="p2p_consent_cancel">Cancel</string>
     <string name="p2p_error_unknown">Unknown torrent error</string>
+    <string name="player_p2p_disabled">P2P is turned off. Enable P2P to play this torrent.</string>
     <string name="settings_p2p_title">P2P Streaming</string>
     <string name="settings_playback_section_p2p">P2P STREAMING</string>
     <string name="settings_p2p_subtitle">Allow peer-to-peer (torrent) streams</string>
@@ -2636,6 +2637,11 @@
     <string name="livetv_section_playlists">Playlists</string>
     <string name="livetv_section_guides">TV Guides</string>
     <string name="livetv_section_general">Updates</string>
+    <string name="livetv_lucid_tv">Lucid TV</string>
+    <string name="livetv_lucid_auto">Lucid TV channels</string>
+    <string name="livetv_lucid_auto_description">Show Lucid TV in the guide. Every installed movie catalog becomes a channel automatically; custom channels are managed in the Channel Studio.</string>
+    <string name="livetv_lucid_series">Also use series catalogs</string>
+    <string name="livetv_lucid_series_description">Series catalogs become episode queues with their real runtimes.</string>
     <string name="livetv_section_watching">Watching</string>
     <string name="livetv_section_channel_display">Channel Display</string>
     <string name="livetv_phone_logos">Channel logos</string>
@@ -2920,6 +2926,7 @@
     <string name="lucid_tv_import">Import</string>
     <string name="lucid_tv_export">Export</string>
     <string name="lucid_tv_empty">No Lucid TV channels yet. Add one from an add-on catalog or a playlist group.</string>
+    <string name="lucid_tv_empty_auto">Your add-on catalogs already appear automatically in the Lucid TV group. Add a custom channel for a marathon, a movie collection or a playlist relay.</string>
     <string name="lucid_tv_editor_title">Lucid TV channel</string>
     <string name="lucid_tv_name">Name</string>
     <string name="lucid_tv_group">Group</string>

@@ -75,6 +75,7 @@ object VirtualChannelCodec {
         put("createdAtMs", spec.createdAtMs)
         put("updatedAtMs", spec.updatedAtMs)
         put("schemaVersion", spec.schemaVersion)
+        put("auto", spec.auto)
     }
 
     fun decodeSpec(o: JsonObject): VirtualChannelSpec? {
@@ -100,6 +101,7 @@ object VirtualChannelCodec {
             createdAtMs = o.optLong("createdAtMs"),
             updatedAtMs = o.optLong("updatedAtMs"),
             schemaVersion = o.optInt("schemaVersion", VirtualChannels.SCHEMA_VERSION).coerceAtLeast(1),
+            auto = o.optBoolean("auto", false),
         )
     }
 

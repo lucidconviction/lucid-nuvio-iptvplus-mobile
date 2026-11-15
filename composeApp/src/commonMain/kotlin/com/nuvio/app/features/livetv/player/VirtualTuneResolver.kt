@@ -13,6 +13,7 @@ import com.nuvio.app.features.livetv.virtual.VirtualChannelRepository
 import com.nuvio.app.features.livetv.virtual.VirtualPlaybackSettings
 import com.nuvio.app.features.livetv.virtual.VirtualTune
 import com.nuvio.app.features.livetv.virtual.VirtualChannels
+import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
 import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
@@ -78,6 +79,8 @@ internal object VirtualTuneResolver {
         val stream: StreamItem?,
         val message: String? = null,
         val fromCache: Boolean = false,
+        /** The item can be skipped because sources existed but none could be played. */
+        val skipItem: Boolean = false,
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -103,41 +106,74 @@ internal object VirtualTuneResolver {
                 ?: return VirtualPlaybackOutcome(message = "The relay channel has no stream.")
             val launch = buildLaunch(channel, profileId, tune, stream)
                 ?: return VirtualPlaybackOutcome(message = OFFLINE)
+            VirtualChannelRepository.clearError(channel.key)
             return VirtualPlaybackOutcome(VirtualResolvedPlayback(tune, stream, launch, fromCache = true))
         }
         val settings = VirtualChannelRepository.settings.value
-        var result = withTimeoutOrNull(budgetMs) {
-            streamFor(tune, settings, budgetMs)
-        } ?: StreamResult(
-            null,
-            "This channel took too long to tune. Check your add-ons and try again.",
-        )
-        var stream = result.stream
-            ?: return VirtualPlaybackOutcome(message = result.message ?: OFFLINE)
-
-        // Resolution can take seconds. Re-align the join offset with the guide afterwards, and if
-        // the slot rolled over while we were looking up a source, use the new slot instead.
-        val fresh = VirtualChannelRepository.tune(channel.key, LiveTvClock.nowMs())
-        if (fresh != null) {
-            if (sameItem(fresh, tune)) {
-                tune = fresh
-            } else {
-                val next = withTimeoutOrNull(budgetMs.coerceAtMost(8_000L)) {
-                    streamFor(fresh, settings, 8_000L)
+        var skipped = 0
+        while (true) {
+            // A catalog can surface a series as a single item. Without an episode no stream
+            // add-on can answer, so skip it instead of asking with a half id.
+            if (tune.item.type == "series" && (tune.season == null || tune.episode == null)) {
+                if (skipped < MAX_ITEM_SKIPS &&
+                    VirtualChannelRepository.markUnplayable(channel.key, tune.item.id)
+                ) {
+                    skipped++
+                    tune = VirtualChannelRepository.tune(channel.key, LiveTvClock.nowMs())
+                        ?: return VirtualPlaybackOutcome(message = OFFLINE)
+                    continue
                 }
-                if (next?.stream != null) {
+                val message = "No playable episode was found for ${tune.item.title}."
+                VirtualChannelRepository.reportError(channel.key, message)
+                return VirtualPlaybackOutcome(message = message)
+            }
+
+            var result = withTimeoutOrNull(budgetMs) {
+                streamFor(tune, settings, budgetMs)
+            } ?: StreamResult(
+                null,
+                "This channel took too long to tune. Check your add-ons and try again.",
+            )
+            var stream = result.stream
+            if (stream == null) {
+                if (result.skipItem && skipped < MAX_ITEM_SKIPS &&
+                    VirtualChannelRepository.markUnplayable(channel.key, tune.item.id)
+                ) {
+                    skipped++
+                    tune = VirtualChannelRepository.tune(channel.key, LiveTvClock.nowMs())
+                        ?: return VirtualPlaybackOutcome(message = OFFLINE)
+                    continue
+                }
+                val message = result.message ?: OFFLINE
+                VirtualChannelRepository.reportError(channel.key, message)
+                return VirtualPlaybackOutcome(message = message)
+            }
+
+            // Resolution can take seconds. Re-align the join offset with the guide afterwards, and if
+            // the slot rolled over while we were looking up a source, use the new slot instead.
+            val fresh = VirtualChannelRepository.tune(channel.key, LiveTvClock.nowMs())
+            if (fresh != null) {
+                if (sameItem(fresh, tune)) {
                     tune = fresh
-                    result = next
-                    stream = next.stream
+                } else {
+                    val next = withTimeoutOrNull(budgetMs.coerceAtMost(8_000L)) {
+                        streamFor(fresh, settings, 8_000L)
+                    }
+                    if (next?.stream != null) {
+                        tune = fresh
+                        result = next
+                        stream = next.stream
+                    }
                 }
             }
-        }
 
-        val launch = buildLaunch(channel, profileId, tune, stream)
-            ?: return VirtualPlaybackOutcome(message = OFFLINE)
-        return VirtualPlaybackOutcome(
-            VirtualResolvedPlayback(tune, stream, launch, fromCache = result.fromCache),
-        )
+            val launch = buildLaunch(channel, profileId, tune, stream)
+                ?: return VirtualPlaybackOutcome(message = OFFLINE)
+            VirtualChannelRepository.clearError(channel.key)
+            return VirtualPlaybackOutcome(
+                VirtualResolvedPlayback(tune, stream, launch, fromCache = result.fromCache),
+            )
+        }
     }
 
     private fun sameItem(a: VirtualTune, b: VirtualTune): Boolean =
@@ -294,6 +330,7 @@ internal object VirtualTuneResolver {
         fun remaining(): Long = (deadline - epochMs()).coerceAtLeast(500L)
 
         DebridSettingsRepository.ensureLoaded()
+        P2pSettingsRepository.ensureLoaded()
         val debridCandidates = if (settings.allowDebrid) {
             candidates
                 .filter { DirectDebridPlaybackResolver.shouldResolveToPlayableStream(it) }
@@ -414,12 +451,23 @@ internal object VirtualTuneResolver {
             return StreamResult(
                 null,
                 "Only torrent/debrid sources were found. Turn on debrid for Lucid TV in Playback settings.",
+                skipItem = true,
             )
         }
         if (candidates.any { it.shouldOpenExternally }) {
-            return StreamResult(null, "This item only opens in an external app.")
+            return StreamResult(null, "This item only opens in an external app.", skipItem = true)
         }
-        return StreamResult(null, "No playable stream was found for this item.")
+        val torrentOnly = candidates.any {
+            it.p2pInfoHash != null && it.playableDirectUrl == null
+        }
+        if (torrentOnly && AppFeaturePolicy.p2pEnabled && !P2pSettingsRepository.uiState.value.p2pEnabled) {
+            return StreamResult(
+                null,
+                "This item is torrent-only. Turn on P2P in Playback settings, or add a debrid account.",
+                skipItem = true,
+            )
+        }
+        return StreamResult(null, "No playable stream was found for this item.", skipItem = true)
     }
 
     private fun failureForEmptyCandidates(
@@ -622,6 +670,7 @@ internal object VirtualTuneResolver {
     private val BLOCKED_TTL_MS = 5L * 60_000L
     private const val MAX_PARALLEL_SOURCES = 12
     private const val MAX_DEBRID_RESOLVE_MS = 20_000L
+    private const val MAX_ITEM_SKIPS = 2
 
     private const val OFFLINE = "This Lucid TV channel is offline right now"
 }

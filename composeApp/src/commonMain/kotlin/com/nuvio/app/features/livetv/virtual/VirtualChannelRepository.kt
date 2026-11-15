@@ -25,22 +25,33 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Lucid TV's channels and pools. Virtual channels are a merge layer: they are never written into
  * `LiveTvRepository._channels` (which playlists rebuild), so playlist refreshes cannot remove them.
  * The guide is generated from the same pure schedule as playback.
+ *
+ * Every installed movie catalog (and, optionally, every series catalog) becomes an automatic
+ * channel, like the TV app. Every VOD channel walks a real-runtime queue, so the guide's now/next
+ * and the stream use one clock; a failed item is skipped and the queue re-anchors to the next one.
  */
 internal object VirtualChannelRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val prefs = LiveTvPreferences
     private val codec = VirtualChannelCodec
     private val poolMutex = Mutex()
-    private val seriesMutex = Mutex()
+    private val poolPermits = kotlinx.coroutines.sync.Semaphore(POOL_CONCURRENCY)
+    private val runtimeLock = kotlinx.atomicfu.locks.SynchronizedObject()
 
+    /** Channels the viewer made in the studio. These are the ones that get saved and exported. */
     private val _specs = MutableStateFlow<List<VirtualChannelSpec>>(emptyList())
     val specs: StateFlow<List<VirtualChannelSpec>> = _specs.asStateFlow()
+
+    /** Every channel in the guide: automatic add-on catalog channels plus the custom ones. */
+    private val _allSpecs = MutableStateFlow<List<VirtualChannelSpec>>(emptyList())
 
     private val _channels = MutableStateFlow<List<LiveChannel>>(emptyList())
     val channels: StateFlow<List<LiveChannel>> = _channels.asStateFlow()
@@ -60,13 +71,20 @@ internal object VirtualChannelRepository {
     private val _refreshing = MutableStateFlow<Set<String>>(emptySet())
     val refreshing: StateFlow<Set<String>> = _refreshing.asStateFlow()
 
-    private val seriesCache = HashMap<String, List<VirtualItem>>()
     private val lastAttemptMs = HashMap<String, Long>()
+    /** item id -> epoch ms until which it is skipped after "no playable stream". */
+    private val unavailable = HashMap<String, Long>()
+    /** Where the current queue starts after skipping a broken item. */
+    private val queueStart = HashMap<String, String>()
+    /** A skipped item re-anchors the queue so the next programme starts at the skip time. */
+    private val scheduleAnchor = HashMap<String, Long>()
+    private var autoSpecs: List<VirtualChannelSpec> = emptyList()
     private var initialized = false
     private var tickerStarted = false
     private var playlistObserverStarted = false
     private var specsObserverStarted = false
     private var settingsObserverStarted = false
+    private var addonObserverStarted = false
 
     // ---------------------------------------------------------------- lifecycle
 
@@ -82,6 +100,7 @@ internal object VirtualChannelRepository {
             _pools.value = repairedPools
             if (repairedPools != decodedPools) persistPools()
             _settings.value = codec.decodePlaybackSettings(prefs.currentVirtualSettingsJson())
+            rebuildSpecs()
             rebuildChannels()
             rebuildWindow()
             refreshStale(forceEmpty = true)
@@ -91,7 +110,7 @@ internal object VirtualChannelRepository {
             scope.launch {
                 while (true) {
                     delay(60_000L)
-                    if (_specs.value.isEmpty()) continue
+                    if (_allSpecs.value.isEmpty()) continue
                     rebuildWindow()
                     refreshStale(forceEmpty = false)
                 }
@@ -103,7 +122,7 @@ internal object VirtualChannelRepository {
             scope.launch {
                 LiveTvRepository.channels.collect { channels ->
                     if (channels.isEmpty()) return@collect
-                    _specs.value
+                    _allSpecs.value
                         .filter { it.enabled && it.source is VirtualSource.PlaylistGroup }
                         .forEach { spec -> refreshPool(spec.id, force = true) }
                 }
@@ -118,9 +137,7 @@ internal object VirtualChannelRepository {
                     if (decoded == _specs.value) return@collect
                     _specs.value = decoded
                     if (decoded != stored) persistSpecs()
-                    val ids = decoded.mapTo(HashSet()) { it.id }
-                    _pools.value = _pools.value.filterKeys { it in ids }
-                    _errors.value = _errors.value.filterKeys { it in ids }
+                    rebuildSpecs()
                     rebuildChannels()
                     rebuildWindow()
                     refreshStale(forceEmpty = true)
@@ -134,9 +151,37 @@ internal object VirtualChannelRepository {
                     _settings.value = codec.decodePlaybackSettings(raw)
                 }
             }
+            scope.launch {
+                prefs.settings.collect {
+                    rebuildSpecs()
+                    rebuildChannels()
+                    rebuildWindow()
+                    refreshStale(forceEmpty = false)
+                }
+            }
+        }
+        if (!addonObserverStarted) {
+            addonObserverStarted = true
+            // Installed add-ons decide which automatic channels exist, like the TV app. Rebuild
+            // when a manifest arrives, a catalog changes or an add-on is disabled.
+            scope.launch {
+                AddonRepository.uiState.collect { state ->
+                    rebuildSpecs()
+                    rebuildChannels()
+                    rebuildWindow()
+                    // A rules channel built before the manifests arrived has no pool yet. Try it
+                    // again as soon as at least one add-on is usable.
+                    if (state.addons.any { it.enabled && it.manifest != null }) {
+                        _allSpecs.value
+                            .filter { it.enabled && it.source is VirtualSource.Rules && _pools.value[it.id]?.items.isNullOrEmpty() }
+                            .forEach { refreshPool(it.id, force = true) }
+                    }
+                    refreshStale(forceEmpty = false)
+                }
+            }
         }
     }
-    fun hasChannels(): Boolean = _specs.value.isNotEmpty()
+    fun hasChannels(): Boolean = _allSpecs.value.isNotEmpty()
 
     /** Saves the HTTP/debrid and prefetch choices. */
     fun updateSettings(settings: VirtualPlaybackSettings) {
@@ -152,7 +197,7 @@ internal object VirtualChannelRepository {
 
     /** Regenerates the near-term guide window (called when Live TV refreshes). */
     fun refreshWindow() {
-        if (_specs.value.isEmpty()) return
+        if (_allSpecs.value.isEmpty()) return
         rebuildWindow()
     }
 
@@ -170,9 +215,11 @@ internal object VirtualChannelRepository {
             createdAtMs = spec.createdAtMs.takeIf { it > 0 } ?: now,
             updatedAtMs = now,
             schemaVersion = VirtualChannels.SCHEMA_VERSION,
+            auto = false,
         )
         _specs.value = _specs.value + created
         persistSpecs()
+        rebuildSpecs()
         rebuildChannels()
         rebuildWindow()
         refreshPool(created.id, force = true)
@@ -182,15 +229,25 @@ internal object VirtualChannelRepository {
     fun update(spec: VirtualChannelSpec) {
         ensureLoaded()
         val now = LiveTvClock.nowMs()
-        val before = _specs.value.firstOrNull { it.id == spec.id } ?: return
+        // An automatic channel is edited by saving a custom override with the same id. That
+        // source stops being auto-generated, so the channel does not appear twice.
+        val before = _specs.value.firstOrNull { it.id == spec.id }
+            ?: _allSpecs.value.firstOrNull { it.id == spec.id }
+            ?: return
         val updated = spec.copy(
             name = spec.name.trim().ifBlank { before.name },
             group = VirtualChannels.DEFAULT_GROUP,
-            createdAtMs = before.createdAtMs,
+            createdAtMs = before.createdAtMs.takeIf { it > 0L } ?: now,
             updatedAtMs = now,
+            auto = false,
         )
-        _specs.value = _specs.value.map { if (it.id == updated.id) updated else it }
+        _specs.value = if (_specs.value.any { it.id == updated.id }) {
+            _specs.value.map { if (it.id == updated.id) updated else it }
+        } else {
+            _specs.value + updated
+        }
         persistSpecs()
+        rebuildSpecs()
         rebuildChannels()
         rebuildWindow()
         refreshPool(updated.id, force = true)
@@ -204,6 +261,7 @@ internal object VirtualChannelRepository {
         _errors.value = _errors.value - id
         persistSpecs()
         persistPools()
+        rebuildSpecs()
         rebuildChannels()
         rebuildWindow()
     }
@@ -224,6 +282,7 @@ internal object VirtualChannelRepository {
                 number = null,
                 createdAtMs = 0L,
                 updatedAtMs = 0L,
+                auto = false,
             )
         )
     }
@@ -236,12 +295,12 @@ internal object VirtualChannelRepository {
 
     fun refreshAll() {
         ensureLoaded()
-        _specs.value.filter { it.enabled }.forEach { refreshPool(it.id, force = true) }
+        _allSpecs.value.filter { it.enabled }.forEach { refreshPool(it.id, force = true) }
     }
 
     fun refreshPool(id: String, force: Boolean = false) {
         ensureLoaded()
-        val spec = _specs.value.firstOrNull { it.id == id } ?: return
+        val spec = _allSpecs.value.firstOrNull { it.id == id } ?: return
         if (spec.enabled.not() && force.not()) return
         if (id in _refreshing.value) return
         if (!force) {
@@ -257,18 +316,24 @@ internal object VirtualChannelRepository {
         _refreshing.value = _refreshing.value + id
         scope.launch {
             try {
-                val result = runCatching { buildPool(spec) }
+                val result = runCatching {
+                    poolPermits.withPermit { buildPool(spec) }
+                }
                 result.onSuccess { items ->
-                    _pools.value = _pools.value + (id to VirtualPoolSnapshot(items = items, fetchedAtMs = LiveTvClock.nowMs()))
-                    _errors.value = _errors.value - id
+                    poolMutex.withLock {
+                        _pools.value = _pools.value + (id to VirtualPoolSnapshot(items = items, fetchedAtMs = LiveTvClock.nowMs()))
+                        _errors.value = _errors.value - id
+                    }
                     persistPools()
                     rebuildChannels()
                     rebuildWindow()
                 }.onFailure { error ->
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     val message = error.message?.takeIf { it.isNotBlank() } ?: "Could not load this channel's catalog"
-                    _pools.value = _pools.value + (id to (_pools.value[id] ?: VirtualPoolSnapshot()).copy(error = message))
-                    _errors.value = _errors.value + (id to message)
+                    poolMutex.withLock {
+                        _pools.value = _pools.value + (id to (_pools.value[id] ?: VirtualPoolSnapshot()).copy(error = message))
+                        _errors.value = _errors.value + (id to message)
+                    }
                     rebuildWindow()
                 }
             } finally {
@@ -279,7 +344,7 @@ internal object VirtualChannelRepository {
 
     private fun refreshStale(forceEmpty: Boolean) {
         val now = LiveTvClock.nowMs()
-        _specs.value.filter { it.enabled }.forEach { spec ->
+        _allSpecs.value.filter { it.enabled }.forEach { spec ->
             val snapshot = _pools.value[spec.id]
             val staleAfter = spec.pool.refreshHours.coerceAtLeast(1) * 3_600_000L
             val empty = snapshot == null || snapshot.items.isEmpty()
@@ -399,9 +464,11 @@ internal object VirtualChannelRepository {
         }
         val previews = items
             .filter { source.contentType.isBlank() || it.type.isBlank() || it.type.equals(source.contentType, ignoreCase = true) }
+            .filterNot { item -> item.genres.any { genre -> genre.equals("Adult", ignoreCase = true) } }
             .map { item -> itemOf(item, source.contentType) }
         val hasSeries = previews.any { it.type.equals("series", true) }
-        return if (hasSeries) expandSeriesItems(previews) else previews
+        val expanded = if (hasSeries) expandSeriesItems(previews) else previews
+        return enrichMissingRuntimes(expanded).distinctBy { it.id }
     }
 
     /**
@@ -422,6 +489,7 @@ internal object VirtualChannelRepository {
         }
         val byId = details.toMap()
         val out = ArrayList<VirtualItem>(previews.size)
+        val expanded = ArrayList<List<VirtualItem>>()
         previews.forEach { preview ->
             if (!preview.type.equals("series", true)) {
                 out += preview
@@ -431,13 +499,49 @@ internal object VirtualChannelRepository {
             val episodes = meta?.let(::episodesOf)
                 ?.take(MAX_EPISODES_PER_SERIES)
                 .orEmpty()
-            if (episodes.isEmpty()) out += preview else out += episodes
+            if (episodes.isEmpty()) out += preview else expanded += episodes
+        }
+        // One episode from each series per round, so the pool is a sampler of the catalog's
+        // shows instead of the first show's whole season.
+        val rounds = expanded.maxOfOrNull { it.size } ?: 0
+        for (round in 0 until rounds) {
+            expanded.forEach { episodes -> episodes.getOrNull(round)?.let(out::add) }
         }
         return out
     }
 
+    /**
+     * Catalog lists often carry a runtime, but not always. Fill the missing ones so the guide
+     * does not fall back to a guessed slot for films whose length is knowable. Lookups are
+     * bounded: a broken or slow add-on must not hold the whole channel for minutes.
+     */
+    private suspend fun enrichMissingRuntimes(items: List<VirtualItem>): List<VirtualItem> {
+        if (items.none { it.runtimeMs == null && it.type != "live" && it.type != "series" }) return items
+        val budget = kotlinx.atomicfu.atomic(MAX_RUNTIME_LOOKUPS)
+        val permits = kotlinx.coroutines.sync.Semaphore(META_CONCURRENCY)
+        return coroutineScope {
+            items.map { item ->
+                async {
+                    if (item.runtimeMs != null || item.type == "live" || item.type == "series" ||
+                        budget.getAndDecrement() <= 0
+                    ) {
+                        return@async item
+                    }
+                    val details = permits.withPermit {
+                        withTimeoutOrNull(12_000L) {
+                            runCatching { MetaDetailsRepository.fetch(item.type, item.id) }
+                                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                                .getOrNull()
+                        }
+                    }
+                    val runtime = details?.let { runtimeMsOf(it.runtime) }
+                    if (runtime != null) item.copy(runtimeMs = runtime) else item
+                }
+            }.awaitAll()
+        }
+    }
+
     private suspend fun fetchRulesPool(source: VirtualSource.Rules, spec: VirtualChannelSpec): List<VirtualItem> {
-        runCatching { AddonRepository.initialize() }
         val addons = AddonRepository.uiState.value.addons
             .filter { it.enabled && it.manifest != null }
             .filter { addon ->
@@ -538,7 +642,8 @@ internal object VirtualChannelRepository {
             description = video.overview ?: details.description,
             year = yearOf(video.released ?: details.releaseInfo),
             rating = video.rating?.toFloat(),
-            runtimeMs = video.runtime?.takeIf { it > 0 }?.times(60_000L),
+            runtimeMs = video.runtime?.takeIf { it > 0 }?.times(60_000L)
+                ?: runtimeMsOf(details.runtime),
             genres = details.genres,
             season = season,
             episode = episode,
@@ -600,8 +705,40 @@ internal object VirtualChannelRepository {
 
     // ---------------------------------------------------------------- channels and EPG
 
+    /**
+     * Automatic channels from every installed movie catalog (and series catalogs when enabled).
+     * They are generated the same way as the TV app: a stable id from the addon, catalog and
+     * type, so a channel keeps its number, schedule and cached pool across launches.
+     */
+    private fun rebuildSpecs() {
+        val liveSettings = prefs.settings.value
+        val custom = _specs.value
+        if (!liveSettings.lucidTvEnabled) {
+            autoSpecs = emptyList()
+            _allSpecs.value = emptyList()
+            return
+        }
+        val usedByCustom = custom.filter { !it.auto }.mapNotNull { spec ->
+            val source = spec.source as? VirtualSource.AddonCatalog ?: return@mapNotNull null
+            VirtualAutoChannels.sourceKey(source.manifestUrl, source.catalogId, source.contentType)
+        }.toSet()
+        autoSpecs = VirtualAutoChannels.discover(
+            addons = AddonRepository.uiState.value.addons,
+            includeSeries = liveSettings.lucidAutoSeriesCatalogs,
+            excludedSources = usedByCustom,
+        )
+        val hadChannels = _allSpecs.value.isNotEmpty()
+        val all = autoSpecs + custom.filter { it.enabled }
+        _allSpecs.value = all
+        // When automatic channels are the only Live TV source (no playlist), the guide must
+        // still start Live TV's repository so Home rows and the guide have their channel list.
+        if (!hadChannels && all.isNotEmpty()) {
+            runCatching { LiveTvRepository.ensureLoaded() }
+        }
+    }
+
     private fun rebuildChannels() {
-        val enabled = _specs.value.filter { it.enabled }
+        val enabled = _allSpecs.value.filter { it.enabled }
         _channels.value = enabled.mapIndexed { index, spec ->
             VirtualChannels.channelFor(spec, index, _pools.value[spec.id]?.items?.firstOrNull()?.poster)
         }
@@ -610,8 +747,8 @@ internal object VirtualChannelRepository {
     private fun rebuildWindow() {
         val now = LiveTvClock.nowMs()
         val map = HashMap<String, List<EpgProgram>>()
-        _specs.value.filter { it.enabled }.forEach { spec ->
-            val items = _pools.value[spec.id]?.items.orEmpty()
+        _allSpecs.value.filter { it.enabled }.forEach { spec ->
+            val items = availablePool(spec, _pools.value[spec.id]?.items.orEmpty())
             if (items.isEmpty()) return@forEach
             val programs = programsFor(spec, items, now - WINDOW_PAST_MS, now + WINDOW_FUTURE_MS)
             if (programs.isNotEmpty()) map[spec.channelKey] = programs
@@ -626,25 +763,15 @@ internal object VirtualChannelRepository {
         toMs: Long,
     ): List<EpgProgram> {
         if (items.isEmpty() || toMs <= fromMs) return emptyList()
-        val slotMs = spec.rotationMinutes.coerceAtLeast(1) * 60_000L
-        val segments = if (spec.playout.mode == VirtualPlayoutMode.LOOP) {
-            VirtualSchedule.playoutSegments(
-                anchorMs = spec.playout.anchorMs,
-                items = items,
-                fallbackDurationMs = slotMs,
-                fromMs = fromMs,
-                toMs = toMs,
-            )
-        } else {
-            VirtualSchedule.rotatePrograms(
-                channelId = spec.channelKey,
-                items = items,
-                slotMs = slotMs,
-                salt = spec.playout.salt,
-                fromMs = fromMs,
-                toMs = toMs,
-            )
-        }
+        val ordered = orderedPool(spec, availablePool(spec, items))
+        if (ordered.isEmpty()) return emptyList()
+        val segments = VirtualSchedule.playoutSegments(
+            anchorMs = queueAnchor(spec),
+            items = ordered,
+            fallbackDurationMs = fallbackDurationMs(spec),
+            fromMs = fromMs,
+            toMs = toMs,
+        )
         return segments.map(VirtualSchedule::toProgram)
     }
 
@@ -653,7 +780,7 @@ internal object VirtualChannelRepository {
         val virtualKeys = keys.filter { VirtualChannels.isVirtualKey(it) }.toSet()
         if (virtualKeys.isEmpty()) return emptyMap()
         val out = HashMap<String, List<EpgProgram>>()
-        _specs.value.filter { it.enabled && it.channelKey in virtualKeys }.forEach { spec ->
+        _allSpecs.value.filter { it.enabled && it.channelKey in virtualKeys }.forEach { spec ->
             val items = _pools.value[spec.id]?.items.orEmpty()
             if (items.isEmpty()) return@forEach
             val programs = programsFor(spec, items, fromMs, toMs)
@@ -664,7 +791,7 @@ internal object VirtualChannelRepository {
 
     fun programDetails(channelKey: String, startMs: Long): EpgProgram? {
         val id = VirtualChannels.specIdOf(channelKey) ?: return null
-        val spec = _specs.value.firstOrNull { it.id == id && it.enabled } ?: return null
+        val spec = _allSpecs.value.firstOrNull { it.id == id && it.enabled } ?: return null
         val items = _pools.value[spec.id]?.items.orEmpty()
         if (items.isEmpty()) return null
         return programsFor(spec, items, startMs, startMs + 1L)
@@ -674,55 +801,46 @@ internal object VirtualChannelRepository {
 
     // ---------------------------------------------------------------- tuning
 
+    /**
+     * Every VOD channel walks a queue of real media runtimes from a stable anchor. What the
+     * guide says is on now is therefore exactly the item (and join offset) that tuning starts,
+     * even when a film is two hours long and the fallback slot says ninety minutes.
+     */
     suspend fun tune(channelKey: String, nowMs: Long = LiveTvClock.nowMs()): VirtualTune? {
         val id = VirtualChannels.specIdOf(channelKey) ?: return null
-        val spec = _specs.value.firstOrNull { it.id == id && it.enabled } ?: return null
+        val spec = _allSpecs.value.firstOrNull { it.id == id && it.enabled } ?: return null
         val items = _pools.value[spec.id]?.items.orEmpty()
         if (items.isEmpty()) return null
-        val slotMs = spec.rotationMinutes.coerceAtLeast(1) * 60_000L
-        return if (spec.playout.mode == VirtualPlayoutMode.LOOP) {
-            val segment = VirtualSchedule.playoutAt(
+        val ordered = orderedPool(spec, availablePool(spec, items))
+        if (ordered.isEmpty()) return null
+        val segment = VirtualSchedule.playoutAt(
+            nowMs = nowMs,
+            anchorMs = queueAnchor(spec),
+            items = ordered,
+            fallbackDurationMs = fallbackDurationMs(spec),
+        ) ?: return null
+        val item = segment.item
+        val relay = item.streamUrl != null
+        val duration = (segment.endMs - segment.startMs).coerceAtLeast(1L)
+        return VirtualTune(
+            channelKey = channelKey,
+            specId = spec.id,
+            item = item,
+            season = item.season,
+            episode = item.episode,
+            episodeTitle = item.episodeTitle,
+            title = tuneTitle(item),
+            startOffsetMs = if (relay) 0L else VirtualSchedule.joinOffsetMs(
                 nowMs = nowMs,
-                anchorMs = spec.playout.anchorMs,
-                items = items,
-                fallbackDurationMs = slotMs,
-            ) ?: return null
-            val duration = segment.item.runtimeMs?.takeIf { it > 0 } ?: (segment.endMs - segment.startMs)
-            val relay = segment.item.streamUrl != null
-            VirtualTune(
-                channelKey = channelKey,
-                specId = spec.id,
-                item = segment.item,
-                season = segment.item.season,
-                episode = segment.item.episode,
-                episodeTitle = segment.item.episodeTitle,
-                title = tuneTitle(segment.item),
-                startOffsetMs = if (relay) 0L else VirtualSchedule.joinOffsetMs(nowMs, segment.startMs, duration, spec.join, channelKey),
-                slotStartMs = segment.startMs,
-                slotEndMs = segment.endMs,
-                relay = relay,
-            )
-        } else {
-            var slot = VirtualSchedule.slotAt(nowMs, channelKey, slotMs)
-            var item = VirtualSchedule.itemForSlot(channelKey, slot, items, spec.playout.salt) ?: return null
-            if (item.type == "series" && item.season == null) {
-                resolveEpisode(spec, item, slot.number)?.let { item = it }
-            }
-            val relay = item.streamUrl != null
-            VirtualTune(
-                channelKey = channelKey,
-                specId = spec.id,
-                item = item,
-                season = item.season,
-                episode = item.episode,
-                episodeTitle = item.episodeTitle,
-                title = tuneTitle(item),
-                startOffsetMs = if (relay) 0L else VirtualSchedule.joinOffsetMs(nowMs, slot.startMs, slotMs, spec.join, channelKey),
-                slotStartMs = slot.startMs,
-                slotEndMs = slot.endMs,
-                relay = relay,
-            )
-        }
+                itemStartMs = segment.startMs,
+                itemDurationMs = duration,
+                join = spec.join,
+                channelId = channelKey,
+            ),
+            slotStartMs = segment.startMs,
+            slotEndMs = segment.endMs,
+            relay = relay,
+        )
     }
 
     private fun tuneTitle(item: VirtualItem): String {
@@ -745,56 +863,38 @@ internal object VirtualChannelRepository {
         count: Int = VirtualPlaybackSettings().prefetchNext,
     ): List<VirtualTune> {
         val id = VirtualChannels.specIdOf(channelKey) ?: return emptyList()
-        val spec = _specs.value.firstOrNull { it.id == id && it.enabled } ?: return emptyList()
+        val spec = _allSpecs.value.firstOrNull { it.id == id && it.enabled } ?: return emptyList()
         val items = _pools.value[spec.id]?.items.orEmpty()
         if (items.isEmpty() || count <= 0) return emptyList()
-        val slotMs = spec.rotationMinutes.coerceAtLeast(1) * 60_000L
+        val ordered = orderedPool(spec, availablePool(spec, items))
+        if (ordered.isEmpty()) return emptyList()
+        val anchor = queueAnchor(spec)
+        val durations = durations(spec, ordered)
+        val cycle = durations.sum().coerceAtLeast(1L)
+        val current = VirtualSchedule.playoutAt(fromMs, anchor, ordered, fallbackDurationMs(spec))
+            ?: return emptyList()
+        var offset = VirtualSchedule.floorMod(current.startMs - anchor, cycle)
+        var index = 0
+        var accumulated = 0L
+        while (index < ordered.lastIndex && offset >= accumulated + durations[index]) {
+            accumulated += durations[index]
+            index++
+        }
         val out = ArrayList<VirtualTune>(count)
-
-        if (spec.playout.mode == VirtualPlayoutMode.LOOP) {
-            val current = VirtualSchedule.playoutAt(fromMs, spec.playout.anchorMs, items, slotMs)
-                ?: return emptyList()
-            val durations = VirtualSchedule.durationsOf(items, slotMs)
-            val cycle = durations.sum().coerceAtLeast(1L)
-            var offset = VirtualSchedule.floorMod(current.startMs - spec.playout.anchorMs, cycle)
-            var index = 0
-            var accumulated = 0L
-            while (index < items.lastIndex && offset >= accumulated + durations[index]) {
-                accumulated += durations[index]
-                index++
-            }
-            var cursor = current.endMs
-            repeat(count) {
-                index = (index + 1) % items.size
-                val item = items[index]
-                val duration = durations[index]
-                out += tuneOf(
-                    spec = spec,
-                    channelKey = channelKey,
-                    item = item,
-                    startMs = cursor,
-                    endMs = cursor + duration,
-                    startOffsetMs = 0L,
-                )
-                cursor += duration
-            }
-        } else {
-            var slot = VirtualSchedule.slotAt(fromMs, channelKey, slotMs)
-            repeat(count) {
-                slot = VirtualSchedule.RotateSlot(slot.number + 1, slot.endMs, slot.endMs + slotMs)
-                var item = VirtualSchedule.itemForSlot(channelKey, slot, items, spec.playout.salt) ?: return@repeat
-                if (item.type == "series" && item.season == null) {
-                    resolveEpisode(spec, item, slot.number)?.let { item = it }
-                }
-                out += tuneOf(
-                    spec = spec,
-                    channelKey = channelKey,
-                    item = item,
-                    startMs = slot.startMs,
-                    endMs = slot.endMs,
-                    startOffsetMs = 0L,
-                )
-            }
+        var cursor = current.endMs
+        repeat(count) {
+            index = (index + 1) % ordered.size
+            val item = ordered[index]
+            val duration = durations[index]
+            out += tuneOf(
+                spec = spec,
+                channelKey = channelKey,
+                item = item,
+                startMs = cursor,
+                endMs = cursor + duration,
+                startOffsetMs = 0L,
+            )
+            cursor += duration
         }
         return out
     }
@@ -823,23 +923,97 @@ internal object VirtualChannelRepository {
         )
     }
 
-    private suspend fun resolveEpisode(spec: VirtualChannelSpec, series: VirtualItem, slotNumber: Long): VirtualItem? {
-        val episodes = seriesMutex.withLock {
-            seriesCache[series.id] ?: run {
-                val fetched = runCatching { MetaDetailsRepository.fetch("series", series.id) }
-                    .getOrNull()
-                    ?.let(::episodesOf)
-                    .orEmpty()
-                seriesCache[series.id] = fetched
-                fetched
-            }
+    // ---------------------------------------------------------------- queue control
+
+    /** The chosen order, then rotated so a failed item's successor starts the queue after a skip. */
+    private fun orderedPool(spec: VirtualChannelSpec, pool: List<VirtualItem>): List<VirtualItem> {
+        val ordered = orderItems(pool, spec)
+        val startId = kotlinx.atomicfu.locks.synchronized(runtimeLock) { queueStart[spec.id] }
+            ?: return ordered
+        val index = ordered.indexOfFirst { it.id == startId }
+        return if (index <= 0) ordered else ordered.drop(index) + ordered.take(index)
+    }
+
+    private fun durations(spec: VirtualChannelSpec, pool: List<VirtualItem>): List<Long> =
+        VirtualSchedule.durationsOf(pool, fallbackDurationMs(spec))
+
+    private fun fallbackDurationMs(spec: VirtualChannelSpec): Long =
+        spec.rotationMinutes.coerceAtLeast(1) * 60_000L
+
+    private fun queueAnchor(spec: VirtualChannelSpec): Long =
+        kotlinx.atomicfu.locks.synchronized(runtimeLock) { scheduleAnchor[spec.id] }
+            ?: spec.playout.anchorMs.takeIf { it > 0L }
+            ?: spec.createdAtMs.takeIf { it > 0L }
+            ?: 0L
+
+    /** Items skipped after "no playable stream", until the retry window expires. */
+    private fun availablePool(spec: VirtualChannelSpec, pool: List<VirtualItem>): List<VirtualItem> {
+        if (pool.isEmpty()) return pool
+        val now = LiveTvClock.nowMs()
+        val prefix = "${spec.id}|"
+        return kotlinx.atomicfu.locks.synchronized(runtimeLock) {
+            unavailable.keys.removeAll { key -> key.startsWith(prefix) && (unavailable[key] ?: 0L) <= now }
+            pool.filter { item -> (unavailable["$prefix${item.id}"] ?: Long.MAX_VALUE) > now }
         }
-        if (episodes.isEmpty()) return null
-        val index = VirtualSchedule.floorMod(
-            VirtualSchedule.stableHash("${spec.channelKey}:$slotNumber").toLong(),
-            episodes.size.toLong(),
-        ).toInt()
-        return episodes[index]
+    }
+
+    /**
+     * The current item has no playable stream: skip it and start the queue at the next item now.
+     * The generated guide is rebuilt from that point, so the guide and the player stay in step.
+     *
+     * @return true when another item is available and the channel can be tuned again.
+     */
+    fun markUnplayable(channelKey: String, itemId: String): Boolean {
+        val spec = _allSpecs.value.firstOrNull { it.channelKey == channelKey } ?: return false
+        val pool = availablePool(spec, _pools.value[spec.id]?.items.orEmpty())
+        if (pool.size <= 1) return false
+        val ordered = orderedPool(spec, pool)
+        val failedIndex = ordered.indexOfFirst { it.id == itemId }
+        val next = ordered.drop((failedIndex + 1).coerceAtLeast(0))
+            .firstOrNull { it.id != itemId }
+            ?: ordered.firstOrNull { it.id != itemId }
+            ?: return false
+        kotlinx.atomicfu.locks.synchronized(runtimeLock) {
+            unavailable["${spec.id}|$itemId"] = LiveTvClock.nowMs() + UNPLAYABLE_TTL_MS
+        }
+        moveQueueStart(spec, next.id)
+        clearError(channelKey)
+        return true
+    }
+
+    /**
+     * A media item ended early (a shorter file than its metadata said, or a dead source that
+     * played nothing). Move the queue's clock to the item after [itemId] and start it now.
+     */
+    fun advanceAfter(channelKey: String, itemId: String): Boolean {
+        val spec = _allSpecs.value.firstOrNull { it.channelKey == channelKey } ?: return false
+        val pool = availablePool(spec, _pools.value[spec.id]?.items.orEmpty())
+        if (pool.size <= 1) return false
+        val ordered = orderedPool(spec, pool)
+        val index = ordered.indexOfFirst { it.id == itemId }
+        if (index < 0) return false
+        val next = ordered[(index + 1) % ordered.size]
+        if (next.id == itemId) return false
+        moveQueueStart(spec, next.id)
+        return true
+    }
+
+    private fun moveQueueStart(spec: VirtualChannelSpec, itemId: String) {
+        kotlinx.atomicfu.locks.synchronized(runtimeLock) {
+            queueStart[spec.id] = itemId
+            scheduleAnchor[spec.id] = LiveTvClock.nowMs()
+        }
+        rebuildWindow()
+    }
+
+    fun reportError(channelKey: String, message: String) {
+        val specId = VirtualChannels.specIdOf(channelKey) ?: return
+        _errors.value = _errors.value + (specId to message)
+    }
+
+    fun clearError(channelKey: String) {
+        val specId = VirtualChannels.specIdOf(channelKey) ?: return
+        if (specId in _errors.value) _errors.value = _errors.value - specId
     }
 
     // ---------------------------------------------------------------- import / export
@@ -868,10 +1042,12 @@ internal object VirtualChannelRepository {
                 createdAtMs = now,
                 updatedAtMs = now,
                 schemaVersion = VirtualChannels.SCHEMA_VERSION,
+                auto = false,
             )
         }
         _specs.value = _specs.value + additions
         persistSpecs()
+        rebuildSpecs()
         rebuildChannels()
         rebuildWindow()
         additions.forEach { refreshPool(it.id, force = true) }
@@ -973,4 +1149,8 @@ internal object VirtualChannelRepository {
     private const val MAX_RULE_CATALOGS = 6
     private const val MAX_SERIES_TO_EXPAND = 8
     private const val MAX_EPISODES_PER_SERIES = 40
+    private const val POOL_CONCURRENCY = 4
+    private const val MAX_RUNTIME_LOOKUPS = 24
+    private const val META_CONCURRENCY = 3
+    private const val UNPLAYABLE_TTL_MS = 60L * 60 * 1000
 }

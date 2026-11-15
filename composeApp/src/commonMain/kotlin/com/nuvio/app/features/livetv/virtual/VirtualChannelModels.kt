@@ -161,8 +161,14 @@ data class VirtualChannelSpec(
     val createdAtMs: Long = 0L,
     val updatedAtMs: Long = 0L,
     val schemaVersion: Int = 1,
+    /**
+     * Generated from an installed add-on catalog. Auto channels are not saved with the custom
+     * channels; they are rebuilt from the installed add-ons on every launch, exactly like the TV
+     * app, so adding or removing an add-on adds or removes its channels.
+     */
+    val auto: Boolean = false,
 ) {
-    /** The slot length this channel uses for ROTATE (series channels are shorter). */
+    /** The slot length this channel uses for its queue fallback. */
     val rotationMinutes: Int
         get() = if (kind.isSeries) playout.seriesSlotMinutes else playout.slotMinutes
 

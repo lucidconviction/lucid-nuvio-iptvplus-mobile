@@ -66,6 +66,7 @@ import nuvio.composeapp.generated.resources.lucid_tv_delete
 import nuvio.composeapp.generated.resources.lucid_tv_delete_confirm
 import nuvio.composeapp.generated.resources.lucid_tv_description
 import nuvio.composeapp.generated.resources.lucid_tv_empty
+import nuvio.composeapp.generated.resources.lucid_tv_empty_auto
 import nuvio.composeapp.generated.resources.lucid_tv_export
 import nuvio.composeapp.generated.resources.lucid_tv_export_hint
 import nuvio.composeapp.generated.resources.lucid_tv_import
@@ -96,6 +97,7 @@ fun VirtualChannelsScreen(
     val tokens = MaterialTheme.nuvio
     LaunchedEffect(Unit) { VirtualChannelRepository.ensureLoaded() }
     val specs by VirtualChannelRepository.specs.collectAsStateWithLifecycle()
+    val allChannels by VirtualChannelRepository.channels.collectAsStateWithLifecycle()
     val pools by VirtualChannelRepository.pools.collectAsStateWithLifecycle()
     val refreshing by VirtualChannelRepository.refreshing.collectAsStateWithLifecycle()
     val errors by VirtualChannelRepository.errors.collectAsStateWithLifecycle()
@@ -160,13 +162,34 @@ fun VirtualChannelsScreen(
             color = tokens.colors.textMuted,
             modifier = Modifier.padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s4),
         )
+        if (allChannels.isNotEmpty()) {
+            val automatic = (allChannels.size - specs.count { it.enabled }).coerceAtLeast(0)
+            Text(
+                text = buildString {
+                    append(allChannels.size)
+                    append(if (allChannels.size == 1) " channel in the guide" else " channels in the guide")
+                    if (automatic > 0) {
+                        append(" · ")
+                        append(automatic)
+                        append(" automatic from your add-ons")
+                    }
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.accent,
+                modifier = Modifier.padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s2),
+            )
+        }
         if (specs.isEmpty()) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(NuvioTokens.Space.s24),
                 verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
             ) {
                 Text(
-                    text = stringResource(Res.string.lucid_tv_empty),
+                    text = if (allChannels.isEmpty()) {
+                        stringResource(Res.string.lucid_tv_empty)
+                    } else {
+                        stringResource(Res.string.lucid_tv_empty_auto)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = tokens.colors.textMuted,
                 )
@@ -312,7 +335,7 @@ fun VirtualChannelsScreen(
                         color = tokens.colors.textPrimary,
                     )
                     Text(
-                        text = "Direct HTTP streams are always tried first. Debrid/torrent sources are used only when no direct stream is available.",
+                        text = "Direct HTTP is always tried first. When it isn't available, torrent/debrid sources are resolved; P2P torrents play through the app's built-in engine when it is turned on.",
                         style = MaterialTheme.typography.bodySmall,
                         color = tokens.colors.textMuted,
                     )

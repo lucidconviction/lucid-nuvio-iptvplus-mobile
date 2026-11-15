@@ -71,6 +71,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.nuvio.app.features.livetv.sync.LiveTvDriveSync
 import com.nuvio.app.features.livetv.sync.SignInPrompt
+import com.nuvio.app.features.livetv.virtual.VirtualChannelRepository
 import com.nuvio.app.features.settings.SettingsGroup
 import com.nuvio.app.features.settings.SettingsGroupDivider
 import com.nuvio.app.features.settings.SettingsNavigationRow
@@ -99,6 +100,11 @@ import nuvio.composeapp.generated.resources.livetv_days_ahead
 import nuvio.composeapp.generated.resources.livetv_days_ahead_description
 import nuvio.composeapp.generated.resources.livetv_hours_back
 import nuvio.composeapp.generated.resources.livetv_hours_back_description
+import nuvio.composeapp.generated.resources.livetv_lucid_auto
+import nuvio.composeapp.generated.resources.livetv_lucid_auto_description
+import nuvio.composeapp.generated.resources.livetv_lucid_series
+import nuvio.composeapp.generated.resources.livetv_lucid_series_description
+import nuvio.composeapp.generated.resources.livetv_lucid_tv
 import nuvio.composeapp.generated.resources.livetv_delete_source_message
 import nuvio.composeapp.generated.resources.livetv_disable
 import nuvio.composeapp.generated.resources.livetv_drive_account
@@ -489,6 +495,30 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
                     checked = settings.showInSidebar,
                     isTablet = isTablet,
                     onCheckedChange = { on -> update { it.copy(showInSidebar = on) } },
+                )
+            }
+        }
+
+        SettingsSection(title = stringResource(Res.string.livetv_lucid_tv), isTablet = isTablet) {
+            SettingsGroup(isTablet = isTablet) {
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.livetv_lucid_auto),
+                    description = stringResource(Res.string.livetv_lucid_auto_description),
+                    checked = settings.lucidTvEnabled,
+                    isTablet = isTablet,
+                    onCheckedChange = { on ->
+                        VirtualChannelRepository.ensureLoaded()
+                        update { it.copy(lucidTvEnabled = on) }
+                    },
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.livetv_lucid_series),
+                    description = stringResource(Res.string.livetv_lucid_series_description),
+                    checked = settings.lucidAutoSeriesCatalogs,
+                    enabled = settings.lucidTvEnabled,
+                    isTablet = isTablet,
+                    onCheckedChange = { on -> update { it.copy(lucidAutoSeriesCatalogs = on) } },
                 )
             }
         }

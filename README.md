@@ -47,14 +47,15 @@
 - Parental controls for locked groups and adult content.
 
 ### 🎬 Lucid TV
+- Every installed movie catalog becomes an automatic channel, like the TV app; series catalogs are one switch away.
 - Virtual channels built from add-on catalogs, series marathons, playlist relays and hand-picked collections.
 - A Lucid TV studio for creating, editing, reordering and deleting channels.
 - Series catalogs expand into real episodes with titles, season/episode numbers and runtimes.
-- Generated guide with join-in-progress playback.
+- Generated guide on each item's real runtime, so now/next and the stream stay on one clock.
+- Join-in-progress playback, dead-item skipping and automatic advance when a film ends early.
 - Smart pools: genre, year, rating, keyword filters, shuffle, release order and air order.
-- HTTP-first tuning, optional debrid, cached winners and next-two prefetch.
-- Plays movies, series and existing Live TV channels as 24/7 channels.
-- Cached pools repair automatically after upgrades.
+- Direct HTTP first, then debrid/cached torrents, then the built-in P2P engine when it is enabled.
+- Cached winners, next-two prefetch and cached pools that repair automatically after upgrades.
 
 ### 🌐 Web-Apps and browser
 - A Web-Apps tab for saved streaming sites, with wide browser-style cards.

@@ -180,6 +180,19 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
         if (!P2pSettingsRepository.isVisible || !p2pSettingsUiState.p2pEnabled) {
             p2pResolvedSourceUrl = null
             P2pStreamingEngine.stopStream()
+            // Opening a torrent directly (Lucid TV, a shared link or a restored player route) never
+            // went through the stream picker, so ask for consent here instead of spinning forever.
+            val stream = activeStream
+            if (P2pSettingsRepository.isVisible && stream != null && pendingP2pSwitch == null) {
+                pendingP2pSwitch = PendingPlayerP2pSwitch(
+                    stream = stream,
+                    episode = null,
+                    isAutoPlay = false,
+                )
+                errorMessage = getString(Res.string.player_p2p_disabled)
+                initialLoadCompleted = true
+                controlsVisible = !playerControlsLocked
+            }
             return@LaunchedEffect
         }
 
