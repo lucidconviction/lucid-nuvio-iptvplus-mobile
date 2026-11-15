@@ -3,6 +3,7 @@ package com.nuvio.app.features.watched
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
+import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.details.MetaVideo
@@ -25,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -154,6 +156,7 @@ object WatchedRepository {
     private var lastSuccessfulPushEpochMs: Long = 0L
     private var deltaCursorEventId: Long = 0L
     private var deltaInitialized: Boolean = false
+    private var dirtyFlushJob: Job? = null
     internal var syncAdapter: WatchedSyncAdapter = SupabaseWatchedSyncAdapter
     private var extraKeysObserverJob: Job? = null
 
@@ -281,6 +284,7 @@ object WatchedRepository {
         }
 
         publish()
+        if (activeSource.providerId == null) scheduleDirtyMarkFlush()
     }
 
     internal fun activateSource(source: WatchProgressSource): WatchProgressSource {
@@ -1043,6 +1047,54 @@ object WatchedRepository {
      * without sibling expansion. Used by sibling expansion to avoid feedback loops.
      */
     fun baseFullyWatchedSeriesKeys(): Set<String> = fullyWatchedSeriesKeysForSource(activeSource)
+
+    /**
+     * Uploads watched marks that were saved while offline or while a push failed. Called on
+     * reconnect, app foreground and after a profile loads from disk.
+     */
+    fun flushDirtyMarks() {
+        ensureLoaded()
+        if (activeSource.providerId != null) return
+        if (NetworkStatusRepository.uiState.value.isOfflineLike) return
+        if (dirtyFlushJob?.isActive == true) return
+        dirtyFlushJob = accountScopeSnapshot().launch { flushDirtyMarksNow() }
+    }
+
+    private fun scheduleDirtyMarkFlush() {
+        if (dirtyNuvioItemsSnapshot().isEmpty()) return
+        flushDirtyMarks()
+    }
+
+    private fun dirtyNuvioItemsSnapshot(): List<WatchedItem> =
+        itemsStore.read { nuvioItems, _, dirtyNuvioKeys, _ ->
+            dirtyNuvioKeys.mapNotNull(nuvioItems::get)
+        }
+
+    private suspend fun flushDirtyMarksNow() {
+        val profileId = currentProfileId
+        val generation = profileGeneration
+        var attempt = 0
+        while (attempt < 2) {
+            val items = dirtyNuvioItemsSnapshot()
+            if (items.isEmpty()) return
+            if (NetworkStatusRepository.uiState.value.isOfflineLike) return
+            val succeeded = runCatching {
+                syncAdapter.push(profileId = profileId, items = items)
+            }.onFailure { error ->
+                log.e(error) { "Failed to flush watched marks" }
+            }.isSuccess
+            if (succeeded) {
+                recordSuccessfulPush(
+                    profileId = profileId,
+                    operationGeneration = generation,
+                    items = items,
+                )
+                return
+            }
+            attempt++
+            if (attempt < 2) delay(1_500L * attempt)
+        }
+    }
 
     private fun pushMarksToServer(
         items: Collection<WatchedItem>,

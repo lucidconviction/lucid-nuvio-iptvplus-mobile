@@ -633,6 +633,8 @@ internal fun MainAppContent(
             }
 
             NetworkCondition.Online -> {
+                WatchProgressRepository.flushDirtyProgress()
+                WatchedRepository.flushDirtyMarks()
                 if (
                     previousConditionName == NetworkCondition.NoInternet.name ||
                     previousConditionName == NetworkCondition.ServersUnreachable.name
@@ -735,6 +737,8 @@ internal fun MainAppContent(
                 when (visibility) {
                     AppVisibility.Foreground -> {
                         NetworkStatusRepository.requestForegroundRefresh()
+                        WatchProgressRepository.flushDirtyProgress()
+                        WatchedRepository.flushDirtyMarks()
                         DeviceSessionRegistration.registerIfAuthenticated()
                         MemberAccessRepository.refreshIfStale()
                         if (syncProfileId != null) {

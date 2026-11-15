@@ -5,6 +5,7 @@ import com.nuvio.app.features.livetv.data.LiveTvPreferences
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.auth.AuthRepository
 import com.nuvio.app.core.auth.AuthState
+import com.nuvio.app.core.network.NetworkStatusRepository
 import com.nuvio.app.core.tracking.ensureTrackingProvidersRegistered
 import com.nuvio.app.features.addons.AddonManifest
 import com.nuvio.app.features.addons.AddonRepository
@@ -278,6 +279,7 @@ object WatchProgressRepository {
     private var lastSuccessfulPushEpochMs = 0L
     private var deltaCursorEventId = 0L
     private var deltaInitialized = false
+    private var dirtyFlushJob: Job? = null
     private val remoteWriteDeduplicator = RemoteProgressWriteDeduplicator()
     internal var syncAdapter: ProgressSyncAdapter = SupabaseProgressSyncAdapter
 
@@ -394,6 +396,7 @@ object WatchProgressRepository {
         }
         publish()
         resolveRemoteMetadata()
+        flushDirtyProgress()
     }
 
     private fun activeOperationGeneration(profileId: Int): Long? {
@@ -1465,6 +1468,52 @@ object WatchProgressRepository {
             WatchProgressCodec.decodePayload(payload).entries
         }
         return storedEntries.resolveIdentityForUpsert(entry)
+    }
+
+    /**
+     * Uploads watch progress saved while offline. Called on reconnect, app foreground and after
+     * a profile loads its stored payload.
+     */
+    fun flushDirtyProgress() {
+        ensureLoaded()
+        if (NetworkStatusRepository.uiState.value.isOfflineLike) return
+        if (dirtyFlushJob?.isActive == true) return
+        if (dirtyProgressKeysSnapshot().isEmpty()) return
+        dirtyFlushJob = syncScope.launch { flushDirtyProgressNow() }
+    }
+
+    private fun dirtyEntriesSnapshot(): List<WatchProgressEntry> {
+        val keys = dirtyProgressKeysSnapshot()
+        if (keys.isEmpty()) return emptyList()
+        return synchronized(entriesLock) {
+            keys.mapNotNull { key -> entriesByProgressKey[key] }
+        }
+    }
+
+    private suspend fun flushDirtyProgressNow() {
+        val profileId = currentProfileId
+        val generation = profileGeneration
+        var attempt = 0
+        while (attempt < 2) {
+            val entries = dirtyEntriesSnapshot()
+            if (entries.isEmpty()) return
+            if (NetworkStatusRepository.uiState.value.isOfflineLike) return
+            val succeeded = runCatching {
+                syncAdapter.push(profileId = profileId, entries = entries)
+            }.onFailure { error ->
+                log.e(error) { "Failed to flush watch progress" }
+            }.isSuccess
+            if (succeeded) {
+                recordSuccessfulPush(
+                    profileId = profileId,
+                    operationGeneration = generation,
+                    entries = entries,
+                )
+                return
+            }
+            attempt++
+            if (attempt < 2) delay(1_500L * attempt)
+        }
     }
 
     private fun pushScrobbleToServer(entry: WatchProgressEntry, profileId: Int) {
