@@ -711,8 +711,11 @@ internal class AndroidWebBrowserController(
         if (url.isNullOrBlank()) null else URL(url).host
     }.getOrNull()?.trim()?.trimEnd('.')?.lowercase()?.takeIf { it.isNotBlank() }
 
-    private fun currentPageHost(): String? =
-        hostOf(pageUrl) ?: hostOf(webView?.url)
+    /**
+     * Must stay WebView-free: shouldInterceptRequest runs on a Chromium worker thread, and
+     * WebView.getUrl() throws WebViewMethodCalledOnWrongThread there. pageUrl is updated on main.
+     */
+    private fun currentPageHost(): String? = hostOf(pageUrl)
 
     private fun sameUrl(a: String, b: String): Boolean =
         a.trimEnd('/') == b.trimEnd('/')
