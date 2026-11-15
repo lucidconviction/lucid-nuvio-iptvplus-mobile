@@ -118,6 +118,7 @@ object VirtualChannelCodec {
                 put("catalogName", source.catalogName)
                 put("contentType", source.contentType)
                 put("genre", source.genre ?: "")
+                put("search", source.search ?: "")
             }
             is VirtualSource.AddonItem -> {
                 put("type", "addon_item")
@@ -158,6 +159,7 @@ object VirtualChannelCodec {
             catalogName = o.optString("catalogName"),
             contentType = o.optString("contentType").ifBlank { "movie" },
             genre = o.optString("genre").ifBlank { null },
+            search = o.optString("search").ifBlank { null },
         ).takeIf { it.manifestUrl.isNotBlank() && it.catalogId.isNotBlank() }
 
         "addon_item" -> VirtualSource.AddonItem(

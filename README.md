@@ -47,9 +47,9 @@
 - Parental controls for locked groups and adult content.
 
 ### 🎬 Lucid TV
-- Every installed movie catalog becomes an automatic channel, like the TV app; series catalogs are one switch away.
+- Add only the channels you want from any installed add-on catalog, series or playlist group — nothing is added to the guide automatically.
 - Virtual channels built from add-on catalogs, series marathons, playlist relays and hand-picked collections.
-- A Lucid TV studio for creating, editing, reordering and deleting channels.
+- A Lucid TV studio for creating, editing, reordering and deleting channels, including a one-tap remove-all cleanup.
 - Series catalogs expand into real episodes with titles, season/episode numbers and runtimes.
 - Generated guide on each item's real runtime, so now/next and the stream stay on one clock.
 - Join-in-progress playback, dead-item skipping and automatic advance when a film ends early.

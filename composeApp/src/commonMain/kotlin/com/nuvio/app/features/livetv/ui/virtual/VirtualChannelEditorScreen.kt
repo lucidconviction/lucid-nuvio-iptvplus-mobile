@@ -75,7 +75,9 @@ import nuvio.composeapp.generated.resources.lucid_tv_delete
 import nuvio.composeapp.generated.resources.lucid_tv_delete_confirm
 import nuvio.composeapp.generated.resources.lucid_tv_enabled
 import nuvio.composeapp.generated.resources.lucid_tv_editor_title
+import nuvio.composeapp.generated.resources.lucid_tv_genre
 import nuvio.composeapp.generated.resources.lucid_tv_genre_any
+import nuvio.composeapp.generated.resources.lucid_tv_genre_required
 import nuvio.composeapp.generated.resources.lucid_tv_group
 import nuvio.composeapp.generated.resources.lucid_tv_join
 import nuvio.composeapp.generated.resources.lucid_tv_join_cap
@@ -92,6 +94,7 @@ import nuvio.composeapp.generated.resources.lucid_tv_pool_loading
 import nuvio.composeapp.generated.resources.lucid_tv_refresh_hours
 import nuvio.composeapp.generated.resources.lucid_tv_save
 import nuvio.composeapp.generated.resources.lucid_tv_search_items
+import nuvio.composeapp.generated.resources.lucid_tv_search_required
 import nuvio.composeapp.generated.resources.lucid_tv_select_catalog
 import nuvio.composeapp.generated.resources.lucid_tv_select_group
 import nuvio.composeapp.generated.resources.lucid_tv_select_item
@@ -495,7 +498,9 @@ private fun sourceSummary(source: VirtualSource?): String = when (source) {
     is VirtualSource.AddonCatalog -> listOf(source.addonName, source.catalogName)
         .filter { it.isNotBlank() }
         .joinToString(" · ")
-        .ifBlank { source.catalogId } + (source.genre?.let { " · $it" } ?: "")
+        .ifBlank { source.catalogId } +
+        (source.genre?.let { " · $it" } ?: "") +
+        (source.search?.let { " · search: $it" } ?: "")
     is VirtualSource.AddonItem -> "Series · ${source.itemId}"
     is VirtualSource.ManualItems -> "Your list · ${source.items.size} items"
     is VirtualSource.PlaylistGroup -> "Playlist group"
@@ -515,6 +520,7 @@ private fun SourcePicker(
     var selectedAddon by remember { mutableStateOf<ManagedAddon?>(null) }
     var selectedCatalog by remember { mutableStateOf<AddonCatalog?>(null) }
     var selectedGenre by remember { mutableStateOf<String?>(null) }
+    var selectedSearch by remember { mutableStateOf("") }
     var search by remember { mutableStateOf("") }
     var items by remember { mutableStateOf<List<MetaPreview>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -581,6 +587,7 @@ private fun SourcePicker(
                                 selectedAddon = addonItem
                                 selectedCatalog = null
                                 selectedGenre = null
+                                selectedSearch = ""
                             }
                         },
                     )
@@ -590,66 +597,115 @@ private fun SourcePicker(
                         PickerList(
                             emptyText = stringResource(Res.string.lucid_tv_catalog_empty),
                             rows = catalogs.map { entry ->
+                                val required = entry.extra.filter { it.isRequired }.map { it.name }
                                 PickerRow(
                                     title = entry.name,
-                                    subtitle = entry.type,
+                                    subtitle = buildString {
+                                        append(entry.type)
+                                        if (required.isNotEmpty()) {
+                                            append(" · needs ")
+                                            append(required.joinToString(", "))
+                                        }
+                                    },
                                 ) {
                                     selectedCatalog = entry
-                                    selectedGenre = null
+                                    selectedGenre = entry.extra
+                                        .firstOrNull { it.name.equals("genre", true) && it.isRequired }
+                                        ?.options
+                                        ?.firstOrNull()
+                                    selectedSearch = ""
                                 }
                             },
                         )
                     }
                     step == PickerMode.CATALOG -> {
-                        val genres = catalog.extra.firstOrNull { it.name == "genre" }?.options.orEmpty()
-                        if (genres.isEmpty()) {
+                        val genreExtra = catalog.extra.firstOrNull { it.name.equals("genre", true) }
+                        val searchExtra = catalog.extra.firstOrNull { it.name.equals("search", true) }
+                        val genres = genreExtra?.options.orEmpty()
+                        val genreRequired = genreExtra?.isRequired == true
+                        val showGenre = genres.isNotEmpty() || genreRequired
+                        val searchRequired = searchExtra?.isRequired == true
+                        val otherRequired = catalog.extra.filter {
+                            it.isRequired &&
+                                !it.name.equals("genre", true) &&
+                                !it.name.equals("search", true) &&
+                                !it.name.equals("skip", true)
+                        }
+                        if (!showGenre && !searchRequired && otherRequired.isEmpty()) {
                             LaunchedEffect(catalog) {
-                                onCatalog(
-                                    VirtualSource.AddonCatalog(
-                                        manifestUrl = addon.manifestUrl,
-                                        addonId = addon.manifest?.id.orEmpty(),
-                                        addonName = addon.displayTitle,
-                                        catalogId = catalog.id,
-                                        catalogName = catalog.name,
-                                        contentType = catalog.type,
-                                        genre = null,
-                                    ),
-                                    null,
-                                )
+                                onCatalog(catalogSourceOf(addon, catalog, null), null)
                             }
                             Box(Modifier.fillMaxWidth().padding(NuvioTokens.Space.s16), contentAlignment = Alignment.Center) {
                                 Text(stringResource(Res.string.lucid_tv_pool_loading), color = MaterialTheme.nuvio.colors.textMuted)
                             }
                         } else {
-                            Text(
-                                text = stringResource(Res.string.lucid_tv_genre_any),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.nuvio.colors.textMuted,
-                            )
-                            Row(
-                                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
-                            ) {
-                                Chip(stringResource(Res.string.lucid_tv_genre_any), selectedGenre == null, { selectedGenre = null })
-                                genres.forEach { genre ->
-                                    Chip(genre, selectedGenre == genre, { selectedGenre = genre })
+                            if (genres.isNotEmpty()) {
+                                Text(
+                                    text = if (genreRequired) {
+                                        stringResource(Res.string.lucid_tv_genre_required)
+                                    } else {
+                                        stringResource(Res.string.lucid_tv_genre_any)
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                                ) {
+                                    if (!genreRequired) {
+                                        Chip(stringResource(Res.string.lucid_tv_genre_any), selectedGenre == null, { selectedGenre = null })
+                                    }
+                                    genres.forEach { genre ->
+                                        Chip(genre, selectedGenre == genre, { selectedGenre = genre })
+                                    }
                                 }
+                            } else if (genreRequired) {
+                                Text(
+                                    text = stringResource(Res.string.lucid_tv_genre_required),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                                NuvioInputField(
+                                    value = selectedGenre.orEmpty(),
+                                    onValueChange = { selectedGenre = it },
+                                    placeholder = stringResource(Res.string.lucid_tv_genre),
+                                )
                             }
+                            if (searchRequired) {
+                                Text(
+                                    text = stringResource(Res.string.lucid_tv_search_required),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                                NuvioInputField(
+                                    value = selectedSearch,
+                                    onValueChange = { selectedSearch = it },
+                                    placeholder = stringResource(Res.string.lucid_tv_search_items),
+                                )
+                            }
+                            if (otherRequired.isNotEmpty()) {
+                                Text(
+                                    text = otherRequired.joinToString(", ") { it.name } + " is required by this catalog.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                            }
+                            val canChoose = (!genreRequired || !selectedGenre.isNullOrBlank()) &&
+                                (!searchRequired || selectedSearch.isNotBlank())
                             DialogButtons {
                                 DialogButton(text = stringResource(Res.string.action_cancel), onClick = onDismiss)
                                 DialogButton(
                                     text = stringResource(Res.string.lucid_tv_select_catalog),
                                     style = DialogButtonStyle.Primary,
+                                    enabled = canChoose,
                                     onClick = {
                                         onCatalog(
-                                            VirtualSource.AddonCatalog(
-                                                manifestUrl = addon.manifestUrl,
-                                                addonId = addon.manifest?.id.orEmpty(),
-                                                addonName = addon.displayTitle,
-                                                catalogId = catalog.id,
-                                                catalogName = catalog.name,
-                                                contentType = catalog.type,
-                                                genre = selectedGenre,
+                                            catalogSourceOf(
+                                                addon = addon,
+                                                catalog = catalog,
+                                                genre = selectedGenre?.takeIf { it.isNotBlank() },
+                                                search = selectedSearch.takeIf { it.isNotBlank() },
                                             ),
                                             null,
                                         )
@@ -709,7 +765,12 @@ private fun SourcePicker(
     }
 }
 
-private fun catalogSourceOf(addon: ManagedAddon, catalog: AddonCatalog, genre: String?) = VirtualSource.AddonCatalog(
+private fun catalogSourceOf(
+    addon: ManagedAddon,
+    catalog: AddonCatalog,
+    genre: String?,
+    search: String? = null,
+) = VirtualSource.AddonCatalog(
     manifestUrl = addon.manifestUrl,
     addonId = addon.manifest?.id.orEmpty(),
     addonName = addon.displayTitle,
@@ -717,6 +778,7 @@ private fun catalogSourceOf(addon: ManagedAddon, catalog: AddonCatalog, genre: S
     catalogName = catalog.name,
     contentType = catalog.type,
     genre = genre,
+    search = search,
 )
 
 @Composable

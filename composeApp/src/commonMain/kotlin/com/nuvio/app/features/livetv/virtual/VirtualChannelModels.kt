@@ -50,6 +50,8 @@ sealed interface VirtualSource {
         val catalogName: String = "",
         val contentType: String,
         val genre: String? = null,
+        /** Value for a catalog that requires a search extra (for example "Cinemeta search"). */
+        val search: String? = null,
     ) : VirtualSource
 
     /** One catalog item: a movie for a loop, or a series for a marathon. */
@@ -171,9 +173,9 @@ data class VirtualChannelSpec(
     val updatedAtMs: Long = 0L,
     val schemaVersion: Int = 1,
     /**
-     * Generated from an installed add-on catalog. Auto channels are not saved with the custom
-     * channels; they are rebuilt from the installed add-ons on every launch, exactly like the TV
-     * app, so adding or removing an add-on adds or removes its channels.
+     * Legacy marker from builds that generated a channel per installed catalog. Nothing is
+     * auto-generated any more, and saved entries with this flag are dropped on load. The field
+     * stays in the JSON so packs written by the TV app still round-trip.
      */
     val auto: Boolean = false,
 ) {

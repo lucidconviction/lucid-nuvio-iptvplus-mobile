@@ -102,8 +102,6 @@ import nuvio.composeapp.generated.resources.livetv_hours_back
 import nuvio.composeapp.generated.resources.livetv_hours_back_description
 import nuvio.composeapp.generated.resources.livetv_lucid_auto
 import nuvio.composeapp.generated.resources.livetv_lucid_auto_description
-import nuvio.composeapp.generated.resources.livetv_lucid_series
-import nuvio.composeapp.generated.resources.livetv_lucid_series_description
 import nuvio.composeapp.generated.resources.livetv_lucid_tv
 import nuvio.composeapp.generated.resources.livetv_delete_source_message
 import nuvio.composeapp.generated.resources.livetv_disable
@@ -510,15 +508,6 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
                         VirtualChannelRepository.ensureLoaded()
                         update { it.copy(lucidTvEnabled = on) }
                     },
-                )
-                SettingsGroupDivider(isTablet = isTablet)
-                SettingsSwitchRow(
-                    title = stringResource(Res.string.livetv_lucid_series),
-                    description = stringResource(Res.string.livetv_lucid_series_description),
-                    checked = settings.lucidAutoSeriesCatalogs,
-                    enabled = settings.lucidTvEnabled,
-                    isTablet = isTablet,
-                    onCheckedChange = { on -> update { it.copy(lucidAutoSeriesCatalogs = on) } },
                 )
             }
         }

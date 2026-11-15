@@ -67,7 +67,6 @@ import nuvio.composeapp.generated.resources.lucid_tv_delete
 import nuvio.composeapp.generated.resources.lucid_tv_delete_confirm
 import nuvio.composeapp.generated.resources.lucid_tv_description
 import nuvio.composeapp.generated.resources.lucid_tv_empty
-import nuvio.composeapp.generated.resources.lucid_tv_empty_auto
 import nuvio.composeapp.generated.resources.lucid_tv_export
 import nuvio.composeapp.generated.resources.lucid_tv_export_hint
 import nuvio.composeapp.generated.resources.lucid_tv_import
@@ -78,6 +77,8 @@ import nuvio.composeapp.generated.resources.lucid_tv_pool_count
 import nuvio.composeapp.generated.resources.lucid_tv_pool_empty
 import nuvio.composeapp.generated.resources.lucid_tv_pool_loading
 import nuvio.composeapp.generated.resources.lucid_tv_refresh_all
+import nuvio.composeapp.generated.resources.lucid_tv_remove_all
+import nuvio.composeapp.generated.resources.lucid_tv_remove_all_confirm
 import nuvio.composeapp.generated.resources.lucid_tv_title
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
@@ -112,6 +113,7 @@ fun VirtualChannelsScreen(
     var importText by remember { mutableStateOf("") }
     var importMessage by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<VirtualChannelSpec?>(null) }
+    var confirmRemoveAll by remember { mutableStateOf(false) }
     val importInvalid = stringResource(Res.string.lucid_tv_import_invalid)
     val scope = rememberCoroutineScope()
 
@@ -154,6 +156,12 @@ fun VirtualChannelsScreen(
                         menu = false
                         showPlaybackSettings = true
                     })
+                    if (specs.isNotEmpty()) {
+                        MenuItem(text = stringResource(Res.string.lucid_tv_remove_all), onClick = {
+                            menu = false
+                            confirmRemoveAll = true
+                        })
+                    }
                 }
             },
         )
@@ -164,15 +172,15 @@ fun VirtualChannelsScreen(
             modifier = Modifier.padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s4),
         )
         if (allChannels.isNotEmpty()) {
-            val automatic = (allChannels.size - specs.count { it.enabled }).coerceAtLeast(0)
+            val hidden = specs.count { !it.enabled }
             Text(
                 text = buildString {
                     append(allChannels.size)
                     append(if (allChannels.size == 1) " channel in the guide" else " channels in the guide")
-                    if (automatic > 0) {
+                    if (hidden > 0) {
                         append(" · ")
-                        append(automatic)
-                        append(" automatic from your add-ons")
+                        append(hidden)
+                        append(" hidden")
                     }
                 },
                 style = MaterialTheme.typography.labelSmall,
@@ -186,11 +194,7 @@ fun VirtualChannelsScreen(
                 verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
             ) {
                 Text(
-                    text = if (allChannels.isEmpty()) {
-                        stringResource(Res.string.lucid_tv_empty)
-                    } else {
-                        stringResource(Res.string.lucid_tv_empty_auto)
-                    },
+                    text = stringResource(Res.string.lucid_tv_empty),
                     style = MaterialTheme.typography.bodyMedium,
                     color = tokens.colors.textMuted,
                 )
@@ -309,6 +313,26 @@ fun VirtualChannelsScreen(
                     onClick = {
                         VirtualChannelRepository.delete(spec.id)
                         deleteTarget = null
+                    },
+                )
+            }
+        }
+    }
+
+    if (confirmRemoveAll) {
+        DialogSurface(
+            onDismissRequest = { confirmRemoveAll = false },
+            title = stringResource(Res.string.lucid_tv_remove_all),
+            message = stringResource(Res.string.lucid_tv_remove_all_confirm),
+        ) {
+            DialogButtons {
+                DialogButton(text = stringResource(Res.string.action_cancel), onClick = { confirmRemoveAll = false })
+                DialogButton(
+                    text = stringResource(Res.string.lucid_tv_remove_all),
+                    style = DialogButtonStyle.Destructive,
+                    onClick = {
+                        VirtualChannelRepository.deleteAll()
+                        confirmRemoveAll = false
                     },
                 )
             }

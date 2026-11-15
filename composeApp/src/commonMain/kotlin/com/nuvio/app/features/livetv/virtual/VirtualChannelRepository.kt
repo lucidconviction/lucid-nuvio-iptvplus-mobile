@@ -34,9 +34,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * `LiveTvRepository._channels` (which playlists rebuild), so playlist refreshes cannot remove them.
  * The guide is generated from the same pure schedule as playback.
  *
- * Every installed movie catalog (and, optionally, every series catalog) becomes an automatic
- * channel, like the TV app. Every VOD channel walks a real-runtime queue, so the guide's now/next
- * and the stream use one clock; a failed item is skipped and the queue re-anchors to the next one.
+ * Channels are never generated automatically. The viewer adds only the catalogs they want in the
+ * Channel Studio, so the guide contains exactly the channels they created. Every VOD channel walks
+ * a real-runtime queue, so the guide's now/next and the stream use one clock; a failed item is
+ * skipped and the queue re-anchors to the next one.
  */
 internal object VirtualChannelRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -46,11 +47,11 @@ internal object VirtualChannelRepository {
     private val poolPermits = kotlinx.coroutines.sync.Semaphore(POOL_CONCURRENCY)
     private val runtimeLock = kotlinx.atomicfu.locks.SynchronizedObject()
 
-    /** Channels the viewer made in the studio. These are the ones that get saved and exported. */
+    /** Channels the viewer made in the studio. These are the only channels in the guide. */
     private val _specs = MutableStateFlow<List<VirtualChannelSpec>>(emptyList())
     val specs: StateFlow<List<VirtualChannelSpec>> = _specs.asStateFlow()
 
-    /** Every channel in the guide: automatic add-on catalog channels plus the custom ones. */
+    /** The enabled channels that are currently in the guide. */
     private val _allSpecs = MutableStateFlow<List<VirtualChannelSpec>>(emptyList())
 
     private val _channels = MutableStateFlow<List<LiveChannel>>(emptyList())
@@ -78,7 +79,6 @@ internal object VirtualChannelRepository {
     private val queueStart = HashMap<String, String>()
     /** A skipped item re-anchors the queue so the next programme starts at the skip time. */
     private val scheduleAnchor = HashMap<String, Long>()
-    private var autoSpecs: List<VirtualChannelSpec> = emptyList()
     private var initialized = false
     private var tickerStarted = false
     private var playlistObserverStarted = false
@@ -92,13 +92,20 @@ internal object VirtualChannelRepository {
         if (!initialized) {
             initialized = true
             val stored = codec.decodeSpecs(prefs.currentVirtualChannelsJson())
-            val normalized = normalizeSpecs(stored)
+            // Older builds generated a channel for every installed catalog. Those auto channels
+            // are gone now: the viewer decides what to add, so drop any auto entries saved by a
+            // backup, sync or test build instead of putting them back in the guide.
+            val normalized = normalizeSpecs(stored.filterNot { it.auto })
             _specs.value = normalized
             if (normalized != stored) persistSpecs()
             val decodedPools = codec.decodePools(prefs.currentVirtualPoolsJson())
             val repairedPools = repairPools(decodedPools, normalized)
-            _pools.value = repairedPools
-            if (repairedPools != decodedPools) persistPools()
+            // Pools only exist for saved channels. Remove snapshots left behind by the old
+            // automatic channels and by deleted test channels.
+            val liveIds = normalized.mapTo(HashSet()) { it.id }
+            val prunedPools = repairedPools.filterKeys { it in liveIds }
+            _pools.value = prunedPools
+            if (prunedPools != decodedPools) persistPools()
             _settings.value = codec.decodePlaybackSettings(prefs.currentVirtualSettingsJson())
             rebuildSpecs()
             rebuildChannels()
@@ -133,10 +140,16 @@ internal object VirtualChannelRepository {
             scope.launch {
                 prefs.virtualChannelsJson.collect { raw ->
                     val stored = codec.decodeSpecs(raw)
-                    val decoded = normalizeSpecs(stored)
+                    val decoded = normalizeSpecs(stored.filterNot { it.auto })
                     if (decoded == _specs.value) return@collect
                     _specs.value = decoded
                     if (decoded != stored) persistSpecs()
+                    val liveIds = decoded.mapTo(HashSet()) { it.id }
+                    val prunedPools = _pools.value.filterKeys { it in liveIds }
+                    if (prunedPools != _pools.value) {
+                        _pools.value = prunedPools
+                        persistPools()
+                    }
                     rebuildSpecs()
                     rebuildChannels()
                     rebuildWindow()
@@ -162,8 +175,9 @@ internal object VirtualChannelRepository {
         }
         if (!addonObserverStarted) {
             addonObserverStarted = true
-            // Installed add-ons decide which automatic channels exist, like the TV app. Rebuild
-            // when a manifest arrives, a catalog changes or an add-on is disabled.
+            // Channel definitions do not depend on add-ons, but a rules channel built before the
+            // manifests arrived still needs its pool. Rebroadcast when manifests change so Lucid
+            // TV can fill that pool; no channels are created here.
             scope.launch {
                 AddonRepository.uiState.collect { state ->
                     rebuildSpecs()
@@ -229,11 +243,7 @@ internal object VirtualChannelRepository {
     fun update(spec: VirtualChannelSpec) {
         ensureLoaded()
         val now = LiveTvClock.nowMs()
-        // An automatic channel is edited by saving a custom override with the same id. That
-        // source stops being auto-generated, so the channel does not appear twice.
-        val before = _specs.value.firstOrNull { it.id == spec.id }
-            ?: _allSpecs.value.firstOrNull { it.id == spec.id }
-            ?: return
+        val before = _specs.value.firstOrNull { it.id == spec.id } ?: return
         val updated = spec.copy(
             name = spec.name.trim().ifBlank { before.name },
             group = VirtualChannels.DEFAULT_GROUP,
@@ -259,6 +269,32 @@ internal object VirtualChannelRepository {
         _specs.value = _specs.value.filterNot { it.id == id }
         _pools.value = _pools.value - id
         _errors.value = _errors.value - id
+        kotlinx.atomicfu.locks.synchronized(runtimeLock) {
+            lastAttemptMs.remove(id)
+            queueStart.remove(id)
+            scheduleAnchor.remove(id)
+            unavailable.keys.removeAll { it.startsWith("$id|") }
+        }
+        persistSpecs()
+        persistPools()
+        rebuildSpecs()
+        rebuildChannels()
+        rebuildWindow()
+    }
+
+    /** Removes every Lucid TV channel and its cached guide data. Add-ons and playlists stay. */
+    fun deleteAll() {
+        ensureLoaded()
+        if (_specs.value.isEmpty()) return
+        _specs.value = emptyList()
+        _pools.value = emptyMap()
+        _errors.value = emptyMap()
+        kotlinx.atomicfu.locks.synchronized(runtimeLock) {
+            lastAttemptMs.clear()
+            queueStart.clear()
+            scheduleAnchor.clear()
+            unavailable.clear()
+        }
         persistSpecs()
         persistPools()
         rebuildSpecs()
@@ -321,8 +357,10 @@ internal object VirtualChannelRepository {
                 }
                 result.onSuccess { items ->
                     poolMutex.withLock {
-                        _pools.value = _pools.value + (id to VirtualPoolSnapshot(items = items, fetchedAtMs = LiveTvClock.nowMs()))
-                        _errors.value = _errors.value - id
+                        if (_specs.value.any { it.id == id }) {
+                            _pools.value = _pools.value + (id to VirtualPoolSnapshot(items = items, fetchedAtMs = LiveTvClock.nowMs()))
+                            _errors.value = _errors.value - id
+                        }
                     }
                     persistPools()
                     rebuildChannels()
@@ -331,8 +369,10 @@ internal object VirtualChannelRepository {
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     val message = error.message?.takeIf { it.isNotBlank() } ?: "Could not load this channel's catalog"
                     poolMutex.withLock {
-                        _pools.value = _pools.value + (id to (_pools.value[id] ?: VirtualPoolSnapshot()).copy(error = message))
-                        _errors.value = _errors.value + (id to message)
+                        if (_specs.value.any { it.id == id }) {
+                            _pools.value = _pools.value + (id to (_pools.value[id] ?: VirtualPoolSnapshot()).copy(error = message))
+                            _errors.value = _errors.value + (id to message)
+                        }
                     }
                     rebuildWindow()
                 }
@@ -448,6 +488,7 @@ internal object VirtualChannelRepository {
                     type = source.contentType,
                     catalogId = source.catalogId,
                     genre = source.genre,
+                    search = source.search,
                     skip = skip,
                     maxItems = (previewCap - items.size).coerceAtMost(100),
                 )
@@ -706,32 +747,21 @@ internal object VirtualChannelRepository {
     // ---------------------------------------------------------------- channels and EPG
 
     /**
-     * Automatic channels from every installed movie catalog (and series catalogs when enabled).
-     * They are generated the same way as the TV app: a stable id from the addon, catalog and
-     * type, so a channel keeps its number, schedule and cached pool across launches.
+     * Lucid TV only shows channels the viewer added in the Channel Studio. Catalogs are never
+     * turned into channels automatically, so the guide stays exactly what the viewer chose.
      */
     private fun rebuildSpecs() {
         val liveSettings = prefs.settings.value
         val custom = _specs.value
         if (!liveSettings.lucidTvEnabled) {
-            autoSpecs = emptyList()
             _allSpecs.value = emptyList()
             return
         }
-        val usedByCustom = custom.filter { !it.auto }.mapNotNull { spec ->
-            val source = spec.source as? VirtualSource.AddonCatalog ?: return@mapNotNull null
-            VirtualAutoChannels.sourceKey(source.manifestUrl, source.catalogId, source.contentType)
-        }.toSet()
-        autoSpecs = VirtualAutoChannels.discover(
-            addons = AddonRepository.uiState.value.addons,
-            includeSeries = liveSettings.lucidAutoSeriesCatalogs,
-            excludedSources = usedByCustom,
-        )
         val hadChannels = _allSpecs.value.isNotEmpty()
-        val all = autoSpecs + custom.filter { it.enabled }
+        val all = custom.filter { it.enabled }
         _allSpecs.value = all
-        // When automatic channels are the only Live TV source (no playlist), the guide must
-        // still start Live TV's repository so Home rows and the guide have their channel list.
+        // When Lucid TV is the only Live TV source (no playlist), the guide must still start
+        // Live TV's repository so Home rows and the guide have their channel list.
         if (!hadChannels && all.isNotEmpty()) {
             runCatching { LiveTvRepository.ensureLoaded() }
         }

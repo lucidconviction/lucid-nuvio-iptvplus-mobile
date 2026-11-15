@@ -2638,10 +2638,8 @@
     <string name="livetv_section_guides">TV Guides</string>
     <string name="livetv_section_general">Updates</string>
     <string name="livetv_lucid_tv">Lucid TV</string>
-    <string name="livetv_lucid_auto">Lucid TV channels</string>
-    <string name="livetv_lucid_auto_description">Show Lucid TV in the guide. Every installed movie catalog becomes a channel automatically; custom channels are managed in the Channel Studio.</string>
-    <string name="livetv_lucid_series">Also use series catalogs</string>
-    <string name="livetv_lucid_series_description">Series catalogs become episode queues with their real runtimes.</string>
+    <string name="livetv_lucid_auto">Show Lucid TV in the guide</string>
+    <string name="livetv_lucid_auto_description">Only channels you add in the Lucid TV Channel Studio appear in the guide. Nothing is added automatically.</string>
     <string name="livetv_section_watching">Watching</string>
     <string name="livetv_section_channel_display">Channel Display</string>
     <string name="livetv_phone_logos">Channel logos</string>
@@ -2920,13 +2918,14 @@
     <string name="lucid_tv_title">Lucid TV</string>
     <string name="lucid_tv_channels">Lucid TV channels</string>
     <string name="lucid_tv_channel_offline">This Lucid TV channel is offline right now</string>
-    <string name="lucid_tv_description">Virtual channels made from your add-on catalogs, series and playlists</string>
+    <string name="lucid_tv_description">Your own channels from any add-on catalog, series or playlist group</string>
     <string name="lucid_tv_add">Add channel</string>
     <string name="lucid_tv_refresh_all">Refresh all</string>
     <string name="lucid_tv_import">Import</string>
     <string name="lucid_tv_export">Export</string>
-    <string name="lucid_tv_empty">No Lucid TV channels yet. Add one from an add-on catalog or a playlist group.</string>
-    <string name="lucid_tv_empty_auto">Your add-on catalogs already appear automatically in the Lucid TV group. Add a custom channel for a marathon, a movie collection or a playlist relay.</string>
+    <string name="lucid_tv_remove_all">Remove all channels</string>
+    <string name="lucid_tv_remove_all_confirm">Remove every Lucid TV channel and its cached guide data? Your add-ons, catalogs and playlists are not touched.</string>
+    <string name="lucid_tv_empty">No Lucid TV channels yet. Add one from any add-on catalog or playlist group.</string>
     <string name="lucid_tv_editor_title">Lucid TV channel</string>
     <string name="lucid_tv_name">Name</string>
     <string name="lucid_tv_group">Group</string>
@@ -2969,5 +2968,8 @@
     <string name="lucid_tv_select_item">Choose a series</string>
     <string name="lucid_tv_select_group">Choose a playlist group</string>
     <string name="lucid_tv_genre_any">All genres</string>
+    <string name="lucid_tv_genre">Genre</string>
+    <string name="lucid_tv_genre_required">Genre (required by this catalog)</string>
+    <string name="lucid_tv_search_required">Search (required by this catalog)</string>
     <string name="lucid_tv_search_items">Search…</string>
 </resources>

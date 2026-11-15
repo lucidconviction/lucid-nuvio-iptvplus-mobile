@@ -23,6 +23,7 @@ class VirtualChannelCodecTest {
             catalogName = "Top movies",
             contentType = "movie",
             genre = "Action",
+            search = "Dune",
         ),
         pool = VirtualPoolRules(maxItems = 500, refreshHours = 12, minYear = 1990, maxYear = 1999, minRating = 6f),
         playout = VirtualPlayout(mode = VirtualPlayoutMode.ROTATE, slotMinutes = 90, salt = 3),
@@ -47,6 +48,7 @@ class VirtualChannelCodecTest {
         assertEquals(9001, spec.number)
         val source = spec.source as VirtualSource.AddonCatalog
         assertEquals("Action", source.genre)
+        assertEquals("Dune", source.search)
         assertEquals(1990, spec.pool.minYear)
         assertEquals(6f, spec.pool.minRating)
         assertEquals(20, spec.join.maxStartPercent)
