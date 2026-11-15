@@ -369,7 +369,13 @@ private fun ExoPlayerSurface(
             mimeType == MimeTypes.APPLICATION_MPD ||
             mimeType == MimeTypes.APPLICATION_SS
         if (!playerSettings.vodCacheEnabled || useYoutubeChunkedPlayback || adaptive) {
-            upstream
+            // A DefaultDataSource at the end of the chain can open both the playlist and the
+            // data: init segment this adds. Only HLS needs the check.
+            if (mimeType == MimeTypes.APPLICATION_M3U8 && !useYoutubeChunkedPlayback) {
+                HlsParameterSetInitDataSource.Factory(upstream)
+            } else {
+                upstream
+            }
         } else {
             VodCache.wrap(
                 context = context,

@@ -129,11 +129,7 @@ private object PlayerNowPlayingServiceController {
                 .setAction(ACTION_START_FOREGROUND)
                 .putExtra(EXTRA_START_NOTIFICATION, command.notification)
             val started = runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    command.context.startForegroundService(intent)
-                } else {
-                    command.context.startService(intent)
-                }
+                startPlaybackService(command.context, intent)
             }.onFailure { error ->
                 Log.w(NOW_PLAYING_TAG, "Unable to start playback service", error)
             }.isSuccess
@@ -148,6 +144,20 @@ private object PlayerNowPlayingServiceController {
                 ?.notify(NOW_PLAYING_NOTIFICATION_ID, command.notification)
         }.onFailure { error ->
             Log.w(NOW_PLAYING_TAG, "Unable to publish playback notification", error)
+        }
+    }
+
+    /**
+     * Android 8+ requires [Context.startForegroundService] from the background, but some OEM
+     * builds reject that first start. Starting a normal service first and only promoting to a
+     * foreground service when the OS refuses is the less crash-prone order.
+     */
+    private fun startPlaybackService(context: Context, intent: Intent) {
+        try {
+            context.startService(intent)
+        } catch (error: IllegalStateException) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) throw error
+            context.startForegroundService(intent)
         }
     }
 
