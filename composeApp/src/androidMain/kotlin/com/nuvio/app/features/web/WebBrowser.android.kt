@@ -831,13 +831,19 @@ internal class AndroidWebBrowserController(
                     // site's own code or a player frame. Any filter-engine error must fail open:
                     // an exception here runs on Chromium's worker thread and would kill the app.
                     val adBlocked = runCatching {
-                        (allowBroadRules &&
-                            WebAdBlocker.isBlocked(url, includeExtra = includeExtra)) ||
-                            WebAdBlocker.matchesPattern(
-                                request,
-                                pageHost,
-                                includeFilterRules = includeExtra,
-                            )
+                        if (!allowBroadRules) {
+                            // Player bundles and API calls must survive: blocking an ad SDK
+                            // script often stops the site's own player from initialising.
+                            // Popups and ad iframes are handled by the other rules.
+                            false
+                        } else {
+                            WebAdBlocker.isBlocked(url, includeExtra = includeExtra) ||
+                                WebAdBlocker.matchesPattern(
+                                    request,
+                                    pageHost,
+                                    includeFilterRules = includeExtra,
+                                )
+                        }
                     }.getOrDefault(false)
                     if (adBlocked) {
                         noteAdBlocked(host, type)
