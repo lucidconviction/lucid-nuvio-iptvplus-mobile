@@ -90,6 +90,7 @@ import com.nuvio.app.features.livetv.sports.SportsMatcher
 import com.nuvio.app.features.livetv.sports.SportsRecordings
 import com.nuvio.app.features.livetv.sports.SportsReplays
 import com.nuvio.app.features.livetv.sports.SportsRepository
+import com.nuvio.app.features.livetv.sports.SportsStreamValidation
 import com.nuvio.app.features.livetv.sports.Standings
 import com.nuvio.app.features.livetv.sports.TeamInfo
 import com.nuvio.app.features.livetv.ui.ChannelLogo
@@ -170,6 +171,15 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
     val hide = settings.hideScores
     val showScore = ev.hasScore && !hide
     val matches = allMatches[ev.id].orEmpty()
+    val streamHealth by SportsStreamValidation.state.collectAsStateWithLifecycle()
+    LaunchedEffect(ev.id, matches) {
+        SportsStreamValidation.ensureChecked(ev.id, matches)
+    }
+    val checkingStreams = streamHealth.checking.contains(ev.id)
+    val checkedStreams = streamHealth.checked.contains(ev.id)
+    val visibleMatches = remember(matches, streamHealth, ev.id) {
+        SportsStreamValidation.visibleMatches(ev.id, matches)
+    }
     val reminded = follows.reminders.any { it.eventId == ev.id }
     val recording = remember(schedules, ev.id) { SportsRecordings.forEvent(ev, schedules) }
     var askRecord by remember(ev.id) { mutableStateOf(false) }
@@ -183,7 +193,7 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
     LaunchedEffect(ev.leagueId, ev.state) {
         if (ev.state == GameState.PRE && !hide && league != null && repo.mayHaveTable(league)) runCatching { repo.standings(ev.leagueId) }
     }
-    val grouped = remember(matches) { SportsMatcher.groupCopies(matches) }
+    val grouped = remember(visibleMatches) { SportsMatcher.groupCopies(visibleMatches) }
     val eventVideosOn = YouTubeHost.videosAvailable
     val eventVideoTitle = stringResource(
         if (ev.state == GameState.POST) Res.string.livetv_sports_post_event_videos
@@ -257,7 +267,7 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
                 if (ev.state != GameState.POST && ev.hasTime) {
                     Chip(label = stringResource(if (reminded) Res.string.livetv_sports_reminded else Res.string.livetv_sports_remind), selected = reminded, onClick = { repo.toggleReminder(ev) })
                 }
-                if (ev.state != GameState.POST && ev.hasTime && hasChannels) {
+                if (ev.state != GameState.POST && ev.hasTime && hasChannels && visibleMatches.isNotEmpty()) {
                     Chip(
                         label = if (recording != null) "● Recording set" else stringResource(Res.string.livetv_sports_record),
                         selected = recording != null,
@@ -266,8 +276,15 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
                 }
                 if (hasChannels) Chip(label = stringResource(Res.string.livetv_sports_fix_channel), selected = false, onClick = { fixing = true })
                 if (league != null && repo.mayHaveTable(league)) Chip(label = "Table", selected = false, onClick = { actions.onOpenLeague(league) })
-                if (matches.size > 1) {
+                if (visibleMatches.size > 1) {
                     Chip(label = "🌐 " + ChannelRegions.shortName(settings.channelRegion), selected = settings.channelRegion.isNotBlank(), onClick = { regionPick = true })
+                }
+                if (hasChannels && matches.isNotEmpty()) {
+                    Chip(
+                        label = if (checkingStreams) "Checking streams…" else "Check streams",
+                        selected = checkingStreams,
+                        onClick = { if (!checkingStreams) SportsStreamValidation.refresh(ev.id, matches) },
+                    )
                 }
             }
         }
@@ -281,7 +298,15 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
         if (grouped.isEmpty()) {
             item(key = "channels-none") {
                 Text(
-                    if (!hasChannels) "Add a playlist in Live TV settings to watch games." else if (matching) "Looking through your channels…" else stringResource(Res.string.livetv_sports_no_channels),
+                    when {
+                        !hasChannels -> "Add a playlist in Live TV settings to watch games."
+                        checkingStreams || (matches.isNotEmpty() && !checkedStreams) ->
+                            "Checking streams to hide dead links…"
+                        matches.isNotEmpty() && visibleMatches.isEmpty() ->
+                            "No working streams found for this game. Check again in a moment."
+                        matching -> "Looking through your channels…"
+                        else -> stringResource(Res.string.livetv_sports_no_channels)
+                    },
                     style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted,
                 )
             }
@@ -333,11 +358,11 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
     }
 
     if (askRecord) {
-        RecordDialog(ev, matches, use24h, onRecord = { m, minutes -> askRecord = false; NuvioToastController.show(SportsRecordings.record(ev, m, minutes)) }, onDismiss = { askRecord = false })
+        RecordDialog(ev, visibleMatches, use24h, onRecord = { m, minutes -> askRecord = false; NuvioToastController.show(SportsRecordings.record(ev, m, minutes)) }, onDismiss = { askRecord = false })
     }
-    if (fixing) FixChannelDialog(ev, matches, onDismiss = { fixing = false })
+    if (fixing) FixChannelDialog(ev, visibleMatches, onDismiss = { fixing = false })
     if (regionPick) {
-        RegionDialog(matches.map { SportsMatcher.channelRegionCode(it.channel) }, settings.channelRegion, onPick = { repo.updateSettings { s -> s.copy(channelRegion = it) }; regionPick = false }, onDismiss = { regionPick = false })
+        RegionDialog(visibleMatches.map { SportsMatcher.channelRegionCode(it.channel) }, settings.channelRegion, onPick = { repo.updateSettings { s -> s.copy(channelRegion = it) }; regionPick = false }, onDismiss = { regionPick = false })
     }
     channelMenu?.let { m -> ChannelMenuSheet(ev, m, actions, onDismiss = { channelMenu = null }) }
     teamSheet?.let { t -> TeamSheet(t, actions, onDismiss = { teamSheet = null }) }

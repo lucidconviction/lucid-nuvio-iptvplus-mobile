@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,7 +22,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -82,6 +87,7 @@ import com.nuvio.app.core.ui.Menu
 import com.nuvio.app.core.ui.MenuItem
 import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioScreenHeader
+import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvio
@@ -117,8 +123,32 @@ fun WebAppsScreen(
     var showScripts by remember { mutableStateOf(false) }
     var showMedia by remember { mutableStateOf(false) }
     var showBrowserMenu by remember { mutableStateOf(false) }
+    var showShieldLog by remember { mutableStateOf(false) }
+    var autoPlayDismissed by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
+
+    LaunchedEffect(browserState.downloadMessage) {
+        val message = browserState.downloadMessage ?: return@LaunchedEffect
+        if (message.startsWith("Saved") ||
+            message.contains("failed", ignoreCase = true) ||
+            message.contains("cannot", ignoreCase = true) ||
+            message.contains("Could not", ignoreCase = true) ||
+            message.startsWith("Preparing") ||
+            message.startsWith("Recording")
+        ) {
+            NuvioToastController.show(message, 3_500L)
+        }
+        controller.clearDownloadMessage()
+    }
+    LaunchedEffect(browserState.autoPlayCandidate, settings.autoPlayMode) {
+        val candidate = browserState.autoPlayCandidate ?: return@LaunchedEffect
+        if (settings.autoPlayMode == WebAutoPlayMode.Best) {
+            controller.consumeAutoPlayCandidate()
+            controller.pause()
+            onPlayMedia(candidate)
+        }
+    }
 
     LaunchedEffect(settings, scripts) {
         controller.applySettings(settings, scripts)
@@ -141,6 +171,8 @@ fun WebAppsScreen(
         if (url != null) {
             controller.load(url)
             address = url
+        } else {
+            controller.consumeAutoPlayCandidate()
         }
     }
     LaunchedEffect(browserState.url) {
@@ -351,6 +383,37 @@ fun WebAppsScreen(
                         showBrowserMenu = false
                         controller.scanForMedia()
                     })
+                    MenuItem(
+                        text = "Shield log · ${browserState.shieldEvents.size} events · ${browserState.adsSkipped} ads skipped",
+                        onClick = {
+                            showBrowserMenu = false
+                            showShieldLog = true
+                        },
+                    )
+                    MenuItem(
+                        text = "Ad skip: " + when (settings.adSkipMode) {
+                            WebAdSkipMode.Off -> "Off"
+                            WebAdSkipMode.ClickOnly -> "Skip button"
+                            WebAdSkipMode.ClickAndFastForward -> "Skip + fast-forward"
+                            WebAdSkipMode.Aggressive -> "Aggressive"
+                        },
+                        onClick = {
+                            showBrowserMenu = false
+                            val next = when (settings.adSkipMode) {
+                                WebAdSkipMode.Off -> WebAdSkipMode.ClickOnly
+                                WebAdSkipMode.ClickOnly -> WebAdSkipMode.ClickAndFastForward
+                                WebAdSkipMode.ClickAndFastForward -> WebAdSkipMode.Aggressive
+                                WebAdSkipMode.Aggressive -> WebAdSkipMode.Off
+                            }
+                            val updated = settings.copy(adSkipMode = next)
+                            WebAppsRepository.updateSettings(updated)
+                            controller.applySettings(updated, scripts)
+                        },
+                    )
+                    MenuItem(text = "Open browser test page", onClick = {
+                        showBrowserMenu = false
+                        controller.openTestPage()
+                    })
                     MenuItem(text = "Play detected video", onClick = {
                         showBrowserMenu = false
                         showMedia = true
@@ -427,18 +490,12 @@ fun WebAppsScreen(
                     color = tokens.colors.accent,
                 )
             }
-            // Saved Web-Apps stay one tap away while the browser is open. A compact grid keeps
-            // every site visible without covering the page or turning into a horizontal scroller.
-            WebAppTabGrid(
-                sites = sites,
-                currentUrl = browserState.url.ifBlank { activeUrl.orEmpty() },
-                onOpen = { site -> openSavedSite(site) },
-            )
+            // Saved Web-Apps stay one thumb-tap away while the browser is open. The strip sits at
+            // the bottom so it never covers the site's own header or menu.
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .padding(bottom = NuvioTokens.Space.s16),
+                    .fillMaxWidth(),
             ) {
                 WebBrowserHost(controller = controller, modifier = Modifier.fillMaxSize())
                 browserState.error?.let { error ->
@@ -481,8 +538,15 @@ fun WebAppsScreen(
                     }
                 }
             }
+            WebAppBottomTabs(
+                sites = sites,
+                currentUrl = browserState.url.ifBlank { activeUrl.orEmpty() },
+                onOpen = { site -> openSavedSite(site) },
+                onAdd = { showAddSite = true },
+            )
         }
         PlatformBackHandler(enabled = true) {
+            if (controller.exitFullscreen()) return@PlatformBackHandler
             if (controller.state.value.canGoBack) controller.goBack() else activeUrl = null
         }
     }
@@ -530,6 +594,7 @@ fun WebAppsScreen(
             sources = browserState.detectedMedia,
             onPlay = { source ->
                 showMedia = false
+                controller.consumeAutoPlayCandidate()
                 controller.pause()
                 onPlayMedia(source)
             },
@@ -537,7 +602,40 @@ fun WebAppsScreen(
                 showMedia = false
                 controller.playInBrowser(source)
             },
+            onDownload = { source ->
+                showMedia = false
+                controller.download(source)
+            },
             onDismiss = { showMedia = false },
+        )
+    }
+
+    browserState.autoPlayCandidate?.let { candidate ->
+        if (settings.autoPlayMode == WebAutoPlayMode.Ask && autoPlayDismissed != candidate.url) {
+            AutoPlayDialog(
+                candidate = candidate,
+                alternatives = browserState.autoPlayAlternatives,
+                onPlay = { source ->
+                    autoPlayDismissed = candidate.url
+                    controller.consumeAutoPlayCandidate()
+                    controller.pause()
+                    onPlayMedia(source)
+                },
+                onStay = {
+                    autoPlayDismissed = candidate.url
+                    controller.consumeAutoPlayCandidate()
+                },
+            )
+        }
+    }
+
+    if (showShieldLog) {
+        ShieldLogDialog(
+            events = browserState.shieldEvents,
+            adsSkipped = browserState.adsSkipped,
+            adsFastForwarded = browserState.adsFastForwarded,
+            adSecondsSaved = browserState.adSecondsSaved,
+            onDismiss = { showShieldLog = false },
         )
     }
 
@@ -563,27 +661,21 @@ fun WebAppsScreen(
 }
 
 @Composable
-private fun WebAppTabGrid(
+private fun WebAppBottomTabs(
     sites: List<SavedWebApp>,
     currentUrl: String,
     onOpen: (SavedWebApp) -> Unit,
+    onAdd: () -> Unit = {},
 ) {
-    if (sites.isEmpty()) return
     val tokens = MaterialTheme.nuvio
     val currentHost = normalizeWebHost(currentUrl)
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(150.dp),
+    LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 132.dp),
-        contentPadding = PaddingValues(
-            start = NuvioTokens.Space.s12,
-            end = NuvioTokens.Space.s12,
-            top = NuvioTokens.Space.s6,
-            bottom = NuvioTokens.Space.s6,
-        ),
+            .background(tokens.colors.surface)
+            .padding(vertical = NuvioTokens.Space.s4),
+        contentPadding = PaddingValues(horizontal = NuvioTokens.Space.s10),
         horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
-        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
     ) {
         items(sites, key = { it.id }) { site ->
             val host = normalizeWebHost(site.url)
@@ -591,14 +683,14 @@ private fun WebAppTabGrid(
             val icon = site.iconUrl ?: webFaviconUrl(site.url)
             Surface(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
+                    .height(40.dp)
+                    .widthIn(min = 92.dp, max = 176.dp)
                     .clip(tokens.shapes.compactCard)
                     .clickable { onOpen(site) },
                 color = if (active) {
                     tokens.colors.accent.copy(alpha = 0.18f)
                 } else {
-                    tokens.colors.surface
+                    tokens.colors.surfaceElevated
                 },
                 shape = tokens.shapes.compactCard,
                 border = if (active) BorderStroke(1.dp, tokens.colors.accent) else null,
@@ -630,6 +722,26 @@ private fun WebAppTabGrid(
                         fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        item(key = "add-web-app") {
+            Surface(
+                modifier = Modifier
+                    .height(40.dp)
+                    .width(44.dp)
+                    .clip(tokens.shapes.compactCard)
+                    .clickable(onClick = onAdd),
+                color = tokens.colors.surfaceElevated,
+                shape = tokens.shapes.compactCard,
+            ) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = "Add web app",
+                        tint = tokens.colors.accent,
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }
@@ -788,41 +900,115 @@ private fun WebAppsSettingsDialog(
 ) {
     val tokens = MaterialTheme.nuvio
     var showAllowedSites by remember { mutableStateOf(false) }
+    var customUa by remember(settings.customUserAgent) { mutableStateOf(settings.customUserAgent) }
     DialogSurface(onDismissRequest = onDismiss, title = "Browser settings") {
-        SettingSwitch("Block redirects to other sites", settings.redirectProtection) {
-            onUpdate(settings.copy(redirectProtection = it))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 540.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+        ) {
+            SettingSwitch("Block redirects to other sites", settings.redirectProtection) {
+                onUpdate(settings.copy(redirectProtection = it))
+            }
+            SettingSwitch("Block popups from other sites", settings.popupProtection) {
+                onUpdate(settings.copy(popupProtection = it))
+            }
+            SettingSwitch("uBlock / AdGuard-style ad blocking", settings.adBlockEnabled) {
+                onUpdate(settings.copy(adBlockEnabled = it))
+            }
+            SettingSwitch("Hide ad placeholders without touching players", settings.cosmeticFiltering) {
+                onUpdate(settings.copy(cosmeticFiltering = it))
+            }
+            ChoiceSetting(
+                label = "Auto-play detected videos in Nuvio",
+                values = listOf("Off", "Ask", "Best match"),
+                selected = settings.autoPlayMode.ordinal,
+                onSelect = { onUpdate(settings.copy(autoPlayMode = WebAutoPlayMode.entries[it])) },
+            )
+            ChoiceSetting(
+                label = "Ad skip / fast-forward",
+                values = listOf("Off", "Skip button", "Skip + fast-forward", "Aggressive"),
+                selected = settings.adSkipMode.ordinal,
+                onSelect = { onUpdate(settings.copy(adSkipMode = WebAdSkipMode.entries[it])) },
+            )
+            ChoiceSetting(
+                label = "Fast-forward speed for unskippable ads",
+                values = listOf("4×", "8×", "16×"),
+                selected = when (settings.adFastForwardSpeed.toInt()) {
+                    4 -> 0
+                    16 -> 2
+                    else -> 1
+                },
+                onSelect = {
+                    onUpdate(settings.copy(adFastForwardSpeed = when (it) { 0 -> 4f; 2 -> 16f; else -> 8f }))
+                },
+            )
+            SettingSwitch("Mute ads while fast-forwarding", settings.muteDuringAds) {
+                onUpdate(settings.copy(muteDuringAds = it))
+            }
+            SettingSwitch("Skip intros and openings", settings.skipIntros) {
+                onUpdate(settings.copy(skipIntros = it))
+            }
+            SettingSwitch("Skip recaps", settings.skipRecaps) {
+                onUpdate(settings.copy(skipRecaps = it))
+            }
+            SettingSwitch("Auto-advance to next episode", settings.autoNextEpisode) {
+                onUpdate(settings.copy(autoNextEpisode = it))
+            }
+            SettingSwitch("Block promotional alerts and confirm dialogs", settings.blockPromoDialogs) {
+                onUpdate(settings.copy(blockPromoDialogs = it))
+            }
+            SettingSwitch("Block notification permission prompts", settings.blockNotifications) {
+                onUpdate(settings.copy(blockNotifications = it))
+            }
+            SettingSwitch("Suppress “leave site?” while a video plays", settings.blockBeforeUnload) {
+                onUpdate(settings.copy(blockBeforeUnload = it))
+            }
+            SettingSwitch("Media sniffer (fetch / XHR / MSE)", settings.mediaSnifferEnabled) {
+                onUpdate(settings.copy(mediaSnifferEnabled = it))
+            }
+            ChoiceSetting(
+                label = "Page user agent",
+                values = listOf("Chrome Mobile", "Desktop Chrome", "iPhone Safari", "Custom"),
+                selected = settings.userAgentProfile.ordinal,
+                onSelect = {
+                    onUpdate(
+                        settings.copy(
+                            userAgentProfile = WebUserAgentProfile.entries[it],
+                            desktopMode = WebUserAgentProfile.entries[it] == WebUserAgentProfile.DesktopChrome,
+                        )
+                    )
+                },
+            )
+            if (settings.userAgentProfile == WebUserAgentProfile.Custom) {
+                NuvioInputField(
+                    value = customUa,
+                    onValueChange = { customUa = it },
+                    placeholder = "Custom user agent",
+                )
+                DialogButton(
+                    text = "Apply custom user agent",
+                    onClick = { onUpdate(settings.copy(customUserAgent = customUa)) },
+                )
+            }
+            Text(
+                "Redirects and popups are limited to the current site. Ad blocking uses hosts " +
+                    "lists, AdGuard/EasyList/uBlock network rules and safe cosmetic filters. " +
+                    "Ad skip is a player-level fallback for ads that cannot be blocked.",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
+            )
+            DialogButton(
+                text = "Allowed sites for links & popups (${settings.allowedHosts.size})",
+                onClick = { showAllowedSites = true },
+            )
+            DialogButton(
+                text = "Update adblock & uBlock filters",
+                onClick = onUpdateAdblock,
+            )
         }
-        SettingSwitch("Block popups from other sites", settings.popupProtection) {
-            onUpdate(settings.copy(popupProtection = it))
-        }
-        SettingSwitch("uBlock-style ad blocking", settings.adBlockEnabled) {
-            onUpdate(settings.copy(adBlockEnabled = it))
-        }
-        SettingSwitch("Desktop sites", settings.desktopMode) {
-            onUpdate(settings.copy(desktopMode = it))
-        }
-        Text(
-            "Redirects and popups are limited to the current site. Add a host to the allow list " +
-                "to let its links and popups open. Ad blocking uses hosts lists plus EasyList and " +
-                "uBlock network filters.",
-            style = MaterialTheme.typography.bodySmall,
-            color = tokens.colors.textMuted,
-        )
-        DialogButton(
-            text = "Allowed sites for links & popups (${settings.allowedHosts.size})",
-            onClick = { showAllowedSites = true },
-        )
-        Text(
-            "Desktop mode asks sites for their full desktop site. It is off by default because " +
-                "some streaming sites' Cloudflare checks reject a desktop user agent in a WebView. " +
-                "Turn it on only for sites that need it.",
-            style = MaterialTheme.typography.bodySmall,
-            color = tokens.colors.textMuted,
-        )
-        DialogButton(
-            text = "Update adblock & uBlock filters",
-            onClick = onUpdateAdblock,
-        )
         DialogButtons {
             DialogButton(text = "Done", style = DialogButtonStyle.Primary, onClick = onDismiss)
         }
@@ -833,6 +1019,34 @@ private fun WebAppsSettingsDialog(
             onUpdate = onUpdate,
             onDismiss = { showAllowedSites = false },
         )
+    }
+}
+
+@Composable
+private fun ChoiceSetting(
+    label: String,
+    values: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+        ) {
+            values.forEachIndexed { index, value ->
+                Chip(
+                    label = value,
+                    selected = index == selected,
+                    onClick = { onSelect(index) },
+                )
+            }
+        }
     }
 }
 
@@ -942,22 +1156,23 @@ private fun MediaPickerDialog(
     sources: List<WebMediaSource>,
     onPlay: (WebMediaSource) -> Unit,
     onPlayInBrowser: (WebMediaSource) -> Unit,
+    onDownload: (WebMediaSource) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
     val displaySources = remember(sources) {
         sources
-            .groupBy { if (it.isHls) webHost(it.url).lowercase() else it.url }
+            .groupBy { it.url }
             .map { (_, group) ->
                 val best = group.maxByOrNull { webMediaScore(it) } ?: group.first()
-                best.copy(variantCount = group.size)
+                best.copy(variantCount = maxOf(best.variantCount, group.size))
             }
             .sortedByDescending { webMediaScore(it) }
     }
     DialogSurface(onDismissRequest = onDismiss, title = "Detected videos") {
         Text(
-            "Sources are ranked by duration and resolution. Tap one to play in Nuvio’s player, " +
-                "or use Browser to play it inside Web-Apps.",
+            "Tap a source to play it in Nuvio. Sources are ranked by duration, resolution and " +
+                "confidence; ads are pushed to the bottom. Browser plays it inside Web-Apps.",
             style = MaterialTheme.typography.bodySmall,
             color = tokens.colors.textMuted,
         )
@@ -965,17 +1180,16 @@ private fun MediaPickerDialog(
             Text("No videos detected yet. Start the page's video, then try again.", color = tokens.colors.textMuted)
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().height(360.dp),
-                verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                modifier = Modifier.fillMaxWidth().height(430.dp),
+                verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
             ) {
                 itemsIndexed(displaySources, key = { _, source -> source.url }) { index, source ->
                     val isBest = index == 0 && displaySources.size > 1
                     val meta = buildList {
                         add(if (source.isHls) "HLS" else if (source.isDash) "DASH" else "Video")
-                        val w = source.width ?: 0
-                        val h = source.height ?: 0
-                        if (w > 0 && h > 0) add("${w}×$h")
+                        source.qualityLabel()?.let(::add)
                         webMediaDurationLabel(source.durationMs)?.let(::add)
+                        if (source.isLive) add("LIVE")
                         if (source.variantCount > 1) add("${source.variantCount} variants")
                         add(webHost(source.url).removePrefix("www."))
                     }.joinToString(" · ")
@@ -984,38 +1198,55 @@ private fun MediaPickerDialog(
                         color = tokens.colors.surface,
                         shape = tokens.shapes.compactCard,
                     ) {
-                        Row(
-                            modifier = Modifier.padding(NuvioTokens.Space.s10),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+                        Column(
+                            modifier = Modifier.padding(NuvioTokens.Space.s8),
+                            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
                         ) {
-                            Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = tokens.colors.accent)
-                            Column(Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
-                                ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+                            ) {
+                                MediaThumbnail(source = source)
+                                Column(Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                                    ) {
+                                        Text(
+                                            source.title.ifBlank { webHost(source.url) },
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = tokens.colors.textPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (isBest) MediaChip("BEST", tokens.colors.accent)
+                                        if (source.likelyAd) MediaChip("Ad?", tokens.colors.danger)
+                                        if (source.drm != null) MediaChip("DRM", tokens.colors.danger)
+                                    }
                                     Text(
-                                        source.title.ifBlank { webHost(source.url) },
-                                        modifier = Modifier.weight(1f, fill = false),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = tokens.colors.textPrimary,
+                                        meta,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = tokens.colors.textMuted,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
-                                    if (isBest) MediaChip("BEST", tokens.colors.accent)
-                                    if (source.likelyAd) MediaChip("Ad?", tokens.colors.danger)
                                 }
-                                Text(
-                                    meta,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = tokens.colors.textMuted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
                             }
-                            TextButton(onClick = { onPlayInBrowser(source) }) {
-                                Text("Browser", style = MaterialTheme.typography.labelMedium)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TextButton(onClick = { onDownload(source) }, enabled = source.drm == null) {
+                                    Text("Download", style = MaterialTheme.typography.labelMedium)
+                                }
+                                TextButton(onClick = { onPlayInBrowser(source) }) {
+                                    Text("Browser", style = MaterialTheme.typography.labelMedium)
+                                }
+                                TextButton(onClick = { onPlay(source) }) {
+                                    Text("Play", style = MaterialTheme.typography.labelMedium)
+                                }
                             }
                         }
                     }
@@ -1024,6 +1255,38 @@ private fun MediaPickerDialog(
         }
         DialogButtons {
             DialogButton(text = "Close", onClick = onDismiss)
+        }
+    }
+}
+
+@Composable
+private fun MediaThumbnail(source: WebMediaSource) {
+    val tokens = MaterialTheme.nuvio
+    val model = source.thumbnailPath?.let { "file://$it" }
+        ?: source.thumbnailUrl
+        ?: source.posterUrl
+        ?: source.pageUrl.takeIf { it.isNotBlank() }?.let(::webAppPreviewUrl)
+    Box(
+        modifier = Modifier
+            .width(104.dp)
+            .height(58.dp)
+            .clip(tokens.shapes.compactCard)
+            .background(tokens.colors.surfaceElevated),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = null,
+            tint = tokens.colors.textMuted,
+            modifier = Modifier.size(22.dp),
+        )
+        if (model != null) {
+            AsyncImage(
+                model = model,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
@@ -1041,6 +1304,125 @@ private fun MediaChip(text: String, color: Color) {
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
         )
+    }
+}
+
+@Composable
+private fun AutoPlayDialog(
+    candidate: WebMediaSource,
+    alternatives: List<WebMediaSource>,
+    onPlay: (WebMediaSource) -> Unit,
+    onStay: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    DialogSurface(onDismissRequest = onStay, title = "Play this video in Nuvio?") {
+        Text(
+            "Nuvio found a confident match. Play it in the app player, or stay in the browser.",
+            style = MaterialTheme.typography.bodySmall,
+            color = tokens.colors.textMuted,
+        )
+        Surface(color = tokens.colors.surface, shape = tokens.shapes.compactCard) {
+            Row(
+                modifier = Modifier.padding(NuvioTokens.Space.s8),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+            ) {
+                MediaThumbnail(candidate)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        candidate.title.ifBlank { webHost(candidate.url) },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        listOfNotNull(
+                            candidate.qualityLabel(),
+                            webMediaDurationLabel(candidate.durationMs),
+                            if (candidate.isLive) "LIVE" else null,
+                            webHost(candidate.url).removePrefix("www."),
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        if (alternatives.isNotEmpty()) {
+            Text("Other sources", style = MaterialTheme.typography.labelMedium, color = tokens.colors.textMuted)
+            alternatives.forEach { source ->
+                TextButton(onClick = { onPlay(source) }) {
+                    Text(
+                        source.title.ifBlank { webHost(source.url) },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        DialogButtons {
+            DialogButton(text = "Stay here", onClick = onStay)
+            DialogButton(text = "Play best", style = DialogButtonStyle.Primary, onClick = { onPlay(candidate) })
+        }
+    }
+}
+
+@Composable
+private fun ShieldLogDialog(
+    events: List<WebShieldEvent>,
+    adsSkipped: Int,
+    adsFastForwarded: Int,
+    adSecondsSaved: Long,
+    onDismiss: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    DialogSurface(onDismissRequest = onDismiss, title = "Shield log") {
+        Text(
+            "$adsSkipped ads skipped · $adsFastForwarded fast-forwarded · ${adSecondsSaved}s saved",
+            style = MaterialTheme.typography.bodySmall,
+            color = tokens.colors.textMuted,
+        )
+        if (events.isEmpty()) {
+            Text("No blocked popups, redirects or ads yet.", color = tokens.colors.textMuted)
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+            ) {
+                items(events, key = { it.id }) { event ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                    ) {
+                        MediaChip(event.kind.uppercase(), tokens.colors.accent)
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                event.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = tokens.colors.textPrimary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (event.host.isNotBlank()) {
+                                Text(
+                                    event.host,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = tokens.colors.textMuted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        DialogButtons {
+            DialogButton(text = "Close", onClick = onDismiss)
+        }
     }
 }
 

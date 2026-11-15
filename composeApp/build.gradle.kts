@@ -520,6 +520,7 @@ kotlin {
                 implementation(libs.androidx.media3.container)
                 implementation(libs.androidx.media3.extractor)
                 implementation("com.google.guava:guava:33.3.1-android")
+                implementation("androidx.webkit:webkit:1.11.0")
                 implementation("androidx.media3:media3-database:${libs.versions.androidx.media3.get()}")
                 implementation("androidx.media3:media3-effect:${libs.versions.androidx.media3.get()}")
                 implementation("androidx.annotation:annotation-experimental:1.3.1")

@@ -39,7 +39,14 @@ object WebAppsRepository {
             WebAppsStorage.loadSettings()?.takeIf { it.isNotBlank() }?.let {
                 json.decodeFromString(WebAppsSettings.serializer(), it)
             }
-        }.getOrNull() ?: WebAppsSettings()
+        }.getOrNull()?.let { loaded ->
+            // Migrate 0.9.x "Desktop sites" into the new user-agent profile.
+            if (loaded.desktopMode && loaded.userAgentProfile == WebUserAgentProfile.ChromeMobile) {
+                loaded.copy(userAgentProfile = WebUserAgentProfile.DesktopChrome)
+            } else {
+                loaded
+            }
+        } ?: WebAppsSettings()
     }
 
     fun addSite(name: String, url: String): SavedWebApp? {

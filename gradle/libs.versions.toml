@@ -25,7 +25,9 @@ atomicfu = "0.32.1"
 kmpalette = "4.0.0-beta02"
 ktor = "3.4.1"
 material3 = "1.13.0-beta01"
-androidx-media3 = "1.11.1"
+# Keep Media3 official modules on 1.8.0: composeApp/libs/lib-*.aar are Nuvio's patched 1.8.0
+# builds. Upgrading only the Maven modules produces mixed-version DASH/session crashes.
+androidx-media3 = "1.8.0"
 mpv-android-lib = "0.1.12"
 supabase = "3.4.1"
 quickjsKt = "1.0.15"

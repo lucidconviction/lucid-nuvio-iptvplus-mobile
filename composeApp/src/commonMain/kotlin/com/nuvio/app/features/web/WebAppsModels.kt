@@ -27,15 +27,37 @@ data class WebUserscript(
 )
 
 @Serializable
+enum class WebAutoPlayMode {
+    Off,
+    Ask,
+    Best,
+}
+
+@Serializable
+enum class WebAdSkipMode {
+    Off,
+    ClickOnly,
+    ClickAndFastForward,
+    Aggressive,
+}
+
+@Serializable
+enum class WebUserAgentProfile {
+    ChromeMobile,
+    DesktopChrome,
+    IPhoneSafari,
+    Custom,
+}
+
+@Serializable
 data class WebAppsSettings(
     val popupProtection: Boolean = true,
     /** Block main-frame navigations away from the current site (ad hijacks). */
     val redirectProtection: Boolean = true,
     val adBlockEnabled: Boolean = true,
     /**
-     * Request desktop pages. Off by default: the stock Android WebView user agent is what
-     * Cloudflare's challenge expects, and a mismatched desktop UA puts many streaming sites
-     * into a reload loop.
+     * Request desktop pages. Kept for backwards compatibility with 0.9.x settings.
+     * New settings should use [userAgentProfile].
      */
     val desktopMode: Boolean = false,
     val homeUrl: String = "https://www.google.com",
@@ -46,6 +68,39 @@ data class WebAppsSettings(
     val blockedPopupHosts: Set<String> = emptySet(),
     /** Sites where ad blocking is disabled because it broke the page. */
     val adBlockWhitelist: Set<String> = emptySet(),
+    /** Off, ask first, or open the best detected source automatically. */
+    val autoPlayMode: WebAutoPlayMode = WebAutoPlayMode.Off,
+    /** Off, click only, click + fast-forward, or aggressive (intros/recaps too). */
+    val adSkipMode: WebAdSkipMode = WebAdSkipMode.ClickAndFastForward,
+    val adFastForwardSpeed: Float = 8f,
+    val muteDuringAds: Boolean = true,
+    val skipIntros: Boolean = true,
+    val skipRecaps: Boolean = true,
+    val autoNextEpisode: Boolean = false,
+    /** Block JS alerts/confirm/prompt from page-load scripts and during playback. */
+    val blockPromoDialogs: Boolean = true,
+    /** Reject notification permission prompts that were not user-initiated. */
+    val blockNotifications: Boolean = true,
+    /** Suppress "leave site?" dialogs while a video is playing. */
+    val blockBeforeUnload: Boolean = true,
+    val userAgentProfile: WebUserAgentProfile = WebUserAgentProfile.ChromeMobile,
+    val customUserAgent: String = "",
+    /** Install the fetch/XHR/MSE sniffer on every page. */
+    val mediaSnifferEnabled: Boolean = true,
+    /** Cosmetic element hiding. Never hides elements that contain a player or menu. */
+    val cosmeticFiltering: Boolean = true,
+    /** Internal: open the local diagnostic page. */
+    val showTestPageAction: Boolean = false,
+)
+
+/** One quality variant parsed from an HLS master playlist. */
+data class WebMediaVariant(
+    val url: String,
+    val width: Int? = null,
+    val height: Int? = null,
+    val bandwidth: Long? = null,
+    val codecs: String? = null,
+    val frameRate: Double? = null,
 )
 
 /** One detected, playable web source. */
@@ -69,6 +124,30 @@ data class WebMediaSource(
     val variantCount: Int = 1,
     /** A short/small source; shown with an "Ad?" badge and sorted last, never hidden. */
     val likelyAd: Boolean = false,
+    /** Poster image exposed by the page, if any. */
+    val posterUrl: String? = null,
+    /** Remote or local thumbnail chosen for the picker. */
+    val thumbnailUrl: String? = null,
+    /** Local screenshot crop, when one could be captured. */
+    val thumbnailPath: String? = null,
+    val isLive: Boolean = false,
+    val isAudioOnly: Boolean = false,
+    /** "widevine", "playready", "aes-128" or another DRM marker. */
+    val drm: String? = null,
+    val variants: List<WebMediaVariant> = emptyList(),
+    /** 0..100 confidence that this is the real video, not an ad or a segment. */
+    val confidence: Int = 0,
+    /** request, dom, performance, fetch, xhr, mse, page. */
+    val detectedBy: Set<String> = emptySet(),
+)
+
+/** A visible shield event, shown in the browser's shield log. */
+data class WebShieldEvent(
+    val id: Long,
+    val kind: String,
+    val message: String,
+    val host: String = "",
+    val atMs: Long = 0L,
 )
 
 internal fun webMediaScore(source: WebMediaSource): Long {
@@ -78,6 +157,10 @@ internal fun webMediaScore(source: WebMediaSource): Long {
     if (source.isMaster) score += 5_000L
     if (source.isHls) score += 100L
     if (source.isDash) score += 90L
+    if (source.isLive) score += 40L
+    if (source.isAudioOnly) score -= 300L
+    if (source.drm != null) score -= 500L
+    score += source.confidence.toLong() * 2L
     if (source.likelyAd) score -= 1_000_000L
     return score
 }
@@ -95,6 +178,14 @@ internal fun webMediaDurationLabel(durationMs: Long?): String? {
     }
 }
 
+internal fun WebMediaSource.qualityLabel(): String? {
+    val w = width ?: 0
+    val h = height ?: 0
+    if (w <= 0 || h <= 0) return null
+    return if (h >= 2160) "4K" else if (h >= 1440) "1440p" else if (h >= 1080) "1080p"
+    else if (h >= 720) "720p" else if (h >= 480) "480p" else "${h}p"
+}
+
 data class WebBrowserUiState(
     val url: String = "",
     val title: String = "",
@@ -106,6 +197,17 @@ data class WebBrowserUiState(
     val error: String? = null,
     /** Bumped when Android kills the WebView renderer, so the host creates a fresh WebView. */
     val rendererGeneration: Int = 0,
+    /** A source the controller wants Nuvio to open because auto-play is enabled. */
+    val autoPlayCandidate: WebMediaSource? = null,
+    val autoPlayAlternatives: List<WebMediaSource> = emptyList(),
+    /** Recent popup/redirect/ad/filter events, newest first. */
+    val shieldEvents: List<WebShieldEvent> = emptyList(),
+    val adsSkipped: Int = 0,
+    val adsFastForwarded: Int = 0,
+    val adSecondsSaved: Long = 0L,
+    val fullscreen: Boolean = false,
+    /** User-facing result of a download request. */
+    val downloadMessage: String? = null,
 )
 
 /** What the common UI needs from the Android WebView. */
@@ -130,6 +232,18 @@ interface WebBrowserController {
     fun beginThumbnailCapture(siteId: String) {}
     /** Receives the saved file path of a captured site screenshot. */
     fun setThumbnailCaptureListener(listener: ((siteId: String, path: String) -> Unit)?) {}
+    /** Leaves HTML5 fullscreen. Returns true when a fullscreen view was closed. */
+    fun exitFullscreen(): Boolean = false
+    /** The UI consumed (or dismissed) the auto-play suggestion. */
+    fun consumeAutoPlayCandidate() {}
+    /** Clears the last download message after it is shown. */
+    fun clearDownloadMessage() {}
+    /** Opens the local diagnostic page (debug and power-user builds). */
+    fun openTestPage() {}
+    /** Adds a visible shield event from the UI (for example a user block action). */
+    fun noteShieldEvent(kind: String, message: String, host: String) {}
+    /** Requests a download of a detected source. */
+    fun download(source: WebMediaSource) {}
 }
 
 internal expect val webAppsPlatformAvailable: Boolean
@@ -170,6 +284,23 @@ internal fun normalizeWebUrl(raw: String): String? {
 
 internal fun webHost(url: String): String =
     url.substringAfter("://").substringBefore('/').substringBefore('?').substringAfter('@').substringBefore(':')
+
+/** True for loopback, private, link-local and local-network hosts; never fetch these from a page. */
+internal fun isPrivateWebHost(host: String?): Boolean {
+    val h = host?.trim()?.trimEnd('.')?.lowercase().orEmpty()
+    if (h.isBlank()) return true
+    if (h == "localhost" || h.endsWith(".local") || h == "::1") return true
+    if (h.startsWith("127.") || h.startsWith("10.") || h.startsWith("192.168.") ||
+        h.startsWith("169.254.") || h.startsWith("0.")
+    ) {
+        return true
+    }
+    if (h.startsWith("172.")) {
+        val second = h.removePrefix("172.").substringBefore('.').toIntOrNull() ?: return false
+        if (second in 16..31) return true
+    }
+    return false
+}
 
 internal fun normalizeWebHost(raw: String): String? {
     val value = raw.trim()

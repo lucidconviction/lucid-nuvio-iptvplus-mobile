@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font:15px system-ui,sans-serif;background:#0b0f0f;color:#eee;padding:18px}
+    button,a.btn{display:block;width:100%;margin:8px 0;padding:13px;border-radius:10px;
+      border:1px solid #2b3b3b;background:#172020;color:#fff;text-align:left;font-size:15px}
+    .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;padding:24px}
+    .overlay .panel{background:#172020;border:1px solid #3a5;border-radius:14px;padding:18px;margin-top:80px}
+    video{width:100%;margin-top:12px;border-radius:12px;background:#000}
+    .adbox{border:1px dashed #a33;padding:12px;margin:12px 0;border-radius:10px}
+  </style>
+</head>
+<body>
+  <h2>Nuvio Web browser test</h2>
+  <button onclick="document.getElementById('menu').style.display='block'">Open overlay menu</button>
+  <button onclick="openWrittenPopup()">window.open('') + document.write player</button>
+  <button onclick="window.open('https://example.com','_blank')">window.open real URL</button>
+  <button onclick="alert('Promo alert from the page')">alert</button>
+  <button onclick="confirm('Leave this page?')">confirm</button>
+  <button onclick="prompt('Enter a value','test')">prompt</button>
+  <div class="adbox">Fake ad slot <button onclick="this.textContent='Ad skipped'">Skip Ad</button></div>
+  <video id="testVideo" controls playsinline
+    poster="https://storage.googleapis.com/gtv-videos-bucket/sample/images/BigBuckBunny.jpg"
+    src="https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"></video>
+  <button onclick="document.getElementById('testVideo').requestFullscreen()">Fullscreen video</button>
+  <a class="btn" href="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8">HLS test manifest</a>
+  <a class="btn" href="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" download>Download test MP4</a>
+  <div id="menu" class="overlay">
+    <div class="panel">
+      <h3>Site menu overlay</h3>
+      <p>This overlay should be visible and tappable.</p>
+      <button onclick="document.getElementById('menu').style.display='none'">Close menu</button>
+    </div>
+  </div>
+  <script>
+    function openWrittenPopup(){
+      var w=window.open('','_blank');
+      if(!w){alert('Popup blocked');return;}
+      w.document.write('<!doctype html><html><body style="margin:0;background:#000;color:#fff;font-family:sans-serif">'+
+        '<h2 style="padding:12px">Popup player</h2>'+
+        '<video controls autoplay playsinline style="width:100%" src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"></video>'+
+        '</body></html>');
+      w.document.close();
+    }
+  </script>
+</body>
+</html>
