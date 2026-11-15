@@ -1860,11 +1860,13 @@ internal class AndroidWebBrowserController(
     }
 
     private fun injectUserscripts(atStart: Boolean) {
-        val view = webView ?: return
-        val url = pageUrl.ifBlank { view.url.orEmpty() }
-        if (url.isBlank()) return
-        WebUserscriptManager.scriptsFor(url, scripts, atStart).forEach { code ->
-            view.evalJs(code)
+        runCatching {
+            val view = webView ?: return
+            val url = pageUrl.ifBlank { view.url.orEmpty() }
+            if (url.isBlank()) return
+            WebUserscriptManager.scriptsFor(url, scripts, atStart).forEach { code ->
+                view.evalJs(code)
+            }
         }
     }
 
