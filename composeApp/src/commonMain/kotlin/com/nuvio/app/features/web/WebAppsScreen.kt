@@ -1,6 +1,8 @@
 package com.nuvio.app.features.web
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -233,7 +235,7 @@ fun WebAppsScreen(
                 }
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(280.dp),
+                    columns = GridCells.Adaptive(180.dp),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = NuvioTokens.Space.s16,
@@ -425,6 +427,13 @@ fun WebAppsScreen(
                     color = tokens.colors.accent,
                 )
             }
+            // Saved Web-Apps stay one tap away while the browser is open. A compact grid keeps
+            // every site visible without covering the page or turning into a horizontal scroller.
+            WebAppTabGrid(
+                sites = sites,
+                currentUrl = browserState.url.ifBlank { activeUrl.orEmpty() },
+                onOpen = { site -> openSavedSite(site) },
+            )
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -548,6 +557,81 @@ fun WebAppsScreen(
                         deletingSite = null
                     },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WebAppTabGrid(
+    sites: List<SavedWebApp>,
+    currentUrl: String,
+    onOpen: (SavedWebApp) -> Unit,
+) {
+    if (sites.isEmpty()) return
+    val tokens = MaterialTheme.nuvio
+    val currentHost = normalizeWebHost(currentUrl)
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(150.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 132.dp),
+        contentPadding = PaddingValues(
+            start = NuvioTokens.Space.s12,
+            end = NuvioTokens.Space.s12,
+            top = NuvioTokens.Space.s6,
+            bottom = NuvioTokens.Space.s6,
+        ),
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+    ) {
+        items(sites, key = { it.id }) { site ->
+            val host = normalizeWebHost(site.url)
+            val active = currentHost != null && host == currentHost
+            val icon = site.iconUrl ?: webFaviconUrl(site.url)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(tokens.shapes.compactCard)
+                    .clickable { onOpen(site) },
+                color = if (active) {
+                    tokens.colors.accent.copy(alpha = 0.18f)
+                } else {
+                    tokens.colors.surface
+                },
+                shape = tokens.shapes.compactCard,
+                border = if (active) BorderStroke(1.dp, tokens.colors.accent) else null,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = NuvioTokens.Space.s8),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                ) {
+                    if (icon != null) {
+                        AsyncImage(
+                            model = icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            contentScale = ContentScale.Fit,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Filled.Public,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (active) tokens.colors.accent else tokens.colors.textMuted,
+                        )
+                    }
+                    Text(
+                        text = site.name,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (active) tokens.colors.accent else tokens.colors.textPrimary,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
