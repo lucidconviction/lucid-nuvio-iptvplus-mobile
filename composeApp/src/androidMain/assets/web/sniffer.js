@@ -32,7 +32,13 @@
   }
   function scanPage(){
     try{
-      extract(document.documentElement?document.documentElement.innerHTML:'');
+      // Serializing a huge DOM is expensive and allocates several MB. The DOM/performance
+      // scans below already cover those pages, so only regex the HTML on smaller documents.
+      try{
+        if(document.getElementsByTagName('*').length<4000){
+          extract(document.documentElement?document.documentElement.innerHTML:'');
+        }
+      }catch(e){}
       var links=document.querySelectorAll('video source,video,a[href],link[rel="preload"]');
       for(var i=0;i<links.length&&i<120;i++){
         var el=links[i];
@@ -56,7 +62,7 @@
           }
         }catch(e){}
         report(url,'fetch',{headers:headers});
-        var promise=origFetch.apply(this,arguments);
+        var promise=origFetch.apply(window,arguments);
         try{
           promise.then(function(res){
             var ct=(res&&res.headers&&res.headers.get('content-type'))||'';

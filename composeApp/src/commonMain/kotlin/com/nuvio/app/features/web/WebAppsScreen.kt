@@ -909,7 +909,7 @@ private fun WebAppsSettingsDialog(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
         ) {
-            SettingSwitch("Block redirects to other sites", settings.redirectProtection) {
+            SettingSwitch("Block ad redirects during playback", settings.redirectProtection) {
                 onUpdate(settings.copy(redirectProtection = it))
             }
             SettingSwitch("Block popups from other sites", settings.popupProtection) {
@@ -994,9 +994,10 @@ private fun WebAppsSettingsDialog(
                 )
             }
             Text(
-                "Redirects and popups are limited to the current site. Ad blocking uses hosts " +
-                    "lists, AdGuard/EasyList/uBlock network rules and safe cosmetic filters. " +
-                    "Ad skip is a player-level fallback for ads that cannot be blocked.",
+                "Normal links and redirects load normally. Redirects are blocked while a video " +
+                    "plays and for hosts you block. Ad blocking uses hosts lists, " +
+                    "AdGuard/EasyList/uBlock network rules and safe cosmetic filters. Ad skip is " +
+                    "a player-level fallback for ads that cannot be blocked.",
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.colors.textMuted,
             )

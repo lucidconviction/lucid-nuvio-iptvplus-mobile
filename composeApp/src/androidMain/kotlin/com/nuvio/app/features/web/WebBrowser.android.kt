@@ -72,6 +72,32 @@ import java.util.concurrent.Executors
 import java.util.zip.GZIPInputStream
 
 /**
+ * The registrable domain (eTLD+1) for the common two-level public suffixes. Sites routinely
+ * split their app and API across sibling subdomains (www.site.com + api.site.com); treating
+ * those as third-party made ad blocking and redirect protection break the site's own requests.
+ */
+private val TWO_LEVEL_PUBLIC_SUFFIXES = setOf(
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "net.uk",
+    "com.au", "net.au", "org.au", "co.nz", "net.nz", "org.nz",
+    "co.jp", "co.kr", "co.in", "co.id", "co.za", "co.nz",
+    "com.br", "com.mx", "com.ar", "com.co", "com.tr", "com.cn",
+    "com.tw", "com.hk", "com.sg", "com.my", "com.ph", "com.pk",
+    "com.eg", "com.sa", "com.ua", "com.vn", "com.ru",
+)
+
+internal fun registrableDomain(host: String): String {
+    val clean = host.trim().trimEnd('.').lowercase()
+    val parts = clean.split('.').filter { it.isNotBlank() }
+    if (parts.size <= 2) return clean
+    val lastTwo = parts.takeLast(2).joinToString(".")
+    return if (lastTwo in TWO_LEVEL_PUBLIC_SUFFIXES) {
+        parts.takeLast(3).joinToString(".")
+    } else {
+        lastTwo
+    }
+}
+
+/**
  * The Android Web-Apps browser. The WebView setup, media probe, HLS polyfill and popup rules are
  * ported from Lucid Hikari's WebViewActivity (GPL-3.0), adapted to Nuvio's controller and player.
  */
@@ -90,7 +116,6 @@ internal class AndroidWebBrowserController(
     private var pendingUrl: String? = null
     private var settings = WebAppsSettings()
     private var scripts: List<WebUserscript> = emptyList()
-    private var hlsInjectedFor: String? = null
     private var lastLoadedUrl: String = ""
     private var pendingThumbnailSiteId: String? = null
     private var thumbnailCaptureRunnable: Runnable? = null
@@ -113,9 +138,7 @@ internal class AndroidWebBrowserController(
     private var lastAdSkipAt = 0L
     private val handedOffUrls = Collections.synchronizedSet(HashSet<String>())
     private val shieldEvents = ArrayDeque<WebShieldEvent>()
-    private val probeExecutor = Executors.newFixedThreadPool(2) { runnable ->
-        Thread(runnable, "nuvio-web-probe").apply { isDaemon = true }
-    }
+    private var probeExecutor = newProbeExecutor()
     @Volatile private var videoPlaying = false
     @Volatile private var lastUserInteractionMs: Long = 0L
     @Volatile private var currentUserAgent: String = ""
@@ -123,6 +146,8 @@ internal class AndroidWebBrowserController(
     @Volatile private var pageTitle: String = ""
     private val detected = Collections.synchronizedMap(LinkedHashMap<String, WebMediaSource>())
     private val probing = Collections.synchronizedSet(HashSet<String>())
+    /** Last thumbnail attempt per source, so the 2.5 s DOM scan cannot allocate bitmaps forever. */
+    private val thumbnailCaptures = Collections.synchronizedMap(HashMap<String, Long>())
 
     private val desktopUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -152,7 +177,6 @@ internal class AndroidWebBrowserController(
         }.getOrDefault("")
     }
 
-    private val hlsAttachJs: String by lazy { readWebAsset("web/hls_attach.js") }
     private val videoScanJs: String by lazy { readWebAsset("web/video_scan.js") }
     private val performanceScanJs: String by lazy { readWebAsset("web/performance_scan.js") }
     private val stuckMonitorJs: String by lazy { readWebAsset("web/stuck_monitor.js") }
@@ -168,13 +192,30 @@ internal class AndroidWebBrowserController(
             appContext.assets.open(path).bufferedReader().use { it.readText() }
         }.getOrDefault("")
 
+    /** evaluateJavascript throws if the view was destroyed between a callback and this call. */
+    private fun WebView.evalJs(script: String) {
+        runCatching { evaluateJavascript(script, null) }
+    }
+
+    private fun newProbeExecutor() = Executors.newFixedThreadPool(2) { runnable ->
+        Thread(runnable, "nuvio-web-probe").apply { isDaemon = true }
+    }
+
+    /**
+     * The host disposes its WebView whenever the user leaves the browser, but this controller
+     * (and its screen) can stay alive. A shut-down probe pool would throw
+     * RejectedExecutionException from shouldInterceptRequest on the next visit and kill the app.
+     */
+    private fun ensureProbeExecutor() {
+        if (probeExecutor.isShutdown) probeExecutor = newProbeExecutor()
+    }
+
     fun attach(view: WebView) {
         if (webView === view) return
+        ensureProbeExecutor()
         val previous = webView
         webView = view
-        if (previous != null) {
-            runCatching { previous.stopLoading(); previous.destroy() }
-        }
+        if (previous != null) destroyWebView(previous)
         Thread { WebAdBlocker.load(appContext) }.start()
         configure(view)
         val url = pendingUrl ?: lastLoadedUrl.takeIf { it.isNotBlank() }
@@ -182,7 +223,34 @@ internal class AndroidWebBrowserController(
         if (!url.isNullOrBlank()) view.loadUrl(url)
     }
 
+    /** Compose removed this WebView (renderer restart or leaving the screen). */
+    fun releaseView(view: WebView) {
+        if (webView === view) return
+        destroyWebView(view)
+    }
+
+    private fun destroyWebView(view: WebView?) {
+        if (view == null) return
+        // Detach before destroy. Destroying an attached WebView is what produces native
+        // "WebView.destroy() called while still attached" failures on some ROMs.
+        mainHandler.post {
+            runCatching { (view.parent as? ViewGroup)?.removeView(view) }
+            runCatching { view.stopLoading() }
+            runCatching { view.destroy() }
+        }
+    }
+
+    /** The device has no usable WebView provider (disabled System WebView, broken ROM). */
+    fun reportWebViewUnavailable(error: Throwable) {
+        _state.value = _state.value.copy(
+            loading = false,
+            error = "The browser engine is unavailable on this device. Update Android System WebView, then try again.",
+        )
+        noteShield("security", "WebView unavailable: ${error.javaClass.simpleName}", "")
+    }
+
     override fun load(url: String) {
+        ensureProbeExecutor()
         val normalized = normalizeWebUrl(url) ?: url.trim()
         lastLoadedUrl = normalized
         pendingMainFrameUrl = normalized
@@ -244,9 +312,8 @@ internal class AndroidWebBrowserController(
         mediaScanRunnable = null
         autoPlayRunnable?.let { mainHandler.removeCallbacks(it) }
         autoPlayRunnable = null
-        webView?.evaluateJavascript(
+        webView?.evalJs(
             "(function(){try{document.querySelectorAll('video,audio').forEach(function(m){try{m.pause()}catch(e){}})}catch(e){}})()",
-            null,
         )
     }
 
@@ -255,8 +322,8 @@ internal class AndroidWebBrowserController(
         popupChild?.onResume()
         val view = webView ?: return
         if (pageUrl.isNotBlank()) {
-            view.evaluateJavascript(videoScanJs, null)
-            view.evaluateJavascript(performanceScanJs, null)
+            view.evalJs(videoScanJs)
+            view.evalJs(performanceScanJs)
         }
     }
 
@@ -265,18 +332,15 @@ internal class AndroidWebBrowserController(
         mediaScanRunnable = null
         autoPlayRunnable?.let { mainHandler.removeCallbacks(it) }
         autoPlayRunnable = null
+        thumbnailCaptureRunnable?.let { mainHandler.removeCallbacks(it) }
+        thumbnailCaptureRunnable = null
         hideFullscreen()
         dismissPopup()
-        mainHandler.removeCallbacksAndMessages(null)
         runCatching { CookieManager.getInstance().flush() }
-        webView?.let { view ->
-            runCatching {
-                view.loadUrl("about:blank")
-                view.stopLoading()
-                view.destroy()
-            }
-        }
+        val view = webView
         webView = null
+        // Let Compose detach the AndroidView before destroying the native WebView.
+        destroyWebView(view)
         probeExecutor.shutdownNow()
     }
 
@@ -286,8 +350,8 @@ internal class AndroidWebBrowserController(
 
     override fun scanForMedia() {
         val view = webView ?: return
-        view.evaluateJavascript(videoScanJs, null)
-        view.evaluateJavascript(performanceScanJs, null)
+        view.evalJs(videoScanJs)
+        view.evalJs(performanceScanJs)
     }
 
     override fun playInBrowser(source: WebMediaSource) {
@@ -295,9 +359,8 @@ internal class AndroidWebBrowserController(
         // Do NOT call onPause() here: a paused WebView can ignore the data-page load and keep
         // showing the previous frame. Just pause the page's media and keep the view running.
         view.onResume()
-        view.evaluateJavascript(
+        view.evalJs(
             "(function(){try{document.querySelectorAll('video,audio').forEach(function(m){try{m.pause()}catch(e){}})}catch(e){}})()",
-            null,
         )
         val headers = source.headers.filterKeys { key ->
             key.startsWith("X-", ignoreCase = true) ||
@@ -583,10 +646,10 @@ internal class AndroidWebBrowserController(
                     newUrl.substringBefore('#') == pageUrl.substringBefore('#')
                 pageUrl = newUrl
                 if (newUrl.isNotBlank()) lastLoadedUrl = newUrl
-                hlsInjectedFor = null
                 if (!samePage) {
                     detected.clear()
                     handedOffUrls.clear()
+                    thumbnailCaptures.clear()
                     _state.value = _state.value.copy(
                         detectedMedia = emptyList(),
                         autoPlayCandidate = null,
@@ -616,26 +679,25 @@ internal class AndroidWebBrowserController(
                     error = null,
                 )
                 updateNavigation()
-                injectHlsAndScan()
                 injectUserscripts(atStart = false)
                 injectAdClean()
                 injectAdSkipConfig()
                 injectSniffer()
                 injectShield()
-                view?.evaluateJavascript(videoScanJs, null)
-                view?.evaluateJavascript(performanceScanJs, null)
-                view?.evaluateJavascript(stuckMonitorJs, null)
-                view?.evaluateJavascript(playingMonitorJs, null)
+                view?.evalJs(videoScanJs)
+                view?.evalJs(performanceScanJs)
+                view?.evalJs(stuckMonitorJs)
+                view?.evalJs(playingMonitorJs)
                 // Single-page players create their <video> long after onPageFinished. Keep
                 // scanning the DOM and performance entries, like Hikari does.
                 mediaScanRunnable?.let { mainHandler.removeCallbacks(it) }
                 val scan = object : Runnable {
                     override fun run() {
                         val v = webView ?: return
-                        v.evaluateJavascript(videoScanJs, null)
-                        v.evaluateJavascript(performanceScanJs, null)
-                        v.evaluateJavascript(stuckMonitorJs, null)
-                        v.evaluateJavascript(playingMonitorJs, null)
+                        v.evalJs(videoScanJs)
+                        v.evalJs(performanceScanJs)
+                        v.evalJs(stuckMonitorJs)
+                        v.evalJs(playingMonitorJs)
                         mainHandler.postDelayed(this, 2_500L)
                     }
                 }
@@ -725,7 +787,9 @@ internal class AndroidWebBrowserController(
 
                 if (isMediaRequest(request)) {
                     if (VIDEO_URL_RE.containsMatchIn(url)) {
-                        maybeAddMedia(url, request.requestHeaders, detectedBy = "request")
+                        runCatching {
+                            maybeAddMedia(url, request.requestHeaders, detectedBy = "request")
+                        }
                     }
                     return null
                 }
@@ -756,21 +820,26 @@ internal class AndroidWebBrowserController(
                     // keep scripts and XHR on the curated built-ins: a broad EasyList rule that
                     // happens to match the site's own app bundle makes a page look half-loaded.
                     val allowBroadRules = type != "script" && type != "xmlhttprequest"
-                    val includeExtra = allowBroadRules && !sameSite && !isSubframeDocument
-                    if (WebAdBlocker.isBlocked(url, includeExtra = includeExtra)) {
-                        noteAdBlocked(host, type)
-                        return blockedResponse()
-                    }
+                    // Downloaded EasyList/AdGuard lists are only checked for third-party
+                    // iframe documents. Running up to 15k regexes for every third-party image
+                    // made image-heavy sites load very slowly; the curated built-in rules and
+                    // cosmetic hiding already cover banners and popups.
+                    val includeExtra = isSubframeDocument && !sameSite
                     // uBlock/EasyList rules: full strength on third-party images, frames and
                     // other resources. Same-site requests, player iframes, scripts and XHR only
                     // get the curated built-ins, so a broad filter-list rule cannot strip the
-                    // site's own code or a player frame.
-                    if (WebAdBlocker.matchesPattern(
-                            request,
-                            pageHost,
-                            includeFilterRules = includeExtra,
-                        )
-                    ) {
+                    // site's own code or a player frame. Any filter-engine error must fail open:
+                    // an exception here runs on Chromium's worker thread and would kill the app.
+                    val adBlocked = runCatching {
+                        (allowBroadRules &&
+                            WebAdBlocker.isBlocked(url, includeExtra = includeExtra)) ||
+                            WebAdBlocker.matchesPattern(
+                                request,
+                                pageHost,
+                                includeFilterRules = includeExtra,
+                            )
+                    }.getOrDefault(false)
+                    if (adBlocked) {
                         noteAdBlocked(host, type)
                         return blockedResponse()
                     }
@@ -818,11 +887,22 @@ internal class AndroidWebBrowserController(
                     return false
                 }
                 if (popupDialog != null) dismissPopup()
-                val child = createPopupWebView(activity)
+                val child = runCatching { createPopupWebView(activity) }.getOrNull() ?: run {
+                    noteShield("popup", "Popup could not be created.", currentPageHost().orEmpty())
+                    return false
+                }
                 popupChild = child
                 transport.webView = child
+                runCatching { showPopupWindow(child) }
+                if (popupDialog == null || popupChild !== child) {
+                    // showPopupWindow already cleaned up; do not hand a destroyed view back to
+                    // Chromium.
+                    if (popupChild === child) popupChild = null
+                    destroyPopupView(child)
+                    noteShield("popup", "Popup could not be shown.", currentPageHost().orEmpty())
+                    return false
+                }
                 resultMsg.sendToTarget()
-                showPopupWindow(child)
                 return true
             }
 
@@ -859,22 +939,34 @@ internal class AndroidWebBrowserController(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
                 }
-                container.addView(
-                    view,
-                    FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                    ),
-                )
-                decor.addView(container)
+                // Some WebView versions hand back a custom view that still has a parent.
+                // Re-parenting it avoids "child already has a parent" force-closes.
+                val attached = runCatching {
+                    (view.parent as? ViewGroup)?.removeView(view)
+                    container.addView(
+                        view,
+                        FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                    decor.addView(container)
+                    true
+                }.getOrDefault(false)
+                if (!attached) {
+                    callback?.onCustomViewHidden()
+                    return
+                }
                 customView = view
                 customViewCallback = callback
                 customViewContainer = container
                 activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                WindowCompat.getInsetsController(activity.window, decor).apply {
-                    systemBarsBehavior =
-                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    hide(WindowInsetsCompat.Type.systemBars())
+                runCatching {
+                    WindowCompat.getInsetsController(activity.window, decor).apply {
+                        systemBarsBehavior =
+                            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                        hide(WindowInsetsCompat.Type.systemBars())
+                    }
                 }
                 _state.value = _state.value.copy(fullscreen = true)
             }
@@ -1127,6 +1219,13 @@ internal class AndroidWebBrowserController(
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             setBackgroundColor(0xFF070909.toInt())
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            addJavascriptInterface(Bridge(), "NuvioWebBridge")
+            installDocumentStartScripts(this)
+            setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    downloadDirect(url, userAgent, contentDisposition, mimeType, null)
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
                     val url = request?.url?.toString() ?: return false
@@ -1140,12 +1239,41 @@ internal class AndroidWebBrowserController(
                     if (target.startsWith("http://") || target.startsWith("https://")) {
                         val host = hostOf(target).orEmpty()
                         if (isBlockedPopupHost(host) ||
-                            WebAdBlocker.matchesPatternUrl(target, currentPageHost(), includeFilterRules = true)
+                            WebAdBlocker.matchesPatternUrl(
+                                target,
+                                currentPageHost(),
+                                type = "document",
+                                includeFilterRules = false,
+                            )
                         ) {
                             noteShield("popup", "Blocked ad popup from $host.", host)
                             dismissPopup()
                         }
                     }
+                }
+
+                override fun onPageFinished(v: WebView?, url: String?) {
+                    super.onPageFinished(v, url)
+                    if (v == null) return
+                    v.evalJs(videoScanJs)
+                    v.evalJs(performanceScanJs)
+                    v.evalJs(stuckMonitorJs)
+                    v.evalJs(playingMonitorJs)
+                    if (this@AndroidWebBrowserController.settings.adBlockEnabled &&
+                        this@AndroidWebBrowserController.settings.cosmeticFiltering
+                    ) {
+                        v.evalJs(adCleanJs)
+                    }
+                    if (this@AndroidWebBrowserController.settings.mediaSnifferEnabled) {
+                        v.evalJs(snifferJs)
+                    }
+                    // Popup players often create their <video> a moment after the page loads.
+                    mainHandler.postDelayed({
+                        if (popupChild === v) {
+                            v.evalJs(videoScanJs)
+                            v.evalJs(performanceScanJs)
+                        }
+                    }, 2_500L)
                 }
 
                 override fun onRenderProcessGone(
@@ -1234,8 +1362,7 @@ internal class AndroidWebBrowserController(
                     popupDialog = null
                     val current = popupChild
                     popupChild = null
-                    runCatching { current?.loadUrl("about:blank") }
-                    runCatching { current?.destroy() }
+                    destroyPopupView(current)
                 }
             }
         }
@@ -1260,8 +1387,13 @@ internal class AndroidWebBrowserController(
         runCatching { dialog?.dismiss() }
         val child = popupChild
         popupChild = null
-        runCatching { child?.loadUrl("about:blank") }
-        runCatching { child?.destroy() }
+        destroyPopupView(child)
+    }
+
+    private fun destroyPopupView(child: WebView?) {
+        // Never destroy a WebView from inside its own WebViewClient callback: destroyWebView
+        // posts the cleanup so the Chromium callback has returned first.
+        destroyWebView(child)
     }
 
     private fun hideFullscreen(notifyWebView: Boolean = true) {
@@ -1275,7 +1407,7 @@ internal class AndroidWebBrowserController(
         }
         val activity = appContext.findActivity()
         if (activity != null) {
-            activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            runCatching { activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
             runCatching {
                 WindowCompat.getInsetsController(activity.window, activity.window.decorView)
                     .show(WindowInsetsCompat.Type.systemBars())
@@ -1314,7 +1446,7 @@ internal class AndroidWebBrowserController(
     private fun injectAdSkipConfig() {
         val view = webView ?: return
         val script = "window.__NUVIO_AD_CONFIG=${adSkipConfigJson()};" + adSkipJs
-        view.evaluateJavascript(script, null)
+        view.evalJs(script)
     }
 
     private fun installDocumentStartScripts(view: WebView) {
@@ -1335,9 +1467,8 @@ internal class AndroidWebBrowserController(
             if (settings.mediaSnifferEnabled) {
                 WebViewCompat.addDocumentStartJavaScript(view, snifferJs, setOf("*"))
             }
-            if (settings.adBlockEnabled && settings.cosmeticFiltering) {
-                WebViewCompat.addDocumentStartJavaScript(view, adCleanJs, setOf("*"))
-            }
+            // Cosmetic filtering is injected after the page has a DOM. Hiding elements at
+            // document-start could remove a player wrapper before the player was created.
         }
     }
 
@@ -1347,16 +1478,16 @@ internal class AndroidWebBrowserController(
             put("blockNotifications", settings.blockNotifications)
         }
         val view = webView ?: return
-        view.evaluateJavascript("window.__NUVIO_SHIELD=$shield;", null)
-        view.evaluateJavascript(snifferJs, null)
-        view.evaluateJavascript(performanceScanJs, null)
+        view.evalJs("window.__NUVIO_SHIELD=$shield;")
+        view.evalJs(snifferJs)
+        view.evalJs(performanceScanJs)
     }
 
     private fun injectShield() {
         val view = webView ?: return
         val block = settings.blockNotifications
-        view.evaluateJavascript("window.__NUVIO_BLOCK_NOTIFICATIONS=$block;", null)
-        view.evaluateJavascript(shieldJs, null)
+        view.evalJs("window.__NUVIO_BLOCK_NOTIFICATIONS=$block;")
+        view.evalJs(shieldJs)
     }
 
     private fun scheduleAutoPlay() {
@@ -1409,6 +1540,15 @@ internal class AndroidWebBrowserController(
     private fun captureVideoThumbnail(url: String, rect: android.graphics.RectF?) {
         val view = webView ?: return
         if (rect == null || rect.width() <= 0f || rect.height() <= 0f) return
+        // Only grab a frame from a playing video. The DOM scanner repeats every 2.5 s; without
+        // this guard every scan allocated a full-screen bitmap, which could exhaust memory and
+        // force-close the app while watching a stream.
+        if (!videoPlaying) return
+        if (detected[url]?.thumbnailPath != null) return
+        val now = SystemClock.uptimeMillis()
+        val last = thumbnailCaptures[url] ?: 0L
+        if (now - last < 20_000L) return
+        thumbnailCaptures[url] = now
         mainHandler.post {
             val width = view.width
             val height = view.height
@@ -1511,7 +1651,8 @@ internal class AndroidWebBrowserController(
     private fun isSameSite(host: String, current: String): Boolean {
         val a = host.lowercase().trimEnd('.')
         val b = current.lowercase().trimEnd('.')
-        return a == b || a.endsWith(".$b") || b.endsWith(".$a")
+        if (a == b || a.endsWith(".$b") || b.endsWith(".$a")) return true
+        return registrableDomain(a) == registrableDomain(b)
     }
 
     private fun isBlockedHost(host: String, hosts: Set<String>): Boolean {
@@ -1566,16 +1707,6 @@ internal class AndroidWebBrowserController(
         )
     }
 
-    private fun blockRedirectHost(host: String) {
-        val h = normalizeHost(host) ?: return
-        saveSettings(
-            settings.copy(
-                blockedRedirectHosts = settings.blockedRedirectHosts + h,
-                allowedHosts = settings.allowedHosts - h,
-            )
-        )
-    }
-
     private fun blockPopupHost(host: String) {
         val h = normalizeHost(host) ?: return
         saveSettings(
@@ -1584,11 +1715,6 @@ internal class AndroidWebBrowserController(
                 allowedHosts = settings.allowedHosts - h,
             )
         )
-    }
-
-    private fun loadMainFrame(url: String) {
-        pendingMainFrameUrl = url
-        webView?.loadUrl(url)
     }
 
     private fun blockedResponse(): WebResourceResponse =
@@ -1666,26 +1792,6 @@ internal class AndroidWebBrowserController(
         return true
     }
 
-    private fun askRedirectPermission(url: String, host: String): Boolean {
-        if (!choiceDue(url)) return false
-        return showChoice(
-            title = "Open this link?",
-            message = "This page tried to open $host. Redirects to other sites are blocked by default.",
-            options = listOf(
-                "Allow once" to { loadMainFrame(url) },
-                "Always allow $host" to {
-                    allowHost(host)
-                    loadMainFrame(url)
-                },
-                "Block always $host" to {
-                    blockRedirectHost(host)
-                    noteShield("redirect", "Blocked redirects to $host.", host)
-                },
-            ),
-            onCancel = { noteShield("redirect", "Cancelled a redirect to $host.", host) },
-        )
-    }
-
     private fun askPopupPermission(url: String, host: String, onAllow: (Boolean) -> Unit): Boolean {
         if (!choiceDue(url)) {
             onAllow(false)
@@ -1737,11 +1843,11 @@ internal class AndroidWebBrowserController(
             noteShield("redirect", "Blocked an ad redirect to $host during playback.", host)
             return true
         }
-        // Ask for automatic redirects too, not only taps. Some players redirect through a
-        // separate embed/CDN host without a gesture. Fail open if no dialog can be shown:
-        // a blocked page that the user cannot authorize is worse than an ad redirect.
-        val shown = askRedirectPermission(url, host)
-        return shown
+        // Real taps and ordinary automatic redirects (http -> https, login, mirrors, CDNs) are
+        // normal navigation. Blocking them behind a prompt left users on an empty page, which
+        // looked like the site was broken. Only the user's block list and playback hijacks are
+        // stopped; everything else fails open.
+        return false
     }
 
     private fun updateNavigation() {
@@ -1758,27 +1864,13 @@ internal class AndroidWebBrowserController(
         val url = pageUrl.ifBlank { view.url.orEmpty() }
         if (url.isBlank()) return
         WebUserscriptManager.scriptsFor(url, scripts, atStart).forEach { code ->
-            view.evaluateJavascript(code, null)
+            view.evalJs(code)
         }
-    }
-
-    private fun injectHlsAndScan() {
-        val view = webView ?: return
-        val url = view.url ?: return
-        if (hlsInjectedFor == url) return
-        hlsInjectedFor = url
-        if (hlsLib.isNotBlank()) {
-            // Do not replace a site's own hls.js: overwriting window.Hls can break its player
-            // (and shows up as a blinking/reloading video).
-            val guarded = "if(typeof window.Hls==='undefined'){\n" + hlsLib + "\n}"
-            view.evaluateJavascript(guarded, null)
-        }
-        view.evaluateJavascript(hlsAttachJs, null)
     }
 
     private fun injectAdClean() {
         if (!settings.adBlockEnabled || !settings.cosmeticFiltering) return
-        webView?.evaluateJavascript(adCleanJs, null)
+        webView?.evalJs(adCleanJs)
     }
 
     private fun isMediaRequest(request: WebResourceRequest): Boolean {
@@ -1837,18 +1929,29 @@ internal class AndroidWebBrowserController(
         // real duration/resolution so the picker can rank the actual video above 10-second ads.
         val existing = detected[url]
         if (existing != null) {
-            val changed = infoWidth > 0 || infoHeight > 0 || infoDurationMs > 0 ||
-                !posterUrl.isNullOrBlank() || !infoTitle.isNullOrBlank() || !detectedBy.isNullOrBlank() ||
-                videoRect != null
+            // The DOM scanner reports the same video every 2.5 s. Only update state when a value
+            // actually changed; otherwise the browser recomposed forever while a stream played.
+            val newDetectedBy = detectedBy?.takeIf { it.isNotBlank() && it !in existing.detectedBy }
+            val nextWidth = infoWidth.takeIf { it > 0 } ?: existing.width
+            val nextHeight = infoHeight.takeIf { it > 0 } ?: existing.height
+            val nextDuration = infoDurationMs.takeIf { it > 0 } ?: existing.durationMs
+            val changed = (infoWidth > 0 && infoWidth != existing.width) ||
+                (infoHeight > 0 && infoHeight != existing.height) ||
+                (infoDurationMs > 0 &&
+                    kotlin.math.abs(infoDurationMs - (existing.durationMs ?: 0L)) >= 1_000L) ||
+                (!posterUrl.isNullOrBlank() && posterUrl != existing.posterUrl) ||
+                (!infoTitle.isNullOrBlank() && infoTitle != existing.title) ||
+                newDetectedBy != null ||
+                (audioOnly && !existing.isAudioOnly)
             if (changed) {
                 val updated = existing.copy(
-                    width = infoWidth.takeIf { it > 0 } ?: existing.width,
-                    height = infoHeight.takeIf { it > 0 } ?: existing.height,
-                    durationMs = infoDurationMs.takeIf { it > 0 } ?: existing.durationMs,
+                    width = nextWidth,
+                    height = nextHeight,
+                    durationMs = nextDuration,
                     posterUrl = posterUrl?.takeIf { it.isNotBlank() } ?: existing.posterUrl,
                     thumbnailUrl = existing.thumbnailUrl ?: posterUrl?.takeIf { it.isNotBlank() },
                     title = infoTitle?.takeIf { it.isNotBlank() } ?: existing.title,
-                    detectedBy = if (detectedBy.isNullOrBlank()) existing.detectedBy else existing.detectedBy + detectedBy,
+                    detectedBy = if (newDetectedBy == null) existing.detectedBy else existing.detectedBy + newDetectedBy,
                     isAudioOnly = existing.isAudioOnly || audioOnly,
                 ).let {
                     it.copy(
@@ -1860,53 +1963,77 @@ internal class AndroidWebBrowserController(
                 mainHandler.post {
                     _state.value = _state.value.copy(detectedMedia = synchronized(detected) { detected.values.toList() })
                 }
-                captureVideoThumbnail(url, videoRect)
             }
+            captureVideoThumbnail(url, videoRect)
             scheduleAutoPlay()
             return
         }
         if (!probing.add(url)) return
-        probeExecutor.execute {
-            val headers = mediaHeaders(url, requestHeaders)
-            val probe = runCatching { probeMedia(url, headers) }.getOrNull()
-                ?: if (looksLikeDirectMedia(url)) MediaProbe(streamType = streamTypeForUrl(url)) else null
+        val executor = probeExecutor
+        if (executor.isShutdown) {
             probing.remove(url)
-            if (probe == null) return@execute
-            val width = infoWidth.takeIf { it > 0 } ?: probe.width
-            val height = infoHeight.takeIf { it > 0 } ?: probe.height
-            val duration = infoDurationMs.takeIf { it > 0 } ?: probe.durationMs
-            val source = WebMediaSource(
-                url = url,
-                pageUrl = pageUrl,
-                title = infoTitle?.takeIf { it.isNotBlank() }
-                    ?: pageTitle.ifBlank { webHost(url) },
-                headers = headers,
-                streamType = probe.streamType,
-                isHls = probe.streamType == "hls",
-                isDash = probe.streamType == "dash",
-                durationMs = duration,
-                width = width,
-                height = height,
-                bandwidth = probe.bandwidth,
-                isMaster = probe.isMaster,
-                variantCount = probe.variants.size.coerceAtLeast(1),
-                likelyAd = looksLikeAd(url, duration, width, height),
-                posterUrl = posterUrl?.takeIf { it.isNotBlank() },
-                thumbnailUrl = posterUrl?.takeIf { it.isNotBlank() },
-                isLive = probe.isLive,
-                isAudioOnly = audioOnly || probe.isAudioOnly,
-                drm = probe.drm,
-                variants = probe.variants,
-                detectedBy = setOfNotNull(detectedBy),
-            ).let {
-                it.copy(confidence = mediaConfidence(it))
+            return
+        }
+        val requestPageUrl = pageUrl
+        val submitted = runCatching {
+            executor.execute {
+                val headers = mediaHeaders(url, requestHeaders)
+                val probe = runCatching { probeMedia(url, headers) }.getOrNull()
+                    ?: if (looksLikeDirectMedia(url)) MediaProbe(streamType = streamTypeForUrl(url)) else null
+                probing.remove(url)
+                if (probe == null) return@execute
+                // The user navigated while the probe was running; do not leak the old page's
+                // media into the new page's picker.
+                if (pageUrl != requestPageUrl) return@execute
+                val width = infoWidth.takeIf { it > 0 } ?: probe.width
+                val height = infoHeight.takeIf { it > 0 } ?: probe.height
+                val duration = infoDurationMs.takeIf { it > 0 } ?: probe.durationMs
+                val source = WebMediaSource(
+                    url = url,
+                    pageUrl = pageUrl,
+                    title = infoTitle?.takeIf { it.isNotBlank() }
+                        ?: pageTitle.ifBlank { webHost(url) },
+                    headers = headers,
+                    streamType = probe.streamType,
+                    isHls = probe.streamType == "hls",
+                    isDash = probe.streamType == "dash",
+                    durationMs = duration,
+                    width = width,
+                    height = height,
+                    bandwidth = probe.bandwidth,
+                    isMaster = probe.isMaster,
+                    variantCount = probe.variants.size.coerceAtLeast(1),
+                    likelyAd = looksLikeAd(url, duration, width, height),
+                    posterUrl = posterUrl?.takeIf { it.isNotBlank() },
+                    thumbnailUrl = posterUrl?.takeIf { it.isNotBlank() },
+                    isLive = probe.isLive,
+                    isAudioOnly = audioOnly || probe.isAudioOnly,
+                    drm = probe.drm,
+                    variants = probe.variants,
+                    detectedBy = setOfNotNull(detectedBy),
+                ).let {
+                    it.copy(confidence = mediaConfidence(it))
+                }
+                detected[url] = source
+                trimDetected(keep = url)
+                mainHandler.post {
+                    _state.value = _state.value.copy(detectedMedia = synchronized(detected) { detected.values.toList() })
+                }
+                captureVideoThumbnail(url, videoRect)
+                scheduleAutoPlay()
             }
-            detected[url] = source
-            mainHandler.post {
-                _state.value = _state.value.copy(detectedMedia = synchronized(detected) { detected.values.toList() })
+        }.isSuccess
+        if (!submitted) probing.remove(url)
+    }
+
+    /** Heavy catalog pages can expose hundreds of clips; keep memory bounded. */
+    private fun trimDetected(keep: String) {
+        synchronized(detected) {
+            while (detected.size > 80) {
+                val victim = detected.keys.firstOrNull { it != keep && it !in handedOffUrls }
+                    ?: break
+                detected.remove(victim)
             }
-            captureVideoThumbnail(url, videoRect)
-            scheduleAutoPlay()
         }
     }
 
@@ -2692,7 +2819,11 @@ internal object WebAdBlocker {
             path.endsWith(".mp4") || path.endsWith(".m3u8") || path.endsWith(".mpd") ||
                 path.endsWith(".ts") || path.endsWith(".webm") || path.endsWith(".m4s") -> "media"
             else -> {
-                val accept = request.requestHeaders?.get("Accept")?.lowercase().orEmpty()
+                val accept = request.requestHeaders?.entries
+                    ?.firstOrNull { it.key.equals("Accept", ignoreCase = true) }
+                    ?.value
+                    ?.lowercase()
+                    .orEmpty()
                 when {
                     accept.contains("javascript") || accept.contains("ecmascript") -> "script"
                     accept.contains("css") -> "stylesheet"
@@ -2710,7 +2841,8 @@ internal object WebAdBlocker {
     private fun sameParty(reqHost: String, pageHost: String): Boolean {
         val r = reqHost.lowercase()
         val p = pageHost.trim().trimEnd('.').lowercase()
-        return r == p || r.endsWith(".$p") || p.endsWith(".$r")
+        if (r == p || r.endsWith(".$p") || p.endsWith(".$r")) return true
+        return registrableDomain(r) == registrableDomain(p)
     }
 
     private fun ruleApplies(
@@ -2815,9 +2947,17 @@ actual fun WebBrowserHost(
     // happens; key() gives AndroidView a fresh factory and the page loads again.
     key(state.rendererGeneration) {
         AndroidView(
-            factory = { WebView(context).also { view -> android?.attach(view) } },
+            factory = { viewContext ->
+                runCatching {
+                    WebView(viewContext).also { view -> android?.attach(view) }
+                }.getOrElse { error ->
+                    android?.reportWebViewUnavailable(error)
+                    FrameLayout(viewContext)
+                }
+            },
             modifier = modifier,
-            update = { view -> android?.attach(view) },
+            update = { view -> (view as? WebView)?.let { android?.attach(it) } },
+            onRelease = { view -> (view as? WebView)?.let { android?.releaseView(it) } },
         )
     }
     DisposableEffect(controller) {

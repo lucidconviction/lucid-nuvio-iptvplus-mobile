@@ -20,10 +20,15 @@
   }
   function inPlayer(el){
     var p=el;
-    for(var i=0;i<9&&p;i++,p=p.parentElement){
-      var s=((p.className&&p.className.baseVal)||p.className||'')+' '+(p.id||'');
-      s=String(s).toLowerCase();
-      if(/player|video|jw|plyr|dplayer|shaka|html5/.test(s))return true;
+    for(var i=0;i<10&&p;i++,p=p.parentElement){
+      try{
+        // The container must actually hold the video. A page wrapper that merely has
+        // "player" in its class used to let the clicker press site navigation buttons.
+        if(!p.querySelector||!p.querySelector('video'))continue;
+        var s=String(((p.className&&p.className.baseVal)||p.className||'')+' '+(p.id||'')).toLowerCase();
+        if(/html5-video-player|jwplayer|jw-player|video-js|vjs-|plyr|dplayer|shaka|video-player|player-container|player-wrapper/.test(s))return true;
+        if(/(^|[\s_-])player([\s_-]|$)/.test(s))return true;
+      }catch(e){}
     }
     return false;
   }
@@ -34,8 +39,16 @@
     }catch(e){}
     return true;
   }
-  function clickIfMatch(texts,kind){
-    var nodes=document.querySelectorAll('button,a,[role="button"],div,span');
+  function adShowing(){
+    try{
+      var vs=document.querySelectorAll('video');
+      for(var i=0;i<vs.length;i++){if(adRoot(vs[i]))return true;}
+      return !!document.querySelector('.ytp-ad-skip-button,.ytp-skip-ad-button,.ytp-ad-player-overlay,[class*="ad-showing"]');
+    }catch(e){return false}
+  }
+  function clickIfMatch(texts,kind,requireAd){
+    if(requireAd&&!adShowing())return false;
+    var nodes=document.querySelectorAll('button,a,[role="button"],[class*="skip"],[id*="skip"]');
     for(var i=0;i<nodes.length;i++){
       var el=nodes[i];
       if(clicked.has(el)||!safeButton(el)||!inPlayer(el))continue;
@@ -56,7 +69,7 @@
     }
     return false;
   }
-  var SKIP_TEXTS=['skip ad','skip ads','skip','continue'];
+  var SKIP_TEXTS=['skip ad','skip ads','skip advertisement'];
   var INTRO_TEXTS=['skip intro','skip opening','skip previously'];
   var RECAP_TEXTS=['skip recap'];
   var NEXT_TEXTS=['next episode','play next'];
@@ -73,7 +86,7 @@
     for(var i=0;i<nodes.length;i++){
       if(!visible(nodes[i]))continue;
       var text=(nodes[i].innerText||nodes[i].textContent||'').trim().toLowerCase();
-      if(text.indexOf('skip')===0||text==='continue')return true;
+      if(text.indexOf('skip')===0)return true;
     }
     return false;
   }
@@ -137,11 +150,17 @@
   }
   function tick(){
     if(document.hidden)return;
+    // Skip/intro buttons only exist around a real player. Bail out before scanning the whole
+    // document so content pages and long articles stay responsive.
+    if(!document.querySelector('video'))return;
     cfg=window.__NUVIO_AD_CONFIG||cfg;
     mode=cfg.mode||mode;
     if(mode==='Off')return;
     speed=Math.max(2,Math.min(16,Number(cfg.speed)||speed));
     clickIfMatch(SKIP_TEXTS,'ad');
+    // Bare "Skip" / "Continue" buttons only exist on a real ad overlay. Clicking them on a
+    // normal page can follow site navigation instead of skipping an ad.
+    clickIfMatch(['skip'],'ad',true);
     if(cfg.skipIntros)clickIfMatch(INTRO_TEXTS,'intro');
     if(cfg.skipRecaps)clickIfMatch(RECAP_TEXTS,'intro');
     if(cfg.autoNext&&mode==='Aggressive')clickIfMatch(NEXT_TEXTS,'next');
@@ -156,9 +175,17 @@
     }
     report();
   }
+  var queued=false;
+  function queueTick(){
+    if(queued)return;
+    queued=true;
+    setTimeout(function(){queued=false;tick()},250);
+  }
   try{
     tick();
-    setInterval(tick,500);
-    new MutationObserver(tick).observe(document.documentElement||document.body,{childList:true,subtree:true});
+    setInterval(tick,750);
+    try{
+      new MutationObserver(queueTick).observe(document.documentElement||document.body,{childList:true,subtree:true});
+    }catch(e){}
   }catch(e){}
 })();
