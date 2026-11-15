@@ -50,89 +50,9 @@ import org.jetbrains.compose.resources.stringResource
 internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
     val runtime = this
     val isInPip = rememberIsInPictureInPicture()
-    val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
     val isEpisode = activeSeasonNumber != null && activeEpisodeNumber != null
     val currentGestureFeedback = liveGestureFeedback ?: gestureFeedback
     val isP2pPlaybackActive = activeTorrentInfoHash != null
-    val p2pConnecting = p2pStreamingState as? P2pStreamingState.Connecting
-    val p2pStats = p2pStreamingState as? P2pStreamingState.Streaming
-    val p2pPeerInfo = p2pStats?.let { stats ->
-        org.jetbrains.compose.resources.stringResource(
-            nuvio.composeapp.generated.resources.Res.string.player_torrent_peer_info,
-            stats.seeds,
-            stats.peers,
-        )
-    }
-    val p2pDownloadSpeed = p2pStats?.let { formatP2pSpeed(it.downloadSpeed) }
-    val p2pLoadingBytes = p2pStats?.let { maxOf(it.downloadedBytes, it.deliveredBytes) } ?: 0L
-    val connectingPeerInfo = p2pConnecting?.let { state ->
-        org.jetbrains.compose.resources.stringResource(
-            nuvio.composeapp.generated.resources.Res.string.player_torrent_peer_info,
-            state.seeds,
-            state.peers,
-        )
-    }
-    val p2pInitialLoadingMessage = when {
-        !isP2pPlaybackActive || initialLoadCompleted -> null
-        p2pConnecting != null -> {
-            if (p2pSettingsUiState.hideTorrentStats) {
-                p2pConnectingPhaseLabel(p2pConnecting.phase)
-            } else {
-                org.jetbrains.compose.resources.stringResource(
-                    nuvio.composeapp.generated.resources.Res.string.player_torrent_connecting_status,
-                    p2pConnectingPhaseLabel(p2pConnecting.phase),
-                    connectingPeerInfo.orEmpty(),
-                    formatP2pSpeed(p2pConnecting.downloadSpeed),
-                )
-            }
-        }
-        p2pStats != null -> {
-            if (p2pSettingsUiState.hideTorrentStats) {
-                null
-            } else {
-                org.jetbrains.compose.resources.stringResource(
-                    nuvio.composeapp.generated.resources.Res.string.player_torrent_loading_status,
-                    formatP2pMegabytes(p2pLoadingBytes),
-                    p2pPeerInfo.orEmpty(),
-                    p2pDownloadSpeed.orEmpty(),
-                )
-            }
-        }
-        else -> org.jetbrains.compose.resources.stringResource(
-            nuvio.composeapp.generated.resources.Res.string.player_torrent_starting_engine,
-        )
-    }
-    val bufferedAheadMs = (playbackSnapshot.bufferedPositionMs - playbackSnapshot.positionMs)
-        .coerceAtLeast(0L)
-    val p2pInitialLoadingProgress = when {
-        !isP2pPlaybackActive || initialLoadCompleted || p2pStats == null -> null
-        else -> p2pInitialLoadingProgress(
-            bufferedAheadMs = bufferedAheadMs,
-            downloadedBytes = p2pStats.downloadedBytes,
-            deliveredBytes = p2pStats.deliveredBytes,
-        )
-    }
-    val showP2pRebufferStats = isP2pPlaybackActive &&
-        initialLoadCompleted &&
-        playbackSnapshot.isLoading &&
-        p2pStats != null &&
-        !p2pSettingsUiState.hideTorrentStats
-    val p2pRebufferMessage = when {
-        !showP2pRebufferStats -> null
-        else -> {
-            val bufferedSeconds = ((playbackSnapshot.bufferedPositionMs - playbackSnapshot.positionMs) / 1000L)
-                .coerceAtLeast(0L)
-            "${bufferedSeconds}s buffered · ${p2pPeerInfo.orEmpty()} · ${p2pDownloadSpeed.orEmpty()}"
-        }
-    }
-    val p2pRebufferProgress = when {
-        !showP2pRebufferStats -> null
-        else -> {
-            val bufferedSeconds = ((playbackSnapshot.bufferedPositionMs - playbackSnapshot.positionMs) / 1000f)
-                .coerceAtLeast(0f)
-            (bufferedSeconds / 10f).coerceIn(0f, 1f)
-        }
-    }
     val gestureCallbacks = rememberSurfaceGestureCallbacks()
     val fold = LocalFold.current?.takeIf { !isInPip }
     val videoModifier = if (fold != null) Modifier.fillMaxWidth().height(fold.top) else Modifier.fillMaxSize()
@@ -315,7 +235,6 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         // YouTube's button row sits directly above the title/progress/actions block.
         var youtubeButtonsBottomInset by remember { mutableStateOf(0.dp) }
         RenderPlayerControls(
-            displayedPositionMs = displayedPositionMs,
             isEpisode = isEpisode,
             folded = fold != null,
             modifier = panelModifier,
@@ -323,49 +242,53 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
         )
         // YouTube's panel buttons and their lists.
         if (contentType == "youtube") {
-            val youTubeVideoId = activeVideoId
-            val moreVideos = YouTubeHost.moreVideos
-            if (youTubeVideoId != null && moreVideos != null) {
-                val inset = youtubeButtonsBottomInset.takeIf { it > 0.dp }
-                    ?: (metrics.sliderBottomOffset + 104.dp)
-                moreVideos(
-                    youTubeVideoId,
-                    controlsVisible && !playerControlsLocked && errorMessage == null && !isInPip && !isPanelOpen,
-                    inset,
-                ) { request ->
-                    YouTubeHost.openVideo?.invoke(request)
-                }
-            }
-            // Auto-play the next video when this one ends, and show its up-next card near the end.
-            val playerOverlay = YouTubeHost.playerOverlay
-            if (youTubeVideoId != null && playerOverlay != null) {
-                playerOverlay(
-                    youTubeVideoId,
-                    playbackSnapshot.positionMs,
-                    playbackSnapshot.durationMs,
-                    playbackSnapshot.isEnded,
-                ) { request ->
-                    YouTubeHost.openVideo?.invoke(request)
-                }
-            }
+            val inset = youtubeButtonsBottomInset.takeIf { it > 0.dp }
+                ?: (metrics.sliderBottomOffset + 104.dp)
+            YouTubeRuntimeOverlay(inset)
         }
         Box(modifier = videoModifier) {
             RenderPlaybackOverlays(
                 runtime = runtime,
-                displayedPositionMs = displayedPositionMs,
                 currentGestureFeedback = currentGestureFeedback,
-                p2pInitialLoadingMessage = p2pInitialLoadingMessage,
-                p2pInitialLoadingProgress = p2pInitialLoadingProgress,
-                showP2pRebufferStats = showP2pRebufferStats,
-                p2pRebufferMessage = p2pRebufferMessage,
-                p2pRebufferProgress = p2pRebufferProgress,
                 folded = fold != null,
             )
         }
         Box(modifier = panelModifier) {
             RenderLiveTvChannels() // Live TV channel panel
-            RenderPlayerModals(displayedPositionMs = displayedPositionMs)
+            RenderPlayerModals()
             RenderParty(runtime = runtime)
+        }
+    }
+}
+
+/**
+ * The YouTube-only overlays that follow the playhead. Kept out of the player shell so a 250 ms
+ * playback snapshot does not recompose the video surface and its gesture modifiers.
+ */
+@Composable
+private fun PlayerScreenRuntime.YouTubeRuntimeOverlay(inset: Dp) {
+    val youTubeVideoId = activeVideoId
+    val moreVideos = YouTubeHost.moreVideos
+    if (youTubeVideoId != null && moreVideos != null) {
+        val isInPip = rememberIsInPictureInPicture()
+        moreVideos(
+            youTubeVideoId,
+            controlsVisible && !playerControlsLocked && errorMessage == null && !isInPip && !isPanelOpen,
+            inset,
+        ) { request ->
+            YouTubeHost.openVideo?.invoke(request)
+        }
+    }
+    // Auto-play the next video when this one ends, and show its up-next card near the end.
+    val playerOverlay = YouTubeHost.playerOverlay
+    if (youTubeVideoId != null && playerOverlay != null) {
+        playerOverlay(
+            youTubeVideoId,
+            playbackSnapshot.positionMs,
+            playbackSnapshot.durationMs,
+            playbackSnapshot.isEnded,
+        ) { request ->
+            YouTubeHost.openVideo?.invoke(request)
         }
     }
 }
@@ -395,12 +318,12 @@ private fun PlayerScreenRuntime.currentInitialPositionRequestKey(): String? {
 
 @Composable
 private fun PlayerScreenRuntime.RenderPlayerControls(
-    displayedPositionMs: Long,
     isEpisode: Boolean,
     folded: Boolean,
     modifier: Modifier,
     onTimelineHeightChanged: (Dp) -> Unit = {},
 ) {
+    val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
     val isInPip = rememberIsInPictureInPicture()
     val partyState by PartyRepository.state.collectAsStateWithLifecycle()
     val partyActive = partyState.party != null
@@ -638,16 +561,91 @@ private fun PlayerScreenRuntime.RenderPlayerControls(
 @Composable
 private fun BoxScope.RenderPlaybackOverlays(
     runtime: PlayerScreenRuntime,
-    displayedPositionMs: Long,
     currentGestureFeedback: GestureFeedbackState?,
-    p2pInitialLoadingMessage: String?,
-    p2pInitialLoadingProgress: Float?,
-    showP2pRebufferStats: Boolean,
-    p2pRebufferMessage: String?,
-    p2pRebufferProgress: Float?,
     folded: Boolean,
 ) {
     runtime.run {
+        val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
+        val isP2pPlaybackActive = activeTorrentInfoHash != null
+        val p2pConnecting = p2pStreamingState as? P2pStreamingState.Connecting
+        val p2pStats = p2pStreamingState as? P2pStreamingState.Streaming
+        val p2pPeerInfo = p2pStats?.let { stats ->
+            org.jetbrains.compose.resources.stringResource(
+                nuvio.composeapp.generated.resources.Res.string.player_torrent_peer_info,
+                stats.seeds,
+                stats.peers,
+            )
+        }
+        val p2pDownloadSpeed = p2pStats?.let { formatP2pSpeed(it.downloadSpeed) }
+        val p2pLoadingBytes = p2pStats?.let { maxOf(it.downloadedBytes, it.deliveredBytes) } ?: 0L
+        val connectingPeerInfo = p2pConnecting?.let { state ->
+            org.jetbrains.compose.resources.stringResource(
+                nuvio.composeapp.generated.resources.Res.string.player_torrent_peer_info,
+                state.seeds,
+                state.peers,
+            )
+        }
+        val p2pInitialLoadingMessage = when {
+            !isP2pPlaybackActive || initialLoadCompleted -> null
+            p2pConnecting != null -> {
+                if (p2pSettingsUiState.hideTorrentStats) {
+                    p2pConnectingPhaseLabel(p2pConnecting.phase)
+                } else {
+                    org.jetbrains.compose.resources.stringResource(
+                        nuvio.composeapp.generated.resources.Res.string.player_torrent_connecting_status,
+                        p2pConnectingPhaseLabel(p2pConnecting.phase),
+                        connectingPeerInfo.orEmpty(),
+                        formatP2pSpeed(p2pConnecting.downloadSpeed),
+                    )
+                }
+            }
+            p2pStats != null -> {
+                if (p2pSettingsUiState.hideTorrentStats) {
+                    null
+                } else {
+                    org.jetbrains.compose.resources.stringResource(
+                        nuvio.composeapp.generated.resources.Res.string.player_torrent_loading_status,
+                        formatP2pMegabytes(p2pLoadingBytes),
+                        p2pPeerInfo.orEmpty(),
+                        p2pDownloadSpeed.orEmpty(),
+                    )
+                }
+            }
+            else -> org.jetbrains.compose.resources.stringResource(
+                nuvio.composeapp.generated.resources.Res.string.player_torrent_starting_engine,
+            )
+        }
+        val bufferedAheadMs = (playbackSnapshot.bufferedPositionMs - playbackSnapshot.positionMs)
+            .coerceAtLeast(0L)
+        val p2pInitialLoadingProgress = when {
+            !isP2pPlaybackActive || initialLoadCompleted || p2pStats == null -> null
+            else -> p2pInitialLoadingProgress(
+                bufferedAheadMs = bufferedAheadMs,
+                downloadedBytes = p2pStats.downloadedBytes,
+                deliveredBytes = p2pStats.deliveredBytes,
+            )
+        }
+        val showP2pRebufferStats = isP2pPlaybackActive &&
+            initialLoadCompleted &&
+            playbackSnapshot.isLoading &&
+            p2pStats != null &&
+            !p2pSettingsUiState.hideTorrentStats
+        val p2pRebufferMessage = when {
+            !showP2pRebufferStats -> null
+            else -> {
+                val bufferedSeconds = ((playbackSnapshot.bufferedPositionMs - playbackSnapshot.positionMs) / 1000L)
+                    .coerceAtLeast(0L)
+                "${bufferedSeconds}s buffered · ${p2pPeerInfo.orEmpty()} · ${p2pDownloadSpeed.orEmpty()}"
+            }
+        }
+        val p2pRebufferProgress = when {
+            !showP2pRebufferStats -> null
+            else -> {
+                val bufferedSeconds = ((playbackSnapshot.bufferedPositionMs - playbackSnapshot.positionMs) / 1000f)
+                    .coerceAtLeast(0f)
+                (bufferedSeconds / 10f).coerceIn(0f, 1f)
+            }
+        }
         PlayerPlaybackOverlays(
             playerControlsLocked = playerControlsLocked,
             useLegacyLayout = playerSettingsUiState.useLegacyPlayerLayout,
@@ -727,7 +725,8 @@ private fun BoxScope.RenderPlaybackOverlays(
 }
 
 @Composable
-private fun PlayerScreenRuntime.RenderPlayerModals(displayedPositionMs: Long) {
+private fun PlayerScreenRuntime.RenderPlayerModals() {
+    val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
     PlayerChaptersPanel(
         visible = showChaptersPanel && chapters.isNotEmpty(),
         chapters = chapters,
