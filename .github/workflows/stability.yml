@@ -1,0 +1,62 @@
+name: Stability
+
+# Builds and tests every push to main and every pull request. This is the guardrail for the
+# stability/performance work: a change is not done until compile, host tests and the debug APK
+# all pass on a clean checkout.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Write app keys
+        uses: ./.github/actions/app-keys
+        with:
+          backend_url: ${{ secrets.NUVIO_BACKEND_URL }}
+          backend_key: ${{ secrets.NUVIO_BACKEND_KEY }}
+          tmdb_api_key: ${{ secrets.TMDB_API_KEY }}
+          trakt_client_id: ${{ secrets.TRAKT_CLIENT_ID }}
+          trakt_client_secret: ${{ secrets.TRAKT_CLIENT_SECRET }}
+          simkl_client_id: ${{ secrets.SIMKL_CLIENT_ID }}
+          simkl_app_name: ${{ secrets.SIMKL_APP_NAME }}
+          mdblist_client_id: ${{ secrets.MDBLIST_CLIENT_ID }}
+          google_drive_client_id: ${{ secrets.GOOGLE_DRIVE_CLIENT_ID }}
+          google_drive_client_secret: ${{ secrets.GOOGLE_DRIVE_CLIENT_SECRET }}
+          premiumize_client_id: ${{ secrets.PREMIUMIZE_CLIENT_ID }}
+          imdb_ratings_api_base_url: ${{ secrets.IMDB_RATINGS_API_BASE_URL }}
+          imdb_tapframe_api_base_url: ${{ secrets.IMDB_TAPFRAME_API_BASE_URL }}
+          introdb_api_url: ${{ secrets.INTRODB_API_URL }}
+
+      - name: Build and test
+        run: |
+          chmod +x gradlew
+          # Fit the build into the runner's memory, the same way the release workflow does.
+          sed -i -E 's/^org\.gradle\.jvmargs=.*/org.gradle.jvmargs=-Xmx6144M -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=1024m/; s/^kotlin\.daemon\.jvmargs=.*/kotlin.daemon.jvmargs=-Xmx3072M/' gradle.properties
+          echo 'org.gradle.workers.max=3' >> gradle.properties
+          ./gradlew \
+            :androidApp:compileFullDebugKotlin \
+            :composeApp:testAndroidHostTest \
+            :androidApp:assembleFullDebug \
+            --stacktrace
