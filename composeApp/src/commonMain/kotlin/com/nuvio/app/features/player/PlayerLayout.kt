@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeContent
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.union
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -129,9 +130,14 @@ internal fun playerHorizontalSafePadding(): Dp {
 
 @Composable
 internal fun playerTimelineBottomInsets(metrics: PlayerLayoutMetrics): WindowInsets {
-    val safeInsets = WindowInsets.safeContent.only(WindowInsetsSides.Bottom)
     val contentInsets = WindowInsets(bottom = metrics.sliderBottomOffset / 2)
-    return if (isIos) safeInsets.union(contentInsets) else safeInsets.add(contentInsets)
+    return if (isIos) {
+        WindowInsets.safeContent.only(WindowInsetsSides.Bottom).union(contentInsets)
+    } else {
+        // safeContent includes gesture insets, which stay non-zero with gesture navigation even
+        // when the system bars are hidden and push the timeline/action row up.
+        WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom).add(contentInsets)
+    }
 }
 
 internal fun PlayerResizeMode.next(): PlayerResizeMode =
