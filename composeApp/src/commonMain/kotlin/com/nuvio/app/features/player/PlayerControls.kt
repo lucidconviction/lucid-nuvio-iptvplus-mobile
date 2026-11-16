@@ -7,7 +7,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -46,9 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -190,13 +187,11 @@ internal fun PlayerControlsShell(
         return
     }
     val density = LocalDensity.current
-    var timelineHeight by remember { mutableStateOf(0.dp) }
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val centerControlHeight = metrics.playIconSize + maxOf(metrics.playButtonPadding, metrics.sideButtonPadding) * 2
-        val centerBottomPadding = if (useLegacyLayout) metrics.centerLift else maxOf(
-            metrics.centerLift,
-            timelineHeight * 2 + centerControlHeight + 16.dp - maxHeight,
-        )
+    Box(modifier = modifier.fillMaxSize()) {
+        // The primary controls must sit at the same vertical position whether badges, chapter
+        // titles or release info are visible. Deriving the offset from the measured timeline
+        // height makes the controls jump when those details toggle.
+        val centerBottomPadding = metrics.centerLift
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -343,9 +338,7 @@ internal fun PlayerControlsShell(
                 Column(
                     modifier = Modifier
                         .onSizeChanged { size ->
-                            val height = with(density) { size.height.toDp() }
-                            timelineHeight = height
-                            onTimelineHeightChanged(height)
+                            onTimelineHeightChanged(with(density) { size.height.toDp() })
                         }
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
