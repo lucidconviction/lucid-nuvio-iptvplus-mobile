@@ -49,6 +49,11 @@ internal object VirtualChannelPlayback {
         VirtualTuneResolver.precacheChannel(channelKey, nowMs)
     }
 
+    /** Drops all in-memory Lucid stream caches after the add-on set changes. */
+    fun clearCaches() {
+        VirtualTuneResolver.clearCaches()
+    }
+
     /** The item on now is kept for a quick warm start; drop it when a source fails. */
     suspend fun invalidate(channelKey: String, failedStream: com.nuvio.app.features.streams.StreamItem? = null) {
         VirtualTuneResolver.invalidate(channelKey, failedStream)

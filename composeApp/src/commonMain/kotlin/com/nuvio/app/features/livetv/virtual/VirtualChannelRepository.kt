@@ -200,7 +200,9 @@ internal object VirtualChannelRepository {
                             .filter { it.enabled && _pools.value[it.id]?.items.isNullOrEmpty() }
                             .forEach { refreshPool(it.id, force = true) }
                         // Pools that were already restored also need their links warmed once the
-                        // real add-on set is known.
+                        // real add-on set is known. Drop the short-lived "no streams" errors from
+                        // the cold-start attempt first.
+                        VirtualChannelPlayback.clearCaches()
                         precacheAll()
                     }
                     refreshStale(forceEmpty = false)

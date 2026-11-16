@@ -242,6 +242,14 @@ internal object VirtualTuneResolver {
         prefetch(channelKey, nowMs)
     }
 
+    /** Drop cached winners and candidate lists after the add-on set changes. */
+    fun clearCaches() {
+        kotlinx.atomicfu.locks.synchronized(cacheLock) {
+            cache.clear()
+            candidateCache.clear()
+        }
+    }
+
     /** Forgets cached winners for one channel and, when given, blocks the failed source for a while. */
     suspend fun invalidate(
         channelKey: String,
