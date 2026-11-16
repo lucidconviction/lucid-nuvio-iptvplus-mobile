@@ -12,6 +12,7 @@ import com.nuvio.app.features.livetv.data.LiveTvRepository
 import com.nuvio.app.features.livetv.model.EpgProgram
 import com.nuvio.app.features.livetv.model.LiveChannel
 import com.nuvio.app.features.livetv.model.LiveTvClock
+import com.nuvio.app.features.livetv.player.VirtualChannelPlayback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -45,6 +47,8 @@ internal object VirtualChannelRepository {
     private val codec = VirtualChannelCodec
     private val poolMutex = Mutex()
     private val poolPermits = kotlinx.coroutines.sync.Semaphore(POOL_CONCURRENCY)
+    private val precachePermits = Semaphore(PRECACHE_CONCURRENCY)
+    private val precaching = HashSet<String>()
     private val runtimeLock = kotlinx.atomicfu.locks.SynchronizedObject()
 
     /** Channels the viewer made in the studio. These are the only channels in the guide. */
@@ -85,6 +89,7 @@ internal object VirtualChannelRepository {
     private var specsObserverStarted = false
     private var settingsObserverStarted = false
     private var addonObserverStarted = false
+    private var addonFingerprint = ""
 
     // ---------------------------------------------------------------- lifecycle
 
@@ -111,6 +116,7 @@ internal object VirtualChannelRepository {
             rebuildChannels()
             rebuildWindow()
             refreshStale(forceEmpty = true)
+            precacheAll()
         }
         if (!tickerStarted) {
             tickerStarted = true
@@ -175,20 +181,27 @@ internal object VirtualChannelRepository {
         }
         if (!addonObserverStarted) {
             addonObserverStarted = true
-            // Channel definitions do not depend on add-ons, but a rules channel built before the
-            // manifests arrived still needs its pool. Rebroadcast when manifests change so Lucid
-            // TV can fill that pool; no channels are created here.
+            // Channel definitions do not depend on add-ons, but catalog/series/rules channels
+            // built before the manifests arrived still need their pools. Rebroadcast when the
+            // usable add-on set changes so Lucid TV can fill those pools; no channels are created.
             scope.launch {
                 AddonRepository.uiState.collect { state ->
                     rebuildSpecs()
                     rebuildChannels()
                     rebuildWindow()
-                    // A rules channel built before the manifests arrived has no pool yet. Try it
-                    // again as soon as at least one add-on is usable.
-                    if (state.addons.any { it.enabled && it.manifest != null }) {
+                    // Catalog, series and rules channels built before the manifests arrived have
+                    // no pool yet. Retry every empty channel as soon as the usable add-on set
+                    // changes, instead of leaving it empty until the ten-minute retry window.
+                    val ready = state.addons.filter { it.enabled && it.manifest != null }
+                    val fingerprint = ready.joinToString("|") { it.manifestUrl }
+                    if (fingerprint.isNotBlank() && fingerprint != addonFingerprint) {
+                        addonFingerprint = fingerprint
                         _allSpecs.value
-                            .filter { it.enabled && it.source is VirtualSource.Rules && _pools.value[it.id]?.items.isNullOrEmpty() }
+                            .filter { it.enabled && _pools.value[it.id]?.items.isNullOrEmpty() }
                             .forEach { refreshPool(it.id, force = true) }
+                        // Pools that were already restored also need their links warmed once the
+                        // real add-on set is known.
+                        precacheAll()
                     }
                     refreshStale(forceEmpty = false)
                 }
@@ -365,6 +378,7 @@ internal object VirtualChannelRepository {
                     persistPools()
                     rebuildChannels()
                     rebuildWindow()
+                    precache(id)
                 }.onFailure { error ->
                     if (error is kotlinx.coroutines.CancellationException) throw error
                     val message = error.message?.takeIf { it.isNotBlank() } ?: "Could not load this channel's catalog"
@@ -395,6 +409,30 @@ internal object VirtualChannelRepository {
         }
     }
 
+    /** Warm the current and next stream links after a pool is built or restored. */
+    private fun precacheAll() {
+        _allSpecs.value.filter { it.enabled }.forEach { precache(it.id) }
+    }
+
+    private fun precache(specId: String) {
+        val spec = _allSpecs.value.firstOrNull { it.id == specId && it.enabled } ?: return
+        val added = kotlinx.atomicfu.locks.synchronized(runtimeLock) { precaching.add(specId) }
+        if (!added) return
+        scope.launch {
+            try {
+                precachePermits.withPermit {
+                    VirtualChannelPlayback.precacheChannel(spec.channelKey)
+                }
+            } catch (error: Throwable) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                // A failed warm-up must not surface as a channel error; tuning reports the real
+                // message and the next pool refresh tries again.
+            } finally {
+                kotlinx.atomicfu.locks.synchronized(runtimeLock) { precaching.remove(specId) }
+            }
+        }
+    }
+
     private suspend fun buildPool(spec: VirtualChannelSpec): List<VirtualItem> = withContext(Dispatchers.Default) {
         val items = when (val source = spec.source) {
             is VirtualSource.AddonCatalog -> {
@@ -403,8 +441,18 @@ internal object VirtualChannelRepository {
             is VirtualSource.AddonItem -> {
                 when (spec.kind) {
                     VirtualChannelKind.SERIES_MARATHON -> {
-                        val details = MetaDetailsRepository.fetch(source.itemType, source.itemId) ?: return@withContext emptyList()
-                        episodesOf(details)
+                        val itemType = source.itemType.ifBlank { "series" }
+                        val details = MetaDetailsRepository.fetch(itemType, source.itemId)
+                            ?: throw IllegalStateException(
+                                "Could not load this series from the add-on. Check that a metadata add-on is installed and try again."
+                            )
+                        val episodes = episodesOf(details)
+                        if (episodes.isEmpty()) {
+                            throw IllegalStateException(
+                                "This series has no playable episodes in the catalog. Choose a different series."
+                            )
+                        }
+                        episodes
                     }
                     VirtualChannelKind.COLLECTION_LOOP -> {
                         val details = MetaDetailsRepository.fetch(source.itemType, source.itemId)
@@ -491,6 +539,7 @@ internal object VirtualChannelRepository {
                     search = source.search,
                     skip = skip,
                     maxItems = (previewCap - items.size).coerceAtMost(100),
+                    extras = source.extras,
                 )
             }.getOrElse { error ->
                 if (items.isEmpty()) throw error
@@ -1149,6 +1198,7 @@ internal object VirtualChannelRepository {
             val spec = byId[id]
             val source = spec?.source
             val wholeSeries = (spec?.kind == VirtualChannelKind.ADDON_SERIES) ||
+                (spec?.kind == VirtualChannelKind.SERIES_MARATHON) ||
                 (source is VirtualSource.AddonCatalog && source.contentType.equals("series", true))
             val hasWholeSeriesItems = wholeSeries && repairedItems.any {
                 it.type == "series" && it.season == null
@@ -1180,6 +1230,7 @@ internal object VirtualChannelRepository {
     private const val MAX_SERIES_TO_EXPAND = 8
     private const val MAX_EPISODES_PER_SERIES = 40
     private const val POOL_CONCURRENCY = 4
+    private const val PRECACHE_CONCURRENCY = 2
     private const val MAX_RUNTIME_LOOKUPS = 24
     private const val META_CONCURRENCY = 3
     private const val UNPLAYABLE_TTL_MS = 60L * 60 * 1000

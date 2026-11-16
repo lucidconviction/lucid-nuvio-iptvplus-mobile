@@ -52,6 +52,8 @@ sealed interface VirtualSource {
         val genre: String? = null,
         /** Value for a catalog that requires a search extra (for example "Cinemeta search"). */
         val search: String? = null,
+        /** Values for required extras such as lastVideoIds or calendarVideoIds. */
+        val extras: Map<String, String> = emptyMap(),
     ) : VirtualSource
 
     /** One catalog item: a movie for a loop, or a series for a marathon. */

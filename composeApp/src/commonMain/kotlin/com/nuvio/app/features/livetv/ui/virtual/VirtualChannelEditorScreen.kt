@@ -417,7 +417,9 @@ fun VirtualChannelEditorScreen(
                         manifestUrl = catalogSource.manifestUrl,
                         addonId = catalogSource.addonId,
                         itemId = seriesItem.id,
-                        itemType = seriesItem.type,
+                        itemType = seriesItem.type
+                            .ifBlank { catalogSource.contentType }
+                            .ifBlank { "series" },
                     )
                     kind = VirtualChannelKind.SERIES_MARATHON
                     playout = playout.copy(mode = VirtualPlayoutMode.LOOP, order = VirtualOrder.AIR)
@@ -521,6 +523,7 @@ private fun SourcePicker(
     var selectedCatalog by remember { mutableStateOf<AddonCatalog?>(null) }
     var selectedGenre by remember { mutableStateOf<String?>(null) }
     var selectedSearch by remember { mutableStateOf("") }
+    var extraValues by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var search by remember { mutableStateOf("") }
     var items by remember { mutableStateOf<List<MetaPreview>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -529,8 +532,29 @@ private fun SourcePicker(
 
     if (step == PickerMode.CATALOG || step == PickerMode.SERIES) {
         val catalog = selectedCatalog
-        LaunchedEffect(catalog, step) {
+        val requiredExtras = catalog?.extra.orEmpty().filter {
+            it.isRequired &&
+                !it.name.equals("genre", true) &&
+                !it.name.equals("search", true) &&
+                !it.name.equals("skip", true)
+        }
+        val searchRequired = catalog?.extra.orEmpty().any {
+            it.isRequired && it.name.equals("search", true)
+        }
+        val genreRequired = catalog?.extra.orEmpty().any {
+            it.isRequired && it.name.equals("genre", true)
+        }
+        val extrasReady = requiredExtras.all { !extraValues[it.name].isNullOrBlank() } &&
+            (!searchRequired || selectedSearch.isNotBlank()) &&
+            (!genreRequired || !selectedGenre.isNullOrBlank())
+        LaunchedEffect(catalog, step, selectedGenre, selectedSearch, extraValues) {
             if (catalog == null || step != PickerMode.SERIES) return@LaunchedEffect
+            if (!extrasReady) {
+                items = emptyList()
+                loading = false
+                loadError = null
+                return@LaunchedEffect
+            }
             loading = true
             loadError = null
             items = runCatching {
@@ -538,8 +562,11 @@ private fun SourcePicker(
                     manifestUrl = selectedAddon?.manifestUrl.orEmpty(),
                     type = catalog.type,
                     catalogId = catalog.id,
+                    genre = selectedGenre,
+                    search = selectedSearch.takeIf { it.isNotBlank() },
                     skip = 0,
                     maxItems = 150,
+                    extras = extraValues,
                 ).items
             }.getOrElse { error ->
                 loadError = error.message ?: "Could not load this catalog"
@@ -588,6 +615,7 @@ private fun SourcePicker(
                                 selectedCatalog = null
                                 selectedGenre = null
                                 selectedSearch = ""
+                                extraValues = emptyMap()
                             }
                         },
                     )
@@ -614,6 +642,7 @@ private fun SourcePicker(
                                         ?.options
                                         ?.firstOrNull()
                                     selectedSearch = ""
+                                    extraValues = emptyMap()
                                 }
                             },
                         )
@@ -684,15 +713,23 @@ private fun SourcePicker(
                                     placeholder = stringResource(Res.string.lucid_tv_search_items),
                                 )
                             }
-                            if (otherRequired.isNotEmpty()) {
+                            otherRequired.forEach { extra ->
                                 Text(
-                                    text = otherRequired.joinToString(", ") { it.name } + " is required by this catalog.",
+                                    text = "${extra.name} is required by this catalog.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.nuvio.colors.textMuted,
                                 )
+                                NuvioInputField(
+                                    value = extraValues[extra.name].orEmpty(),
+                                    onValueChange = { value ->
+                                        extraValues = extraValues + (extra.name to value)
+                                    },
+                                    placeholder = extra.name,
+                                )
                             }
                             val canChoose = (!genreRequired || !selectedGenre.isNullOrBlank()) &&
-                                (!searchRequired || selectedSearch.isNotBlank())
+                                (!searchRequired || selectedSearch.isNotBlank()) &&
+                                otherRequired.all { !extraValues[it.name].isNullOrBlank() }
                             DialogButtons {
                                 DialogButton(text = stringResource(Res.string.action_cancel), onClick = onDismiss)
                                 DialogButton(
@@ -706,6 +743,7 @@ private fun SourcePicker(
                                                 catalog = catalog,
                                                 genre = selectedGenre?.takeIf { it.isNotBlank() },
                                                 search = selectedSearch.takeIf { it.isNotBlank() },
+                                                extras = extraValues.filterValues { it.isNotBlank() },
                                             ),
                                             null,
                                         )
@@ -715,7 +753,90 @@ private fun SourcePicker(
                         }
                     }
                     else -> {
+                        val seriesGenreExtra = catalog.extra.firstOrNull { it.name.equals("genre", true) }
+                        val seriesGenres = seriesGenreExtra?.options.orEmpty()
+                        val seriesGenreRequired = seriesGenreExtra?.isRequired == true
+                        val seriesSearchRequired = catalog.extra.any {
+                            it.isRequired && it.name.equals("search", true)
+                        }
+                        val seriesRequiredExtras = catalog.extra.filter {
+                            it.isRequired &&
+                                !it.name.equals("genre", true) &&
+                                !it.name.equals("search", true) &&
+                                !it.name.equals("skip", true)
+                        }
+                        val seriesExtrasReady =
+                            (!seriesGenreRequired || !selectedGenre.isNullOrBlank()) &&
+                                (!seriesSearchRequired || selectedSearch.isNotBlank()) &&
+                                seriesRequiredExtras.all { !extraValues[it.name].isNullOrBlank() }
                         Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8)) {
+                            if (seriesGenres.isNotEmpty()) {
+                                Text(
+                                    text = if (seriesGenreRequired) {
+                                        stringResource(Res.string.lucid_tv_genre_required)
+                                    } else {
+                                        stringResource(Res.string.lucid_tv_genre_any)
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                                ) {
+                                    if (!seriesGenreRequired) {
+                                        Chip(stringResource(Res.string.lucid_tv_genre_any), selectedGenre == null, { selectedGenre = null })
+                                    }
+                                    seriesGenres.forEach { genre ->
+                                        Chip(genre, selectedGenre == genre, { selectedGenre = genre })
+                                    }
+                                }
+                            } else if (seriesGenreRequired) {
+                                Text(
+                                    text = stringResource(Res.string.lucid_tv_genre_required),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                                NuvioInputField(
+                                    value = selectedGenre.orEmpty(),
+                                    onValueChange = { selectedGenre = it },
+                                    placeholder = stringResource(Res.string.lucid_tv_genre),
+                                )
+                            }
+                            if (seriesSearchRequired) {
+                                Text(
+                                    text = stringResource(Res.string.lucid_tv_search_required),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                                NuvioInputField(
+                                    value = selectedSearch,
+                                    onValueChange = { selectedSearch = it },
+                                    placeholder = stringResource(Res.string.lucid_tv_search_items),
+                                )
+                            }
+                            seriesRequiredExtras.forEach { extra ->
+                                Text(
+                                    text = "${extra.name} is required by this catalog.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                                NuvioInputField(
+                                    value = extraValues[extra.name].orEmpty(),
+                                    onValueChange = { value ->
+                                        extraValues = extraValues + (extra.name to value)
+                                    },
+                                    placeholder = extra.name,
+                                )
+                            }
+                            if (!seriesExtrasReady) {
+                                Text(
+                                    text = "Fill in the required catalog values to load this series list.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.nuvio.colors.textMuted,
+                                )
+                                return@Column
+                            }
                             NuvioInputField(
                                 value = search,
                                 onValueChange = { search = it },
@@ -733,7 +854,18 @@ private fun SourcePicker(
                                                 title = item.name,
                                                 subtitle = listOfNotNull(item.releaseInfo, item.type).joinToString(" · "),
                                                 poster = item.poster,
-                                            ) { onCatalog(catalogSourceOf(addon, catalog, null), item) }
+                                            ) {
+                                                onCatalog(
+                                                    catalogSourceOf(
+                                                        addon = addon,
+                                                        catalog = catalog,
+                                                        genre = selectedGenre?.takeIf { it.isNotBlank() },
+                                                        search = selectedSearch.takeIf { it.isNotBlank() },
+                                                        extras = extraValues.filterValues { it.isNotBlank() },
+                                                    ),
+                                                    item,
+                                                )
+                                            }
                                         },
                                 )
                             }
@@ -770,6 +902,7 @@ private fun catalogSourceOf(
     catalog: AddonCatalog,
     genre: String?,
     search: String? = null,
+    extras: Map<String, String> = emptyMap(),
 ) = VirtualSource.AddonCatalog(
     manifestUrl = addon.manifestUrl,
     addonId = addon.manifest?.id.orEmpty(),
@@ -779,6 +912,7 @@ private fun catalogSourceOf(
     contentType = catalog.type,
     genre = genre,
     search = search,
+    extras = extras,
 )
 
 @Composable

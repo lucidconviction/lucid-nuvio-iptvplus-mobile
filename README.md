@@ -55,7 +55,9 @@
 - Join-in-progress playback, dead-item skipping and automatic advance when a film ends early.
 - Smart pools: genre, year, rating, keyword filters, shuffle, release order and air order.
 - Manual picks win when present; otherwise cached debrid → torrent P2P → direct HTTP.
-- Cached winners, next-two prefetch and cached pools that repair automatically after upgrades.
+- Pools warm the current item and next episodes in the background: direct links, debrid winners and torrent hashes are cached before you press a channel.
+- Catalog channels support required genre, search and `lastVideoIds`/`calendarVideoIds` extras.
+- Cached pools repair automatically after upgrades.
 
 ### 🌐 Web-Apps and browser
 - A Web-Apps tab for saved streaming sites, with wide browser-style cards.

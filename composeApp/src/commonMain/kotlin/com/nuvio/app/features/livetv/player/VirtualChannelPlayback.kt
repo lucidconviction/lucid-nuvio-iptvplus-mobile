@@ -44,6 +44,11 @@ internal object VirtualChannelPlayback {
         VirtualTuneResolver.prefetchCurrent(channelKey, nowMs)
     }
 
+    /** Warms the current and next items after a channel's pool is built or restored. */
+    suspend fun precacheChannel(channelKey: String, nowMs: Long = LiveTvClock.nowMs()) {
+        VirtualTuneResolver.precacheChannel(channelKey, nowMs)
+    }
+
     /** The item on now is kept for a quick warm start; drop it when a source fails. */
     suspend fun invalidate(channelKey: String, failedStream: com.nuvio.app.features.streams.StreamItem? = null) {
         VirtualTuneResolver.invalidate(channelKey, failedStream)

@@ -129,6 +129,16 @@ object StreamsRepository {
             }
         }
         val state = _uiState.value
+        // Another screen can start a stream request in this global repository while Lucid TV
+        // is prefetching. Never hand back another request's candidates.
+        val expectedToken = requestToken(
+            type = type,
+            videoId = videoId,
+            season = season,
+            episode = episode,
+            manualSelection = false,
+        )
+        if (state.requestToken != expectedToken) return emptyList()
         return state.groups
             .flatMap { it.streams }
             .distinctBy { stream ->

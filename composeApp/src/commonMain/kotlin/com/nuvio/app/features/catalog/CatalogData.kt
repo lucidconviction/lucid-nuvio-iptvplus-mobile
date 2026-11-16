@@ -76,6 +76,7 @@ suspend fun fetchCatalogPage(
     skip: Int? = null,
     maxItems: Int? = null,
     forceRefresh: Boolean = false,
+    extras: Map<String, String> = emptyMap(),
 ): CatalogPage {
     val url = buildCatalogUrl(
         manifestUrl = manifestUrl,
@@ -84,6 +85,7 @@ suspend fun fetchCatalogPage(
         genre = genre,
         search = search,
         skip = skip,
+        extras = extras,
     )
     val payload = deduplicatedHttpGetText(
         url = url,
@@ -182,11 +184,23 @@ internal fun buildCatalogUrl(
     genre: String?,
     search: String?,
     skip: Int?,
+    extras: Map<String, String> = emptyMap(),
 ): String {
     val extraParts = buildList {
         if (!search.isNullOrBlank()) add("search=${search.encodeCatalogExtra()}")
         if (!genre.isNullOrBlank()) add("genre=${genre.encodeCatalogExtra()}")
         if (skip != null && skip > 0) add("skip=$skip")
+        // Required catalog extras such as lastVideoIds/calendarVideoIds. genre/search/skip
+        // are handled above so a caller cannot override them by accident.
+        extras.forEach { (name, value) ->
+            if (value.isNotBlank() &&
+                !name.equals("genre", true) &&
+                !name.equals("search", true) &&
+                !name.equals("skip", true)
+            ) {
+                add("${name.encodeCatalogExtra()}=${value.encodeCatalogExtra()}")
+            }
+        }
     }
 
     return buildAddonResourceUrl(

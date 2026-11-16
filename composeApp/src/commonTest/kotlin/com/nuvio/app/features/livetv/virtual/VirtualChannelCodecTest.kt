@@ -24,6 +24,7 @@ class VirtualChannelCodecTest {
             contentType = "movie",
             genre = "Action",
             search = "Dune",
+            extras = mapOf("lastVideoIds" to "tt1,tt2"),
         ),
         pool = VirtualPoolRules(maxItems = 500, refreshHours = 12, minYear = 1990, maxYear = 1999, minRating = 6f),
         playout = VirtualPlayout(mode = VirtualPlayoutMode.ROTATE, slotMinutes = 90, salt = 3),
@@ -49,10 +50,23 @@ class VirtualChannelCodecTest {
         val source = spec.source as VirtualSource.AddonCatalog
         assertEquals("Action", source.genre)
         assertEquals("Dune", source.search)
+        assertEquals("tt1,tt2", source.extras["lastVideoIds"])
         assertEquals(1990, spec.pool.minYear)
         assertEquals(6f, spec.pool.minRating)
         assertEquals(20, spec.join.maxStartPercent)
         assertEquals(3, spec.playout.salt)
+    }
+
+    @Test
+    fun catalogExtrasSurviveWithoutBreakingTvAppPacks() {
+        val withoutExtras = """
+            {"id":"vc_old","name":"Old pack","kind":"ADDON_ROTATE",
+             "source":{"type":"addon_catalog","manifestUrl":"https://example.com/manifest.json",
+                       "catalogId":"top","contentType":"movie"}}
+        """.trimIndent()
+        val decoded = VirtualChannelCodec.decodeSpecs("[$withoutExtras]").single()
+        val source = decoded.source as VirtualSource.AddonCatalog
+        assertEquals(emptyMap(), source.extras)
     }
 
     @Test

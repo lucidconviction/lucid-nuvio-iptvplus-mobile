@@ -65,7 +65,8 @@ internal object VirtualTuneResolver {
     private const val ERROR_TTL_MS = 30_000L
     private const val ADDON_WAIT_MS = 4_000L
     private const val TUNE_BUDGET_MS = 20_000L
-    private const val PREFETCH_BUDGET_MS = 45_000L
+    private const val PREFETCH_BUDGET_MS = 15_000L
+    private const val CANDIDATE_TTL_MS = 5L * 60_000L
 
     private data class CachedStream(
         val stream: StreamItem?,
@@ -77,6 +78,11 @@ internal object VirtualTuneResolver {
             now - atMs < if (stream != null) SUCCESS_TTL_MS else ERROR_TTL_MS
     }
 
+    private data class CachedCandidates(
+        val candidates: List<StreamItem>,
+        val atMs: Long,
+    )
+
     private data class StreamResult(
         val stream: StreamItem?,
         val message: String? = null,
@@ -87,16 +93,34 @@ internal object VirtualTuneResolver {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
+    /** StreamsRepository has one global request slot; Lucid TV must not run two lookups at once. */
+    private val streamRequestMutex = Mutex()
     private val cacheLock = kotlinx.atomicfu.locks.SynchronizedObject()
     private val cache = HashMap<String, CachedStream>()
+    private val candidateCache = HashMap<String, CachedCandidates>()
     private val blocked = HashMap<String, Long>()
     private val inFlight = HashMap<String, Deferred<StreamResult>>()
+    private val activeTunes = kotlinx.atomicfu.atomic(0)
 
     suspend fun resolve(
         channel: LiveChannel,
         profileId: Int,
         nowMs: Long = LiveTvClock.nowMs(),
         budgetMs: Long = TUNE_BUDGET_MS,
+    ): VirtualPlaybackOutcome {
+        activeTunes.incrementAndGet()
+        return try {
+            resolveInternal(channel, profileId, nowMs, budgetMs)
+        } finally {
+            activeTunes.decrementAndGet()
+        }
+    }
+
+    private suspend fun resolveInternal(
+        channel: LiveChannel,
+        profileId: Int,
+        nowMs: Long,
+        budgetMs: Long,
     ): VirtualPlaybackOutcome {
         if (!VirtualChannels.isVirtualKey(channel.key)) {
             return VirtualPlaybackOutcome(message = "That isn't a Lucid TV channel.")
@@ -183,6 +207,8 @@ internal object VirtualTuneResolver {
 
     /** Resolves the item on now and the next [VirtualPlaybackSettings.prefetchNext] items. */
     suspend fun prefetch(channelKey: String, nowMs: Long = LiveTvClock.nowMs()) {
+        // A tune has priority; prefetch resumes on the next boundary or visit.
+        if (activeTunes.value > 0) return
         val settings = VirtualChannelRepository.settings.value
         val count = settings.prefetchNext.coerceIn(
             VirtualPlaybackSettings.MIN_PREFETCH,
@@ -191,14 +217,29 @@ internal object VirtualTuneResolver {
         if (count <= 0) return
         val tunes = VirtualChannelRepository.upcomingTunes(channelKey, nowMs, count)
         tunes.forEach { tune ->
-            streamFor(tune, settings, PREFETCH_BUDGET_MS)
+            // Relay channels already carry their stream URL in the pool; no add-on lookup.
+            if (!tune.relay) streamFor(tune, settings, PREFETCH_BUDGET_MS)
         }
     }
 
     /** Prefetches the current item of a channel (used when Live TV opens). */
     suspend fun prefetchCurrent(channelKey: String, nowMs: Long = LiveTvClock.nowMs()) {
+        if (activeTunes.value > 0) return
         val tune = VirtualChannelRepository.tune(channelKey, nowMs) ?: return
-        streamFor(tune, VirtualChannelRepository.settings.value, PREFETCH_BUDGET_MS)
+        if (!tune.relay) {
+            streamFor(tune, VirtualChannelRepository.settings.value, PREFETCH_BUDGET_MS)
+        }
+    }
+
+    /**
+     * Warms the item that is on now plus the next configured items. Called after a pool is built
+     * or restored, so a freshly added catalog/marathon has its direct links, debrid winners and
+     * torrent hashes ready before the viewer presses it.
+     */
+    suspend fun precacheChannel(channelKey: String, nowMs: Long = LiveTvClock.nowMs()) {
+        if (activeTunes.value > 0) return
+        prefetchCurrent(channelKey, nowMs)
+        prefetch(channelKey, nowMs)
     }
 
     /** Forgets cached winners for one channel and, when given, blocks the failed source for a while. */
@@ -215,7 +256,9 @@ internal object VirtualTuneResolver {
             }
         }
         val tune = VirtualChannelRepository.tune(channelKey, nowMs) ?: return
-        StreamLinkCacheRepository.remove(linkKey(tune))
+        val contentKey = linkKey(tune)
+        kotlinx.atomicfu.locks.synchronized(cacheLock) { candidateCache.remove(contentKey) }
+        StreamLinkCacheRepository.remove(contentKey)
     }
 
     private suspend fun streamFor(
@@ -270,32 +313,56 @@ internal object VirtualTuneResolver {
             return StreamResult(cached, fromCache = true)
         }
 
+        // Pre-cached candidate lists let a tune skip the add-on round trip entirely.
+        cachedCandidates(tune)?.let { candidates ->
+            if (candidates.isNotEmpty()) {
+                val cachedResult = resolveCandidates(
+                    tune = tune,
+                    settings = settings,
+                    candidates = candidates.filterNot(::isBlocked),
+                    remainingBudgetMs = budgetMs,
+                )
+                remember(key, cachedResult)
+                if (cachedResult.stream != null) cacheLink(tune, cachedResult.stream)
+                return cachedResult
+            }
+        }
+
         awaitAddons()
         val started = epochMs()
-        var candidates = withTimeoutOrNull(budgetMs.coerceAtMost(10_000L)) {
-            StreamsRepository.resolveStreamCandidates(
-                type = tune.item.type,
-                videoId = tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
-                parentMetaId = tune.item.parentId ?: tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
-                season = tune.season,
-                episode = tune.episode,
-                timeoutMs = budgetMs.coerceAtMost(15_000L),
-            )
-        }.orEmpty()
+        // StreamsRepository exposes one global request state. Serialize Lucid TV lookups so a
+        // prefetch of the next episode cannot cancel the item the viewer is tuning, and a
+        // cancellation cannot leave another item's winner under the wrong key.
+        val candidates = streamRequestMutex.withLock {
+            cachedCandidates(tune) ?: run {
+                var fetched = withTimeoutOrNull(budgetMs.coerceAtMost(10_000L)) {
+                    StreamsRepository.resolveStreamCandidates(
+                        type = tune.item.type,
+                        videoId = tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
+                        parentMetaId = tune.item.parentId ?: tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
+                        season = tune.season,
+                        episode = tune.episode,
+                        timeoutMs = budgetMs.coerceAtMost(15_000L),
+                    )
+                }.orEmpty()
 
-        // A stale/empty source state (for example add-ons were still loading) gets one retry.
-        if (candidates.isEmpty() && epochMs() - started < budgetMs / 2) {
-            candidates = withTimeoutOrNull((budgetMs - (epochMs() - started)).coerceAtLeast(2_000L)) {
-                StreamsRepository.resolveStreamCandidates(
-                    type = tune.item.type,
-                    videoId = tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
-                    parentMetaId = tune.item.parentId ?: tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
-                    season = tune.season,
-                    episode = tune.episode,
-                    timeoutMs = budgetMs.coerceAtMost(15_000L),
-                    forceRefresh = true,
-                )
-            }.orEmpty()
+                // A stale/empty source state (for example add-ons were still loading) gets one retry.
+                if (fetched.isEmpty() && epochMs() - started < budgetMs / 2) {
+                    fetched = withTimeoutOrNull((budgetMs - (epochMs() - started)).coerceAtLeast(2_000L)) {
+                        StreamsRepository.resolveStreamCandidates(
+                            type = tune.item.type,
+                            videoId = tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
+                            parentMetaId = tune.item.parentId ?: tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
+                            season = tune.season,
+                            episode = tune.episode,
+                            timeoutMs = budgetMs.coerceAtMost(15_000L),
+                            forceRefresh = true,
+                        )
+                    }.orEmpty()
+                }
+                rememberCandidates(tune, fetched)
+                fetched
+            }
         }
 
         val result = resolveCandidates(
@@ -532,6 +599,32 @@ internal object VirtualTuneResolver {
         withTimeoutOrNull(ADDON_WAIT_MS) {
             AddonRepository.uiState.first { state ->
                 !state.addons.isWaitingForFirstEnabledManifest() && !state.addons.hasPendingEnabledManifests()
+            }
+        }
+    }
+
+    private fun cachedCandidates(tune: VirtualTune): List<StreamItem>? {
+        val contentKey = linkKey(tune)
+        kotlinx.atomicfu.locks.synchronized(cacheLock) {
+            val entry = candidateCache[contentKey] ?: return null
+            if (epochMs() - entry.atMs > CANDIDATE_TTL_MS) {
+                candidateCache.remove(contentKey)
+                return null
+            }
+            return entry.candidates
+        }
+    }
+
+    private fun rememberCandidates(tune: VirtualTune, candidates: List<StreamItem>) {
+        if (candidates.isEmpty()) return
+        val contentKey = linkKey(tune)
+        kotlinx.atomicfu.locks.synchronized(cacheLock) {
+            candidateCache[contentKey] = CachedCandidates(candidates, epochMs())
+            if (candidateCache.size > 40) {
+                candidateCache.entries
+                    .sortedBy { it.value.atMs }
+                    .take(candidateCache.size - 40)
+                    .forEach { candidateCache.remove(it.key) }
             }
         }
     }

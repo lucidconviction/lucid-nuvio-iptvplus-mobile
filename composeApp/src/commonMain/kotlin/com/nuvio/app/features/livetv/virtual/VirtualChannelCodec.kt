@@ -119,6 +119,9 @@ object VirtualChannelCodec {
                 put("contentType", source.contentType)
                 put("genre", source.genre ?: "")
                 put("search", source.search ?: "")
+                put("extras", buildJsonObject {
+                    source.extras.forEach { (key, value) -> put(key, value) }
+                })
             }
             is VirtualSource.AddonItem -> {
                 put("type", "addon_item")
@@ -160,6 +163,11 @@ object VirtualChannelCodec {
             contentType = o.optString("contentType").ifBlank { "movie" },
             genre = o.optString("genre").ifBlank { null },
             search = o.optString("search").ifBlank { null },
+            extras = o.optJSONObject("extras")?.entries
+                ?.filter { it.value is JsonPrimitive }
+                ?.associate { it.key to (it.value as JsonPrimitive).content }
+                ?.filterValues { it.isNotBlank() }
+                .orEmpty(),
         ).takeIf { it.manifestUrl.isNotBlank() && it.catalogId.isNotBlank() }
 
         "addon_item" -> VirtualSource.AddonItem(
