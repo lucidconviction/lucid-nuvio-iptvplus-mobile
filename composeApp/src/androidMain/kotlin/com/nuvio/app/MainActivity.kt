@@ -94,7 +94,7 @@ open class MainActivity : AppCompatActivity() {
         LiveTvPreferencesAndroid.initialize(applicationContext) // Live TV hook
         com.nuvio.app.features.web.WebAppsStorage.initialize(applicationContext) // Web-Apps hook
         LiveTvStartup.start() // Live TV hook: background updates and Drive sync
-        window.setBackgroundDrawableResource(R.color.nuvio_background)
+        window.setBackgroundDrawableResource(R.color.splash_background)
         pipRemoteActionReceiver = PipRemoteActionReceiver.register(this)
         SyncClientIdentityStorage.initialize(applicationContext)
         AddonHttpClientProvider.initialize(applicationContext)

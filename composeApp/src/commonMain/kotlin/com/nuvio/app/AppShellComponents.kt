@@ -1,33 +1,31 @@
 package com.nuvio.app
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.nuvio.app.core.ui.DisintegrationRequest
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.NuvioTokens
-import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.cloud.CloudLibraryContentType
 import com.nuvio.app.features.cloud.CloudLibraryFile
 import com.nuvio.app.features.cloud.CloudLibraryItem
@@ -49,14 +47,11 @@ import com.nuvio.app.features.livetv.ui.quickchannels.QuickChannelsSheet
 import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.library.LibrarySortOption
 import com.nuvio.app.features.profiles.NuvioProfile
-import com.nuvio.app.features.profiles.ProfileBackgroundBackdrop
 import com.nuvio.app.features.search.SearchScreen
-import com.nuvio.app.features.settings.AppBrandWordmark
 import com.nuvio.app.features.settings.SettingsScreen
 import com.nuvio.app.features.watchprogress.ContinueWatchingItem
 import com.nuvio.app.navigation.AppRoute
 import com.nuvio.app.navigation.NuvioNavigator
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import nuvio.composeapp.generated.resources.Res
@@ -285,52 +280,25 @@ internal fun ContinueWatchingItem.isCloudLibraryContinueWatchingItem(): Boolean 
 internal fun AppLoadingContent(
     modifier: Modifier = Modifier,
 ) {
-    val tokens = MaterialTheme.nuvio
-    val steps = listOf(
-        "Checking your session…",
-        "Loading your profile…",
-        "Loading your library…",
-        "Preparing Live TV…",
-        "Almost there…",
-    )
-    var stepIndex by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(1_400)
-            stepIndex = (stepIndex + 1) % steps.size
-        }
-    }
     Box(
-        modifier = modifier,
+        modifier = modifier.background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // "Nuvio + IPTV" in the theme's colours, and what the app does (as on the TV app).
-            AppBrandWordmark(
-                contentDescription = "Nuvio + IPTV",
-                iptv = true,
-                modifier = Modifier
-                    .fillMaxWidth(0.72f)
-                    .widthIn(max = 420.dp)
-                    .aspectRatio(1700f / 344f),
-            )
-            Spacer(modifier = Modifier.height(NuvioTokens.Space.s14))
             Text(
-                text = "Live TV  ·  On Demand  ·  Streaming",
-                style = MaterialTheme.typography.bodyMedium,
-                color = tokens.colors.textSecondary,
+                text = "Lucid Conviction Build",
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.6.sp,
+                ),
+                color = Color.White,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = NuvioTokens.Space.s24),
             )
-            Spacer(modifier = Modifier.height(NuvioTokens.Space.s40))
+            Spacer(modifier = Modifier.height(NuvioTokens.Space.s28))
             NuvioLoadingIndicator()
-            Spacer(modifier = Modifier.height(NuvioTokens.Space.s12))
-            Text(
-                text = steps[stepIndex],
-                style = MaterialTheme.typography.bodySmall,
-                color = tokens.colors.textSecondary,
-                modifier = Modifier.testTag("app-startup-step"),
-            )
         }
     }
 }
@@ -341,12 +309,10 @@ internal fun AppLaunchOverlay(
     modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = modifier.zIndex(NuvioTokens.Z.dialog),
+        modifier = modifier
+            .zIndex(NuvioTokens.Z.dialog)
+            .background(Color.Black),
     ) {
-        ProfileBackgroundBackdrop(
-            profile = profile,
-            modifier = Modifier.fillMaxSize(),
-        )
         AppLoadingContent(modifier = Modifier.fillMaxSize())
     }
 }
