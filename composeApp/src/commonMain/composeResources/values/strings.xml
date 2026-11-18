@@ -2678,6 +2678,8 @@
     <string name="livetv_drive_subsection">Google Drive</string>
     <string name="livetv_add_m3u">Add M3U playlist</string>
     <string name="livetv_add_m3u_description">A playlist link from your provider (.m3u or .m3u8)</string>
+    <string name="livetv_browse_m3u">Browse M3U playlists</string>
+    <string name="livetv_browse_m3u_description">Country, category and region channel lists from the iptv-org project</string>
     <string name="livetv_add_xtream">Add Xtream login</string>
     <string name="livetv_add_xtream_description">Sign in with the server, username and password from your provider. Its TV guide comes with it.</string>
     <string name="livetv_xtream_include_channels">Include TV channels</string>

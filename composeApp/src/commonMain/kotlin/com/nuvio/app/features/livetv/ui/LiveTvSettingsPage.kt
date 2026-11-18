@@ -42,6 +42,7 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.livetv.data.LiveTvPreferences
 import com.nuvio.app.features.livetv.data.LiveTvRepository
+import com.nuvio.app.features.livetv.data.normalizeIptvOrgUrl
 import com.nuvio.app.features.livetv.data.BackupFileException
 import com.nuvio.app.features.livetv.data.BackupFileInfo
 import com.nuvio.app.features.livetv.data.exportBackupFileText
@@ -86,6 +87,8 @@ import nuvio.composeapp.generated.resources.livetv_add_epg
 import nuvio.composeapp.generated.resources.livetv_add_epg_description
 import nuvio.composeapp.generated.resources.livetv_add_m3u
 import nuvio.composeapp.generated.resources.livetv_add_m3u_description
+import nuvio.composeapp.generated.resources.livetv_browse_m3u
+import nuvio.composeapp.generated.resources.livetv_browse_m3u_description
 import nuvio.composeapp.generated.resources.livetv_add_xtream
 import nuvio.composeapp.generated.resources.livetv_add_xtream_description
 import nuvio.composeapp.generated.resources.livetv_backup_now
@@ -290,6 +293,7 @@ internal fun hoursLabel(h: Int): String = when {
 
 private sealed interface LiveDialog {
     data object AddM3u : LiveDialog
+    data object BrowseM3u : LiveDialog
     data object AddXtream : LiveDialog
     data object AddEpg : LiveDialog
     data class PlaylistActions(val source: PlaylistSource) : LiveDialog
@@ -409,6 +413,14 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
                     icon = Icons.Filled.Add,
                     isTablet = isTablet,
                     onClick = { dialog = LiveDialog.AddM3u },
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.livetv_browse_m3u),
+                    description = stringResource(Res.string.livetv_browse_m3u_description),
+                    icon = Icons.Filled.ListAlt,
+                    isTablet = isTablet,
+                    onClick = { dialog = LiveDialog.BrowseM3u },
                 )
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsNavigationRow(
@@ -928,6 +940,11 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
     when (val d = dialog) {
         null -> Unit
         LiveDialog.AddM3u -> M3uForm(null, onDismiss = close)
+        LiveDialog.BrowseM3u -> IptvOrgBrowserDialog(
+            existingUrls = playlists.mapTo(HashSet()) { normalizeIptvOrgUrl(it.url) },
+            onDismiss = close,
+            onAdd = { list -> LiveTvRepository.addPlaylist("iptv-org · ${list.name}", list.url, "") },
+        )
         LiveDialog.AddXtream -> XtreamForm(null, onDismiss = close)
         LiveDialog.AddEpg -> EpgForm(null, onDismiss = close)
         is LiveDialog.EditPlaylist -> if (d.source.isXtream) XtreamForm(d.source, onDismiss = close) else M3uForm(d.source, onDismiss = close)

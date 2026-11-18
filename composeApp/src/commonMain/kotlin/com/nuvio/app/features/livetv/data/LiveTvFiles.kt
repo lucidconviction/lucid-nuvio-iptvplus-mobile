@@ -62,4 +62,6 @@ internal object LiveTvDirs {
     const val SPORTS = "sports"
     /** Change logo's lists of library logos (kept a week). */
     const val LOGOS = "logos"
+    /** The iptv-org country/category/region playlist index (kept a day). */
+    const val IPTV = "iptv-org"
 }
