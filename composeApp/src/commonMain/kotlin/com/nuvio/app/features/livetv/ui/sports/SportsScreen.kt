@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,11 +25,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -65,6 +68,7 @@ import com.nuvio.app.features.livetv.sports.SportsCatalog
 import com.nuvio.app.features.livetv.sports.SportsDates
 import com.nuvio.app.features.livetv.sports.SportsEvent
 import com.nuvio.app.features.livetv.sports.SportsFollows
+import com.nuvio.app.features.livetv.sports.SportsLive
 import com.nuvio.app.features.livetv.sports.SportsMatcher
 import com.nuvio.app.features.livetv.sports.SportsReminders
 import com.nuvio.app.features.livetv.sports.SportsRepository
@@ -76,7 +80,11 @@ import nuvio.composeapp.generated.resources.livetv_sports
 import nuvio.composeapp.generated.resources.livetv_sports_all_events
 import nuvio.composeapp.generated.resources.livetv_sports_finished
 import nuvio.composeapp.generated.resources.livetv_sports_following
+import nuvio.composeapp.generated.resources.livetv_sports_coming_up
+import nuvio.composeapp.generated.resources.livetv_sports_live
 import nuvio.composeapp.generated.resources.livetv_sports_live_now
+import nuvio.composeapp.generated.resources.livetv_sports_no_channel
+import nuvio.composeapp.generated.resources.livetv_sports_no_live
 import nuvio.composeapp.generated.resources.livetv_sports_my_sports
 import nuvio.composeapp.generated.resources.livetv_sports_nothing_followed
 import nuvio.composeapp.generated.resources.livetv_sports_nothing_today
@@ -95,7 +103,7 @@ data class SportsActions(
     val onOpenLeague: (League) -> Unit,
 )
 
-private enum class SportsTab { MINE, ALL, SEARCH, FOLLOWING, REPLAYS }
+private enum class SportsTab { MINE, ALL, LIVE, SEARCH, FOLLOWING, REPLAYS }
 
 /**
  * The Sports hub: My Sports (a row per team, league and name you follow), All Events (every game
@@ -154,6 +162,7 @@ fun SportsScreen(
         ) {
             Chip(stringResource(Res.string.livetv_sports_my_sports), selected = tab == SportsTab.MINE, onClick = { tabIndex = SportsTab.MINE.ordinal })
             Chip(stringResource(Res.string.livetv_sports_all_events), selected = tab == SportsTab.ALL, onClick = { tabIndex = SportsTab.ALL.ordinal })
+            Chip(stringResource(Res.string.livetv_sports_live), selected = tab == SportsTab.LIVE, onClick = { tabIndex = SportsTab.LIVE.ordinal })
             Chip(stringResource(Res.string.livetv_sports_search), selected = tab == SportsTab.SEARCH, onClick = { tabIndex = SportsTab.SEARCH.ordinal })
             Chip(stringResource(Res.string.livetv_sports_following), selected = tab == SportsTab.FOLLOWING, onClick = { tabIndex = SportsTab.FOLLOWING.ordinal })
             Chip(stringResource(Res.string.livetv_sports_replays), selected = tab == SportsTab.REPLAYS, onClick = { tabIndex = SportsTab.REPLAYS.ordinal })
@@ -164,6 +173,7 @@ fun SportsScreen(
         when (tab) {
             SportsTab.MINE -> MySportsTab(known, follows, settings, matches, now, use24h, actions, onPick = { tabIndex = SportsTab.FOLLOWING.ordinal })
             SportsTab.ALL -> AllEventsTab(events, follows, settings, matches, now, use24h, loading, actions)
+            SportsTab.LIVE -> LiveSportsTab(events, follows, settings, matches, now, use24h, loading, actions)
             SportsTab.SEARCH -> SportsSearchTab(known, follows, actions)
             SportsTab.FOLLOWING -> SportsFollowingTab(follows, settings, actions)
             SportsTab.REPLAYS -> SportsReplaysTab(settings, follows)
@@ -245,6 +255,195 @@ private fun MySportsTab(
 
 private fun com.nuvio.app.features.livetv.sports.FollowedTeam.toTeamInfo() =
     com.nuvio.app.features.livetv.sports.TeamInfo(leagueId, teamId, name, name, abbr, null, color, null, logo)
+
+// ------------------------------------------------------------------ Live
+
+/**
+ * Live sports, merged from the Live TV tab's own game matching.
+ *
+ * The score feeds know a game is on; the channel matcher knows which of the
+ * user's playlists is carrying it. That pairing lived only in Live TV's channel
+ * rows (a score under a channel name). Here it becomes the Sports hub's Live
+ * tab: the games that are on now, each with the channels to tap, and the next
+ * games that already have a channel.
+ */
+@Composable
+private fun LiveSportsTab(
+    events: List<SportsEvent>,
+    follows: SportsFollows,
+    settings: SportsSettings,
+    matches: Map<String, List<ChannelMatch>>,
+    now: Long,
+    use24h: Boolean,
+    loading: Boolean,
+    actions: SportsActions,
+) {
+    val tokens = MaterialTheme.nuvio
+    val repo = SportsRepository
+    val matchedLive by SportsLive.byChannel.collectAsStateWithLifecycle()
+    val leagueRank = remember(settings) { SportsCatalog.ordered(settings).mapIndexed { i, l -> l.id to i }.toMap() }
+    fun rank(ev: SportsEvent) = leagueRank[ev.leagueId] ?: 999
+
+    // The score feed and the guide's channel matcher each know games the other
+    // may not (a guide-only game has no ESPN id; a feed-only game has no
+    // channel yet). Merge them, then keep one row per game.
+    val live = remember(events, matchedLive, follows, matches, now / 30_000L) {
+        (matchedLive.values + events.filter { it.state == GameState.LIVE })
+            .filter { it.state == GameState.LIVE }
+            .distinctBy { it.id }
+            .sortedWith(
+                compareByDescending<SportsEvent> { isMine(it, follows) }
+                    .thenByDescending { matches[it.id]?.isNotEmpty() == true }
+                    .thenBy { rank(it) }
+            )
+    }
+    val cutoff = now + 24L * 60L * 60L * 1000L
+    val upcoming = remember(events, matches, now / 60_000L) {
+        events.filter { ev ->
+            (ev.state == GameState.PRE || ev.state == GameState.OFF) &&
+                matches[ev.id]?.isNotEmpty() == true &&
+                (!ev.hasTime || (ev.startMs in now..cutoff))
+        }
+            .sortedWith(compareBy<SportsEvent> { if (it.hasTime) it.startMs else Long.MAX_VALUE }.thenBy { rank(it) })
+            .take(15)
+    }
+
+    LaunchedEffect(Unit) {
+        // A live tab goes stale while it is open: a finished match must stop
+        // saying LIVE, and a new one must appear without a manual refresh.
+        while (true) {
+            delay(120_000L)
+            repo.refreshNow()
+        }
+    }
+
+    val onChannels = live.count { matches[it.id]?.isNotEmpty() == true }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = NuvioTokens.Space.s16, end = NuvioTokens.Space.s16, bottom = nuvioSafeBottomPadding(NuvioTokens.Space.s16)),
+        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+    ) {
+        item(key = "live-head") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = NuvioTokens.Space.s4),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        stringResource(Res.string.livetv_sports_live_now),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = tokens.colors.textPrimary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        live.size.toString() + " on now" +
+                            if (onChannels > 0) " · $onChannels with a channel" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                    )
+                }
+                if (loading) NuvioLoadingIndicator(size = NuvioTokens.Space.s16)
+                IconButton(onClick = { repo.refreshNow() }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, tint = tokens.colors.textPrimary)
+                }
+            }
+        }
+        if (live.isEmpty()) {
+            item(key = "live-empty") {
+                Text(
+                    if (loading) "Looking for live games…" else stringResource(Res.string.livetv_sports_no_live),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textMuted,
+                    modifier = Modifier.padding(vertical = NuvioTokens.Space.s24),
+                )
+            }
+        } else {
+            items(live, key = { "live/" + it.id }) { ev ->
+                LiveGameBlock(ev, follows, settings, matches[ev.id].orEmpty(), now, use24h, actions)
+            }
+        }
+        if (upcoming.isNotEmpty()) {
+            item(key = "live-up") {
+                Text(
+                    stringResource(Res.string.livetv_sports_coming_up),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = tokens.colors.textPrimary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = NuvioTokens.Space.s12),
+                )
+            }
+            items(upcoming, key = { "up/" + it.id }) { ev ->
+                LiveGameBlock(ev, follows, settings, matches[ev.id].orEmpty(), now, use24h, actions)
+            }
+        }
+    }
+}
+
+/** A game plus the channels carrying it: the whole point of the Live tab. */
+@Composable
+private fun LiveGameBlock(
+    ev: SportsEvent,
+    follows: SportsFollows,
+    settings: SportsSettings,
+    channels: List<ChannelMatch>,
+    now: Long,
+    use24h: Boolean,
+    actions: SportsActions,
+) {
+    val tokens = MaterialTheme.nuvio
+    val ordered = remember(channels, settings.bestChannelFirst) {
+        if (settings.bestChannelFirst) channels.sortedByDescending { it.score } else channels
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6)) {
+        GameCard(
+            ev, follows, now, use24h, settings.hideScores,
+            channels = if (channels.isEmpty()) null else channels.size,
+        ) { actions.onOpenGame(ev) }
+        if (ordered.isEmpty()) {
+            Text(
+                stringResource(Res.string.livetv_sports_no_channel),
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+            )
+        } else {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6)) {
+                items(ordered, key = { it.channel.key }) { match ->
+                    ChannelPlayPill(match.channel) { actions.onPlay(match.channel, ev.title) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChannelPlayPill(channel: LiveChannel, onClick: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = tokens.colors.surfaceCard,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = NuvioTokens.Space.s10, vertical = NuvioTokens.Space.s6),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+        ) {
+            Icon(
+                Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = tokens.colors.accent,
+                modifier = Modifier.size(NuvioTokens.Icon.xs),
+            )
+            Text(
+                channel.name,
+                style = MaterialTheme.typography.labelMedium,
+                color = tokens.colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
 
 // ------------------------------------------------------------------ All Events
 

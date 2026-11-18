@@ -2815,6 +2815,10 @@
     <string name="livetv_sports_following">Following</string>
     <string name="livetv_sports_replays">Replays</string>
     <string name="livetv_sports_live_now">Live now</string>
+    <string name="livetv_sports_live">Live</string>
+    <string name="livetv_sports_coming_up">Coming up on your channels</string>
+    <string name="livetv_sports_no_live">No live games right now</string>
+    <string name="livetv_sports_no_channel">No channel matched yet — open the game to scan.</string>
     <string name="livetv_sports_this_week">This week</string>
     <string name="livetv_sports_upcoming">Upcoming</string>
     <string name="livetv_sports_finished">Finished</string>
