@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
+import android.util.Base64
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.View
@@ -628,6 +629,14 @@ internal class AndroidWebBrowserController(
                 val url = request?.url?.toString() ?: return false
                 if (handleUrl(view, url)) return true
                 if (request?.isForMainFrame == true && shouldBlockMainFrame(url, request.hasGesture())) {
+                    // A blocked navigation can still carry the page the click was
+                    // actually for (an ad click-tracker's `fb=` / `url=` parameter).
+                    // Follow that, instead of leaving an empty document behind.
+                    val dest = adGateDestination(url)
+                    if (dest != null && view != null) {
+                        noteShield("redirect", "Followed the link behind ${hostOf(url)}.", hostOf(url).orEmpty())
+                        view.loadUrl(dest)
+                    }
                     return true
                 }
                 return false
@@ -783,7 +792,9 @@ internal class AndroidWebBrowserController(
                         return null
                     }
                     if (shouldBlockMainFrame(url, request.hasGesture())) {
-                        return blockedResponse()
+                        val dest = adGateDestination(url) ?: return blockedResponse()
+                        noteShield("redirect", "Followed the link behind ${hostOf(url)}.", hostOf(url).orEmpty())
+                        return adGatePage(dest)
                     }
                     return null
                 }
@@ -804,6 +815,11 @@ internal class AndroidWebBrowserController(
                     ?.let(::hostOf)
                 val pageHost = refererHost ?: currentPageHost()
                 val sameSite = host.isNotBlank() && pageHost != null && isSameSite(host, pageHost)
+                // A host list names streaming sites for their ad SUBRESOURCES, not
+                // because the site itself is an advert. Blocking the page's own
+                // host, or a player/CDN domain, is what turned Dailymotion into a
+                // half-loaded page and its video into a permanent spinner.
+                val firstParty = sameSite || WebAdBlocker.isAlwaysAllowedHost(host)
                 val type = WebAdBlocker.requestType(request)
                 val isSubframeDocument = type == "other" &&
                     request.requestHeaders?.entries?.any { header ->
@@ -840,7 +856,10 @@ internal class AndroidWebBrowserController(
                             // Popups and ad iframes are handled by the other rules.
                             false
                         } else {
-                            WebAdBlocker.isBlocked(url, includeExtra = includeExtra) ||
+                            // Hosts: never the site's own host and never a
+                            // player/CDN. URL patterns still run, because an ad
+                            // served from the site's own `/ads/…` path is real.
+                            (!firstParty && WebAdBlocker.isBlocked(url, includeExtra = includeExtra)) ||
                                 WebAdBlocker.matchesPattern(
                                     request,
                                     pageHost,
@@ -1728,6 +1747,68 @@ internal class AndroidWebBrowserController(
 
     private fun blockedResponse(): WebResourceResponse =
         WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+
+    /**
+     * The real destination carried by an ad gate.
+     *
+     * Streaming sites and Rumble wrap a click in a click-tracker on an ad host
+     * (`d4.ads.rmbl.ws/c?…&fb=<base64 of the video page>`): the main frame is
+     * sent to the tracker, which then 302s to the page. Blocking the tracker
+     * outright left the WebView on an empty document — the "white page after
+     * the first click" report. The destination is in the query, so take it and
+     * load the page the click was for; only a gate with nothing usable behind
+     * it is cancelled.
+     */
+    private fun adGateDestination(raw: String): String? {
+        val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: return null
+        for (key in listOf(
+            "fb", "url", "u", "dest", "destination", "redirect", "redirect_url", "to", "target",
+        )) {
+            val v = uri.getQueryParameter(key) ?: continue
+            for (candidate in listOf(v, decodeBase64(v))) {
+                val c = candidate?.trim().orEmpty()
+                if (c.startsWith("http://") || c.startsWith("https://")) return c
+            }
+        }
+        return null
+    }
+
+    private fun decodeBase64(raw: String): String? = runCatching {
+        val t = Uri.decode(raw).trim()
+        val bytes = runCatching {
+            Base64.decode(t, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        }.recoverCatching {
+            Base64.decode(t, Base64.DEFAULT)
+        }.getOrThrow()
+        String(bytes, Charsets.UTF_8)
+    }.getOrNull()
+
+    /**
+     * What a main-frame navigation to a blocked host renders instead of a blank
+     * document. With a destination it forwards there immediately; with none it
+     * says what happened and offers the way back, because a white page reads as
+     * "the app is broken".
+     */
+    private fun adGatePage(destination: String?): WebResourceResponse {
+        val style = "html,body{background:#000;color:#fff;font:15px sans-serif;margin:0}" +
+            ".w{display:flex;height:100vh;flex-direction:column;gap:14px;align-items:center;" +
+            "justify-content:center;padding:24px;text-align:center}a{color:#7DD3FC}"
+        val html = if (destination != null) {
+            val url = destination.replace("\"", "%22")
+            "<!doctype html><meta charset=\"utf-8\">" +
+                "<meta http-equiv=\"refresh\" content=\"0;url=" + url + "\">" +
+                "<style>" + style + "</style><div class=\"w\">Opening…</div>" +
+                "<script>location.replace(" + JSONObject.quote(destination) + ")</script>"
+        } else {
+            "<!doctype html><meta charset=\"utf-8\"><style>" + style + "</style>" +
+                "<div class=\"w\"><div>An ad link was blocked.</div>" +
+                "<a href=\"javascript:history.back()\">Go back</a></div>"
+        }
+        return WebResourceResponse(
+            "text/html", "utf-8",
+            ByteArrayInputStream(html.toByteArray(Charsets.UTF_8)),
+        )
+    }
 
     private fun choiceDue(url: String): Boolean {
         val now = SystemClock.uptimeMillis()
@@ -2661,9 +2742,33 @@ internal object WebAdBlocker {
     private fun isEssentialHost(host: String): Boolean =
         isBlockedHost(host, essentialHosts)
 
+    /**
+     * Player and CDN domains a host list must never take down.
+     *
+     * These are the domains that serve the VIDEO, not the ad wrapper around it.
+     * Lists routinely name them (tube-site CDNs, Dailymotion's `dmcdn.net`,
+     * Vimeo's and JW Player's delivery hosts), and a blocked CDN is
+     * indistinguishable from a broken player: the page loads and the stream
+     * buffers forever. Path rules still run, so an actual ad path on the same
+     * host can still be blocked.
+     */
+    private val alwaysAllowedHosts = setOf(
+        "dmcdn.net",
+        "googlevideo.com", "ytimg.com", "ggpht.com",
+        "fbcdn.net", "twimg.com", "cdninstagram.com",
+        "akamaihd.net", "akamaized.net", "edgesuite.net", "llnwd.net",
+        "cloudfront.net", "fastly.net", "azureedge.net", "b-cdn.net",
+        "jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com",
+        "mux.com", "jwplayer.com", "jwplatform.com", "vimeocdn.com",
+        "cloudflarestream.com", "vidyoda.com",
+    )
+
+    fun isAlwaysAllowedHost(host: String): Boolean =
+        host.isNotBlank() && isBlockedHost(host, alwaysAllowedHosts)
+
     fun isBlocked(url: String, includeExtra: Boolean = true): Boolean {
         val host = runCatching { java.net.URL(url).host?.lowercase() }.getOrNull() ?: return false
-        if (isEssentialHost(host)) return false
+        if (isEssentialHost(host) || isAlwaysAllowedHost(host)) return false
         return isBlockedHost(host, builtIn) ||
             (includeExtra && isBlockedHost(host, extraHosts))
     }

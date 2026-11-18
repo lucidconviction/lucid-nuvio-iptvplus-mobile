@@ -1499,7 +1499,63 @@ private fun UserscriptEditor(
 ) {
     var name by remember(script) { mutableStateOf(script?.name.orEmpty()) }
     var code by remember(script) { mutableStateOf(script?.code.orEmpty()) }
+    var importUrl by remember(script) { mutableStateOf("") }
+    var importing by remember(script) { mutableStateOf(false) }
+    var importError by remember(script) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     NuvioInputField(value = name, onValueChange = { name = it }, placeholder = "Script name")
+    // Paste is not the only way a userscript arrives: Greasy Fork and every
+    // GitHub gist hand out a URL. Fetch it into the editor (never straight to
+    // the list) so the source can still be read before it is saved.
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+    ) {
+        NuvioInputField(
+            value = importUrl,
+            onValueChange = { importUrl = it },
+            placeholder = "Import from URL (.user.js or Greasy Fork)",
+            modifier = Modifier.weight(1f),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+            keyboardActions = KeyboardActions(onGo = {
+                if (importUrl.isNotBlank() && !importing) {
+                    importing = true
+                    importError = null
+                    scope.launch {
+                        runCatching { WebUserscriptImport.fetch(importUrl) }
+                            .onSuccess { fetched ->
+                                code = fetched
+                                if (name.isBlank()) name = WebUserscriptManager.parse(fetched).name
+                            }
+                            .onFailure { importError = it.message ?: "Could not download the script" }
+                        importing = false
+                    }
+                }
+            }),
+        )
+        DialogButton(
+            text = if (importing) "Fetching…" else "Import",
+            style = DialogButtonStyle.Secondary,
+            enabled = importUrl.isNotBlank() && !importing,
+            onClick = {
+                importing = true
+                importError = null
+                scope.launch {
+                    runCatching { WebUserscriptImport.fetch(importUrl) }
+                        .onSuccess { fetched ->
+                            code = fetched
+                            if (name.isBlank()) name = WebUserscriptManager.parse(fetched).name
+                        }
+                        .onFailure { importError = it.message ?: "Could not download the script" }
+                    importing = false
+                }
+            },
+        )
+    }
+    importError?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
     OutlinedTextField(
         value = code,
         onValueChange = { code = it },
