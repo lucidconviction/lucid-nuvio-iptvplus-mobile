@@ -1019,11 +1019,18 @@ internal fun MainAppContent(
         }
 
         fun openWebMedia(source: com.nuvio.app.features.web.WebMediaSource) {
+            val webHeaders = sanitizePlaybackHeaders(source.headers)
+            // HLS child playlists and segments are fetched by the player, not by
+            // the page; a CDN that checks Referer/Cookie per hop answers those
+            // with 403 and the player buffers forever. The loopback proxy
+            // replays every hop with the page's own headers (and rewrites the
+            // manifest), so hand-off uses its local URL when it starts.
+            val playbackUrl = com.nuvio.app.features.web.prepareWebStreamForPlayer(source.url, webHeaders, source.pageUrl)
             val launch = PlayerLaunch(
                 profileId = activePlaybackProfileId,
                 title = source.title.ifBlank { source.url },
-                sourceUrl = source.url,
-                sourceHeaders = sanitizePlaybackHeaders(source.headers),
+                sourceUrl = playbackUrl,
+                sourceHeaders = if (playbackUrl != source.url) emptyMap() else webHeaders,
                 streamType = source.streamType,
                 logo = null,
                 poster = null,

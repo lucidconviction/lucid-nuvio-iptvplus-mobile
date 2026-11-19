@@ -131,6 +131,13 @@ internal class AndroidWebBrowserController(
     private var allowNextMainFrame = false
     /** Whether the popup now on screen was opened by an actual tap. */
     @Volatile private var popupFromGesture = false
+    /**
+     * A popup that exists for the page's sake but is not shown: ad-gated players
+     * call window.open and refuse to start until it returns a real window. The
+     * window is created, kept off-screen, muted and closed after a few seconds,
+     * so the user never sees the ad and the player still proceeds.
+     */
+    @Volatile private var popupHidden = false
     /** Distinct foreign hosts crossed without a gesture in one automatic chain. */
     @Volatile private var redirectChainHost = ""
     @Volatile private var redirectChainCount = 0
@@ -998,6 +1005,18 @@ internal class AndroidWebBrowserController(
                     noteShield("popup", "Blocked an extra popup while one is open.", currentPageHost().orEmpty())
                     return false
                 }
+                if (popupChild != null) {
+                    if (popupHidden) {
+                        // Ad-gated players open a CHAIN of windows (the first is
+                        // the ad slot, the next is the tracker it returned). Both
+                        // stay invisible, but the chain must be allowed to move:
+                        // each new hidden window replaces the previous one.
+                        dismissPopup()
+                    } else {
+                        noteShield("popup", "Blocked an extra popup while one is open.", currentPageHost().orEmpty())
+                        return false
+                    }
+                }
                 if (videoPlaying && !isUserGesture && !recentGesture(1_500L)) {
                     noteShield("popup", "Blocked an ad popup during playback.", currentPageHost().orEmpty())
                     showBlockedToast("Blocked an ad popup")
@@ -1017,6 +1036,32 @@ internal class AndroidWebBrowserController(
                 }
                 popupChild = child
                 transport.webView = child
+                if (this@AndroidWebBrowserController.settings.popupProtection) {
+                    // Hand the page a REAL window (some players check it) but keep
+                    // it off-screen, muted, and short-lived. Showing it lets the ad
+                    // through; blocking it leaves the player on its idle screen.
+                    popupHidden = true
+                    android.util.Log.d("NuvioShield", "hidden popup created for " + currentPageHost())
+                    resultMsg.sendToTarget()
+                    mainHandler.postDelayed({
+                        if (popupChild === child && popupHidden) {
+                            android.util.Log.d("NuvioShield", "hidden popup closed")
+                            dismissPopup()
+                        }
+                    }, 20_000L)
+                    mainHandler.postDelayed({
+                        if (popupChild === child && popupHidden) {
+                            runCatching {
+                                child.evaluateJavascript(
+                                    "document.querySelectorAll('video,audio').forEach(function(m){try{m.muted=true;m.pause()}catch(e){}})",
+                                    null,
+                                )
+                            }
+                        }
+                    }, 1_200L)
+                    return true
+                }
+                popupHidden = false
                 runCatching { showPopupWindow(child) }
                 if (popupDialog == null || popupChild !== child) {
                     // showPopupWindow already cleaned up; do not hand a destroyed view back to
@@ -1358,6 +1403,19 @@ internal class AndroidWebBrowserController(
             val originHost = runCatching { java.net.URI(origin).host }.getOrNull() ?: return null
             if (isSameSite(host, originHost)) return null
         }
+        // A navigation is not a CORS fetch. Proxying an iframe's HTML document
+        // strips the response context the ad wrapper/player expects (its
+        // scripts then build nothing). Sec-Fetch-* is the reliable signal;
+        // Accept is the fallback for requests from older engines.
+        val headers = request.requestHeaders
+        val dest = headers?.entries?.firstOrNull { it.key.equals("Sec-Fetch-Dest", true) }?.value
+        val mode = headers?.entries?.firstOrNull { it.key.equals("Sec-Fetch-Mode", true) }?.value
+        val accept = headers?.entries?.firstOrNull { it.key.equals("Accept", true) }?.value.orEmpty()
+        if (dest == "document" || dest == "iframe" || mode == "navigate" ||
+            accept.contains("text/html", ignoreCase = true)
+        ) {
+            return null
+        }
         val type = WebAdBlocker.requestType(request)
         if (type != "xmlhttprequest" && type != "media" && type != "other") return null
         val method = request.method.uppercase()
@@ -1501,6 +1559,20 @@ internal class AndroidWebBrowserController(
                     // a host the user allowed) may own a popup; a cross-site one is
                     // closed even when the tap that opened it was real.
                     val crossSite = !sameSite && !isAllowedHost(host)
+                    if (this@AndroidWebBrowserController.settings.popupProtection && popupHidden) {
+                        if (crossSite || adTarget || isBlockedPopupHost(host)) {
+                            // Keep the window alive but invisible: closing it
+                            // immediately breaks players that wait for a popup to
+                            // finish navigating. It is muted and auto-closed.
+                            noteShield("popup", "Kept an ad popup hidden ($host).", host)
+                        } else if (v != null) {
+                            // Same-site and the user did tap: the site's own
+                            // window, safe to show.
+                            popupHidden = false
+                            runCatching { showPopupWindow(v) }
+                        }
+                        return
+                    }
                     if (isBlockedPopupHost(host) || adTarget || (this@AndroidWebBrowserController.settings.popupProtection && crossSite)) {
                         noteShield("popup", "Blocked popup to $host.", host)
                         dismissPopup()
@@ -1637,6 +1709,7 @@ internal class AndroidWebBrowserController(
     }
 
     private fun dismissPopup() {
+        popupHidden = false
         val dialog = popupDialog
         popupDialog = null
         runCatching { dialog?.dismiss() }
@@ -3361,3 +3434,35 @@ actual fun WebBrowserHost(
         }
     }
 }
+
+/** Android routes browser hand-offs through [StreamProxy]; see its header. */
+actual fun prepareWebStreamForPlayer(
+    url: String,
+    headers: Map<String, String>,
+    pageUrl: String,
+): String = runCatching {
+    val enriched = LinkedHashMap(headers)
+    val keys = enriched.keys.map { it.lowercase() }.toSet()
+    fun putIfAbsent(key: String, value: String?) {
+        if (value.isNullOrBlank()) return
+        if (key.lowercase() !in keys) enriched[key] = value
+    }
+    // The player must look like the page to the CDN. The sniffed request often
+    // carries none of these (HLS XHRs are sent without Referer by the embed),
+    // and a missing Referer is a 403 on this class of host.
+    putIfAbsent("Referer", enriched.entries.firstOrNull { it.key.equals("Referer", true) }?.value ?: pageUrl)
+    val origin = runCatching {
+        val u = java.net.URI(pageUrl)
+        u.scheme + "://" + u.host
+    }.getOrNull()
+    putIfAbsent("Origin", origin)
+    putIfAbsent("User-Agent", System.getProperty("http.agent"))
+    android.webkit.CookieManager.getInstance().getCookie(url)?.let { putIfAbsent("Cookie", it) }
+    android.util.Log.d(
+        "NuvioStreamProxy",
+        "register host=" + runCatching { java.net.URI(url).host }.getOrNull() +
+            " ref=" + enriched.entries.firstOrNull { it.key.equals("Referer", true) }?.value +
+            " keys=" + enriched.keys.joinToString(","),
+    )
+    StreamProxy.register(url, enriched)
+}.getOrDefault(url)

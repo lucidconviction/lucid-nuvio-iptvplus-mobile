@@ -38,3 +38,10 @@ actual fun WebBrowserHost(controller: WebBrowserController, modifier: Modifier) 
         Text("Web-Apps is available on Android in this build.", color = tokens.colors.textMuted)
     }
 }
+
+/** No loopback proxy on iOS yet: hand the URL over unchanged. */
+actual fun prepareWebStreamForPlayer(
+    url: String,
+    headers: Map<String, String>,
+    pageUrl: String,
+): String = url
