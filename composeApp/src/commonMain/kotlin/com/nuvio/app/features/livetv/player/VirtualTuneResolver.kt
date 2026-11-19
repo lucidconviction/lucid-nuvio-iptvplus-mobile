@@ -34,6 +34,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -125,8 +126,14 @@ internal object VirtualTuneResolver {
         if (!VirtualChannels.isVirtualKey(channel.key)) {
             return VirtualPlaybackOutcome(message = "That isn't a Lucid TV channel.")
         }
-        var tune = VirtualChannelRepository.tune(channel.key, nowMs)
-            ?: return VirtualPlaybackOutcome(message = "This channel has nothing to play right now.")
+        // A cold start can open the tuning screen before the channel's catalog pool exists.
+        // Wait for the first fetch instead of failing immediately.
+        VirtualChannelRepository.ensurePool(channel.key)
+        var tune = VirtualChannelRepository.tune(channel.key, maxOf(nowMs, LiveTvClock.nowMs()))
+            ?: return VirtualPlaybackOutcome(
+                message = VirtualChannelRepository.errorMessage(channel.key)
+                    ?: "This channel has nothing to play right now.",
+            )
         if (tune.relay) {
             val stream = relayStream(tune)
                 ?: return VirtualPlaybackOutcome(message = "The relay channel has no stream.")
@@ -161,6 +168,17 @@ internal object VirtualTuneResolver {
                 "This channel took too long to tune. Check your add-ons and try again.",
             )
             var stream = result.stream
+            // A background prefetch can cache a transient "no streams" answer. Pressing the
+            // channel is an explicit retry, so drop that cached failure and look again once.
+            if (stream == null && result.fromCache) {
+                kotlinx.atomicfu.locks.synchronized(cacheLock) {
+                    cache.remove(cacheKey(tune, settings))
+                }
+                result = withTimeoutOrNull(budgetMs) {
+                    streamFor(tune, settings, budgetMs)
+                } ?: result
+                stream = result.stream
+            }
             if (stream == null) {
                 if (result.skipItem && skipped < MAX_ITEM_SKIPS &&
                     VirtualChannelRepository.markUnplayable(channel.key, tune.item.id)
@@ -490,25 +508,30 @@ internal object VirtualTuneResolver {
     ): StreamItem? {
         val unique = streams.distinctBy { it.preparationIdentity() }.take(MAX_PARALLEL_SOURCES)
         if (unique.isEmpty()) return null
-        val results = kotlinx.coroutines.channels.Channel<StreamItem>(
-            kotlinx.coroutines.channels.Channel.UNLIMITED,
-        )
-        val jobs = unique.map { stream ->
-            scope.async {
-                val resolved = resolveCandidate(
-                    stream = stream,
-                    tune = tune,
-                    remainingMs = (deadlineMs - epochMs()).coerceAtLeast(500L),
-                )
-                if (resolved != null) results.send(resolved)
+        // Keep the probes in this coroutine's scope: when the stage times out, the debrid and
+        // server lookups are cancelled instead of finishing behind the channel's back and
+        // competing with the next tune for the global stream request slot.
+        return coroutineScope {
+            val results = kotlinx.coroutines.channels.Channel<StreamItem>(
+                kotlinx.coroutines.channels.Channel.UNLIMITED,
+            )
+            val jobs = unique.map { stream ->
+                async {
+                    val resolved = resolveCandidate(
+                        stream = stream,
+                        tune = tune,
+                        remainingMs = (deadlineMs - epochMs()).coerceAtLeast(500L),
+                    )
+                    if (resolved != null) results.send(resolved)
+                }
             }
+            val result = withTimeoutOrNull((deadlineMs - epochMs()).coerceAtLeast(500L)) {
+                results.receive()
+            }
+            jobs.forEach { it.cancel() }
+            results.close()
+            result
         }
-        val result = withTimeoutOrNull((deadlineMs - epochMs()).coerceAtLeast(500L)) {
-            results.receive()
-        }
-        jobs.forEach { it.cancel() }
-        results.close()
-        return result
     }
 
     private suspend fun resolveCandidate(

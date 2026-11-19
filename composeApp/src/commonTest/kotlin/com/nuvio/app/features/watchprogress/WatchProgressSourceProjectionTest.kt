@@ -27,6 +27,34 @@ class WatchProgressSourceProjectionTest {
     }
 
     @Test
+    fun `remote source keeps local YouTube progress alongside provider entries`() {
+        val youtube = entry(
+            parentMetaId = "youtube:abc123",
+            updatedAt = 400L,
+            contentType = "youtube",
+            videoId = "abc123",
+            seasonNumber = null,
+            episodeNumber = null,
+        )
+        val nuvioEntries = listOf(
+            entry(parentMetaId = "shared", updatedAt = 200L),
+            entry(parentMetaId = "nuvio-only", updatedAt = 300L),
+            youtube,
+        )
+        val providerEntries = listOf(
+            entry(parentMetaId = "shared", updatedAt = 100L),
+        )
+
+        val projected = projectWatchProgressSourceEntries(
+            source = WatchProgressSource.TRAKT,
+            nuvioEntries = nuvioEntries,
+            providerEntries = providerEntries,
+        )
+
+        assertEquals(providerEntries + youtube, projected)
+    }
+
+    @Test
     fun `Nuvio source excludes every provider progress entry`() {
         val nuvioEntries = listOf(entry(parentMetaId = "nuvio"))
         val providerEntries = listOf(entry(parentMetaId = "provider"))
@@ -43,14 +71,18 @@ class WatchProgressSourceProjectionTest {
     private fun entry(
         parentMetaId: String,
         updatedAt: Long = 1L,
+        contentType: String = "series",
+        videoId: String = "$parentMetaId:1:1",
+        seasonNumber: Int? = 1,
+        episodeNumber: Int? = 1,
     ): WatchProgressEntry = WatchProgressEntry(
-        contentType = "series",
+        contentType = contentType,
         parentMetaId = parentMetaId,
-        parentMetaType = "series",
-        videoId = "$parentMetaId:1:1",
+        parentMetaType = contentType,
+        videoId = videoId,
         title = parentMetaId,
-        seasonNumber = 1,
-        episodeNumber = 1,
+        seasonNumber = seasonNumber,
+        episodeNumber = episodeNumber,
         lastPositionMs = 10L,
         durationMs = 100L,
         lastUpdatedEpochMs = updatedAt,

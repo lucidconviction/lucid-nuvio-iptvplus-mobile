@@ -342,6 +342,32 @@ internal object VirtualChannelRepository {
 
     fun pool(id: String): VirtualPoolSnapshot? = _pools.value[id]
 
+    /** The last pool/tune error for a channel, so the tuning screen can explain a failed tune. */
+    fun errorMessage(channelKey: String): String? =
+        VirtualChannels.specIdOf(channelKey)?.let { id -> _errors.value[id] }
+
+    /**
+     * The tuning screen is often opened straight from a cold start, before the first catalog
+     * fetch finished. Wait for that fetch (and kick it if it never started) instead of failing
+     * with "nothing to play" and leaving the viewer on the tuning screen.
+     */
+    suspend fun ensurePool(channelKey: String, timeoutMs: Long = POOL_WAIT_MS): Boolean {
+        ensureLoaded()
+        // A cold start can tune before the add-on manifests load; initialize them here so the
+        // first catalog fetch has somewhere to read from.
+        runCatching { AddonRepository.initialize() }
+        val id = VirtualChannels.specIdOf(channelKey) ?: return false
+        if (_allSpecs.value.none { spec -> spec.id == id && spec.enabled }) return false
+        if (_pools.value[id]?.items?.isNotEmpty() == true) return true
+        if (id !in _refreshing.value) refreshPool(id, force = true)
+        val deadline = LiveTvClock.nowMs() + timeoutMs.coerceAtLeast(500L)
+        while (LiveTvClock.nowMs() < deadline) {
+            if (_pools.value[id]?.items?.isNotEmpty() == true) return true
+            delay(150L)
+        }
+        return _pools.value[id]?.items?.isNotEmpty() == true
+    }
+
     // ---------------------------------------------------------------- pools
 
     fun refreshAll() {
@@ -1236,4 +1262,5 @@ internal object VirtualChannelRepository {
     private const val MAX_RUNTIME_LOOKUPS = 24
     private const val META_CONCURRENCY = 3
     private const val UNPLAYABLE_TTL_MS = 60L * 60 * 1000
+    private const val POOL_WAIT_MS = 5_000L
 }

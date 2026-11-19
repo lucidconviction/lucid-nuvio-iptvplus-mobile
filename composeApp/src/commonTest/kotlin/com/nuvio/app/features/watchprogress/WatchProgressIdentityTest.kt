@@ -451,6 +451,28 @@ class WatchProgressIdentityTest {
     }
 
     @Test
+    fun `snapshot keeps clean local YouTube progress`() {
+        val youtube = WatchProgressEntry(
+            contentType = "youtube",
+            parentMetaId = "youtube:abc123",
+            parentMetaType = "youtube",
+            videoId = "abc123",
+            title = "Unfinished video",
+            lastPositionMs = 60_000L,
+            durationMs = 600_000L,
+            lastUpdatedEpochMs = 10L,
+        )
+
+        val merged = WatchProgressRepository.mergeWatchProgressEntriesPreservingUnsynced(
+            serverEntries = emptyList(),
+            localEntries = listOf(youtube),
+            dirtyProgressKeys = emptySet(),
+        )
+
+        assertEquals(listOf("youtube:abc123"), merged.keys.toList())
+    }
+
+    @Test
     fun `snapshot migrates dirty legacy identity to sole opaque server key`() {
         val merged = WatchProgressRepository.mergeWatchProgressEntriesPreservingUnsynced(
             serverEntries = listOf(

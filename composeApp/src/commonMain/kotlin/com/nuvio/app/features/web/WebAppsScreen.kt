@@ -372,6 +372,18 @@ fun WebAppsScreen(
                     Icon(Icons.Filled.MoreVert, contentDescription = null, tint = tokens.colors.textPrimary)
                 }
                 Menu(expanded = showBrowserMenu, onDismissRequest = { showBrowserMenu = false }) {
+                    MenuItem(text = "Copy page link", onClick = {
+                        showBrowserMenu = false
+                        controller.copyCurrentUrl()
+                    })
+                    MenuItem(text = "Open page in new tab", onClick = {
+                        showBrowserMenu = false
+                        controller.openInNewTab(browserState.url.ifBlank { address })
+                    })
+                    MenuItem(text = "New tab", onClick = {
+                        showBrowserMenu = false
+                        controller.openNewTab()
+                    })
                     MenuItem(text = "Add this page to Web-Apps", onClick = {
                         showBrowserMenu = false
                         WebAppsRepository.addSite(
@@ -909,10 +921,10 @@ private fun WebAppsSettingsDialog(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
         ) {
-            SettingSwitch("Block ad redirects during playback", settings.redirectProtection) {
+            SettingSwitch("Ask before cross-site redirects", settings.redirectProtection) {
                 onUpdate(settings.copy(redirectProtection = it))
             }
-            SettingSwitch("Block popups from other sites", settings.popupProtection) {
+            SettingSwitch("Ask before cross-site popups", settings.popupProtection) {
                 onUpdate(settings.copy(popupProtection = it))
             }
             SettingSwitch("uBlock / AdGuard-style ad blocking", settings.adBlockEnabled) {
@@ -994,8 +1006,9 @@ private fun WebAppsSettingsDialog(
                 )
             }
             Text(
-                "Normal links and redirects load normally. Redirects are blocked while a video " +
-                    "plays and for hosts you block. Ad blocking uses hosts lists, " +
+                "Links you tap load normally. When a page redirects itself to another site, the " +
+                    "browser blocks the redirect and asks whether to allow it; popups from other " +
+                    "sites ask the same way. Ad blocking uses hosts lists, " +
                     "AdGuard/EasyList/uBlock network rules and safe cosmetic filters. Ad skip is " +
                     "a player-level fallback for ads that cannot be blocked.",
                 style = MaterialTheme.typography.bodySmall,

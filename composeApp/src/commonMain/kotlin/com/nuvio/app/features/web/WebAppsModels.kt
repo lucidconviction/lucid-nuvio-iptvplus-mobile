@@ -218,6 +218,12 @@ interface WebBrowserController {
     fun goForward()
     fun reload()
     fun stopLoading()
+    /** Copies the address of the page currently on screen. */
+    fun copyCurrentUrl() {}
+    /** Opens a fresh browser page (a new tab) at the Web-Apps home URL. */
+    fun openNewTab() {}
+    /** Opens [url] in a separate page, leaving the current page untouched. */
+    fun openInNewTab(url: String) {}
     fun destroy()
     fun pause() {}
     fun resume() {}

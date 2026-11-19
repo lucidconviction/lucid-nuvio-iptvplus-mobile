@@ -503,6 +503,34 @@ class HomeScreenTest {
     }
 
     @Test
+    fun `provider continue watching cutoff keeps old YouTube progress`() {
+        val oldEntry = progressEntry(
+            videoId = "old",
+            title = "Old",
+            lastUpdatedEpochMs = 1_000L,
+            seasonNumber = null,
+            episodeNumber = null,
+        )
+        val youtubeEntry = WatchProgressEntry(
+            contentType = "youtube",
+            parentMetaId = "youtube:abc123",
+            parentMetaType = "youtube",
+            videoId = "abc123",
+            title = "Unfinished video",
+            lastPositionMs = 60_000L,
+            durationMs = 600_000L,
+            lastUpdatedEpochMs = 1_000L,
+        )
+
+        val filtered = filterEntriesForContinueWatchingWindow(
+            entries = listOf(oldEntry, youtubeEntry),
+            cutoffEpochMs = 30L * MILLIS_PER_DAY,
+        )
+
+        assertEquals(listOf("abc123"), filtered.map(WatchProgressEntry::videoId))
+    }
+
+    @Test
     fun `provider without a continue watching cutoff keeps old progress`() {
         val oldEntry = progressEntry(
             videoId = "old",

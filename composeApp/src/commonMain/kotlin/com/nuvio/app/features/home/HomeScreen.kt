@@ -87,6 +87,7 @@ import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.WatchProgressSourceCoordinator
 import com.nuvio.app.features.watchprogress.buildContinueWatchingEpisodeSubtitle
 import com.nuvio.app.features.watchprogress.continueWatchingEntries
+import com.nuvio.app.features.watchprogress.isYouTubeProgressEntry
 import com.nuvio.app.features.watchprogress.toContinueWatchingItem
 import com.nuvio.app.features.watchprogress.toUpNextContinueWatchingItem
 import com.nuvio.app.core.ui.DisintegrationRequest
@@ -1334,7 +1335,12 @@ internal fun filterEntriesForContinueWatchingWindow(
     entries: List<WatchProgressEntry>,
     cutoffEpochMs: Long?,
 ): List<WatchProgressEntry> = cutoffEpochMs
-    ?.let { cutoff -> entries.filter { entry -> entry.lastUpdatedEpochMs >= cutoff } }
+    ?.let { cutoff ->
+        entries.filter { entry ->
+            // YouTube history is local, not part of the provider's own date window.
+            entry.isYouTubeProgressEntry() || entry.lastUpdatedEpochMs >= cutoff
+        }
+    }
     ?: entries
 
 internal fun filterHomeNextUpCandidatesForContinueWatchingWindow(

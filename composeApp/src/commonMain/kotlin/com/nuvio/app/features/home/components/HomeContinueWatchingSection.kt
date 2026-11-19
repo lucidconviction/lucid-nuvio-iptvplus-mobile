@@ -129,6 +129,8 @@ private fun localizedContinueWatchingMetaLine(item: ContinueWatchingItem): Strin
             stringResource(Res.string.compose_player_episode_code_full, item.seasonNumber, item.episodeNumber)
         item.isCloudLibraryItem() ->
             stringResource(Res.string.library_source_cloud)
+        item.parentMetaType.equals("youtube", ignoreCase = true) ->
+            "YouTube"
         else ->
             stringResource(Res.string.media_movie)
     }
@@ -136,9 +138,18 @@ private fun localizedContinueWatchingMetaLine(item: ContinueWatchingItem): Strin
 private fun ContinueWatchingItem.isCloudLibraryItem(): Boolean =
     parentMetaType.equals(CloudLibraryContentType, ignoreCase = true)
 
+private fun ContinueWatchingItem.isYouTubeItem(): Boolean =
+    parentMetaType.equals("youtube", ignoreCase = true)
+
 private fun ContinueWatchingItem.continueWatchingArtworkUrl(
     useEpisodeThumbnails: Boolean,
 ): String? = when {
+    isYouTubeItem() -> firstNonBlank(
+        poster,
+        imageUrl,
+        background,
+        episodeThumbnail,
+    )
     isNextUp && useEpisodeThumbnails -> firstNonBlank(
         episodeThumbnail,
         poster,
@@ -190,6 +201,12 @@ private fun ContinueWatchingItem.continueWatchingCardArtworkUrl(
     useEpisodeThumbnails: Boolean,
     preferBackdropForNextUp: Boolean,
 ): String? = when {
+    isYouTubeItem() -> firstNonBlank(
+        poster,
+        imageUrl,
+        background,
+        episodeThumbnail,
+    )
     isNextUp && preferBackdropForNextUp -> firstNonBlank(
         background,
         poster,
@@ -923,7 +940,9 @@ private fun ContinueWatchingWideCard(
             width = layout.widePosterStripWidth,
             blurred = shouldBlurArtwork,
             fallbackUrl = item.fallbackUrlForArtwork(artworkUrl),
-            contentScale = if (item.isCloudLibraryItem()) ContentScale.Fit else ContentScale.Crop,
+            // Every Continue Watching thumbnail fills the same fixed card. Fit letterboxed
+            // cloud/YouTube artwork and made those cards look smaller than the rest of the row.
+            contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxHeight(),
         )
         Column(
@@ -1068,7 +1087,7 @@ private fun ContinueWatchingPosterCard(
                     modifier = Modifier
                         .fillMaxSize()
                         .then(if (shouldBlurArtwork) Modifier.blur(18.dp) else Modifier),
-                    contentScale = if (item.isCloudLibraryItem()) ContentScale.Fit else ContentScale.Crop,
+                    contentScale = ContentScale.Crop,
                 )
             }
             if (item.shufflePlayback) ShuffleBadge(Modifier.align(Alignment.TopStart).padding(8.dp))

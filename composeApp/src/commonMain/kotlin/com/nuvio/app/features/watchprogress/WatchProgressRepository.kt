@@ -975,7 +975,12 @@ object WatchProgressRepository {
 
         localByProgressKey.forEach { (progressKey, localEntry) ->
             val remoteEntry = merged[progressKey]
-            if (progressKey !in effectiveDirtyKeys) return@forEach
+            // YouTube history is local-only: Trakt/Simkl never return it, and the Nuvio sync
+            // server may not have it yet. Dropping it here cleared it from Continue Watching
+            // after every full progress pull.
+            if (progressKey !in effectiveDirtyKeys && !localEntry.isYouTubeProgressEntry()) {
+                return@forEach
+            }
             if (remoteEntry == null || localEntry.isFresherThan(remoteEntry)) {
                 merged[progressKey] = localEntry
             }

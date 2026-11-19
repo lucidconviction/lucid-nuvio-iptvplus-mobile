@@ -12,6 +12,7 @@ import com.nuvio.app.features.livetv.model.LiveTvSettings
 import com.nuvio.app.features.livetv.model.LiveUserState
 import com.nuvio.app.features.livetv.model.PlaylistSource
 import com.nuvio.app.features.livetv.virtual.VirtualChannelRepository
+import com.nuvio.app.features.livetv.virtual.VirtualChannels
 import io.ktor.http.Url
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -107,7 +108,15 @@ internal object LiveTvRepository {
         prefs.userState,
         prefs.validationFailed,
     ) { channels, user, failed ->
-        val shown = if (failed.isEmpty()) channels else channels.filterNot { it.key in failed }
+        // Lucid TV channels are resolved when tuned; they have no single probe URL and must
+        // never be hidden by a playlist stream-validation run.
+        val shown = if (failed.isEmpty()) {
+            channels
+        } else {
+            channels.filterNot { channel ->
+                channel.key in failed && !VirtualChannels.isVirtualKey(channel.key)
+            }
+        }
         withPickedLogos(shown, user.channelLogos)
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 

@@ -5,6 +5,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
 import android.app.DownloadManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -118,6 +120,7 @@ internal class AndroidWebBrowserController(
     private var popupChild: WebView? = null
     private var popupDialog: Dialog? = null
     private var pendingUrl: String? = null
+    @Volatile
     private var settings = WebAppsSettings()
     private var scripts: List<WebUserscript> = emptyList()
     private var lastLoadedUrl: String = ""
@@ -127,8 +130,13 @@ internal class AndroidWebBrowserController(
     private var mediaScanRunnable: Runnable? = null
     private var autoPlayRunnable: Runnable? = null
     private var rendererRestarts = 0
+    @Volatile
     private var pendingMainFrameUrl: String? = null
-    private var allowNextMainFrame = false
+    /** Ignore redirect protection briefly after a user-requested back/forward/reload. */
+    @Volatile private var allowMainFrameUntil = 0L
+    /** One redirect the viewer explicitly allowed; kept so Chromium's second check agrees. */
+    @Volatile private var allowedRedirectUrl: String? = null
+    @Volatile private var allowedRedirectUntil = 0L
     /** Whether the popup now on screen was opened by an actual tap. */
     @Volatile private var popupFromGesture = false
     /**
@@ -138,12 +146,15 @@ internal class AndroidWebBrowserController(
      * so the user never sees the ad and the player still proceeds.
      */
     @Volatile private var popupHidden = false
+    @Volatile private var popupPermissionPending = false
+    /** Window.open timestamps, so an ad script's popup storm is capped instead of hidden forever. */
+    private val popupWindowTimes = ArrayDeque<Long>()
     /** Distinct foreign hosts crossed without a gesture in one automatic chain. */
     @Volatile private var redirectChainHost = ""
     @Volatile private var redirectChainCount = 0
     @Volatile private var redirectChainAt = 0L
-    private var lastChoiceAt = 0L
-    private var lastChoiceUrl: String? = null
+    @Volatile private var lastChoiceAt = 0L
+    @Volatile private var lastChoiceUrl: String? = null
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var customViewContainer: FrameLayout? = null
@@ -342,7 +353,7 @@ internal class AndroidWebBrowserController(
     override fun goBack() {
         webView?.let {
             if (it.canGoBack()) {
-                allowNextMainFrame = true
+                allowMainFrameNavigation()
                 it.goBack()
             } else {
                 updateNavigation()
@@ -353,7 +364,7 @@ internal class AndroidWebBrowserController(
     override fun goForward() {
         webView?.let {
             if (it.canGoForward()) {
-                allowNextMainFrame = true
+                allowMainFrameNavigation()
                 it.goForward()
             } else {
                 updateNavigation()
@@ -374,12 +385,64 @@ internal class AndroidWebBrowserController(
             )
             return
         }
-        allowNextMainFrame = true
+        allowMainFrameNavigation()
         view.reload()
     }
 
     override fun stopLoading() {
         webView?.stopLoading()
+    }
+
+    override fun copyCurrentUrl() {
+        copyLinkToClipboard(_state.value.url.ifBlank { lastLoadedUrl.ifBlank { pageUrl } })
+    }
+
+    override fun openNewTab() {
+        val home = settings.homeUrl.ifBlank { "https://www.google.com" }
+        openNewPage(home, title = "New tab")
+    }
+
+    override fun openInNewTab(url: String) {
+        openNewPage(url, title = "New tab")
+    }
+
+    private fun openNewPage(rawUrl: String, title: String) {
+        val url = rawUrl.trim()
+        if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) return
+        val activity = appContext.findActivity() ?: return
+        // A viewer-requested page is not a popup: it skips the popup rules and opens with its
+        // own title, Copy and Close controls.
+        dismissPopup()
+        val child = runCatching { createPopupWebView(activity) }.getOrNull() ?: return
+        popupChild = child
+        popupFromGesture = true
+        popupHidden = false
+        runCatching { showPopupWindow(child, title) }
+        if (popupDialog == null || popupChild !== child) {
+            if (popupChild === child) popupChild = null
+            destroyPopupView(child)
+            return
+        }
+        child.loadUrl(url)
+    }
+
+    private fun copyLinkToClipboard(url: String?) {
+        val text = url?.trim().orEmpty()
+        if (text.isBlank()) return
+        runCatching {
+            val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Link", text))
+            Toast.makeText(appContext, "Link copied", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun allowMainFrameNavigation() {
+        allowMainFrameUntil = SystemClock.uptimeMillis() + 5_000L
+    }
+
+    private fun allowRedirectTo(url: String) {
+        allowedRedirectUrl = url
+        allowedRedirectUntil = SystemClock.uptimeMillis() + 20_000L
     }
 
     override fun pause() {
@@ -688,6 +751,18 @@ internal class AndroidWebBrowserController(
             }
             false
         }
+        view.setOnLongClickListener {
+            val hit = view.hitTestResult
+            val link = hit.extra?.trim().orEmpty()
+            val isLink = hit.type == WebView.HitTestResult.SRC_ANCHOR_TYPE ||
+                hit.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
+            if (isLink && link.isNotBlank()) {
+                showLinkActions(link)
+                true
+            } else {
+                false
+            }
+        }
         view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             if (url.isBlank()) return@setDownloadListener
             if (url.startsWith("blob:") || url.startsWith("data:")) {
@@ -722,6 +797,11 @@ internal class AndroidWebBrowserController(
                         view.loadUrl(dest)
                     }
                     return true
+                }
+                // A gesture-less shouldInterceptRequest follows the same navigation. Mark the
+                // URL so the user's own click is not mistaken for a page-initiated redirect.
+                if (request?.isForMainFrame == true && request.hasGesture()) {
+                    allowRedirectTo(url)
                 }
                 return false
             }
@@ -1020,6 +1100,11 @@ internal class AndroidWebBrowserController(
                 if (videoPlaying && !isUserGesture && !recentGesture(1_500L)) {
                     noteShield("popup", "Blocked an ad popup during playback.", currentPageHost().orEmpty())
                     showBlockedToast("Blocked an ad popup")
+                    return false
+                }
+                if (this@AndroidWebBrowserController.settings.popupProtection && popupStorm()) {
+                    noteShield("popup", "Blocked a popup storm.", currentPageHost().orEmpty())
+                    showBlockedToast("Blocked a popup storm")
                     return false
                 }
                 popupFromGesture = tapped
@@ -1560,16 +1645,44 @@ internal class AndroidWebBrowserController(
                     // closed even when the tap that opened it was real.
                     val crossSite = !sameSite && !isAllowedHost(host)
                     if (this@AndroidWebBrowserController.settings.popupProtection && popupHidden) {
-                        if (crossSite || adTarget || isBlockedPopupHost(host)) {
-                            // Keep the window alive but invisible: closing it
-                            // immediately breaks players that wait for a popup to
-                            // finish navigating. It is muted and auto-closed.
-                            noteShield("popup", "Kept an ad popup hidden ($host).", host)
-                        } else if (v != null) {
-                            // Same-site and the user did tap: the site's own
-                            // window, safe to show.
-                            popupHidden = false
-                            runCatching { showPopupWindow(v) }
+                        when {
+                            isBlockedPopupHost(host) || adTarget -> {
+                                // Keep the window alive but invisible: closing it
+                                // immediately breaks players that wait for a popup to
+                                // finish navigating. It is muted and auto-closed.
+                                noteShield("popup", "Kept an ad popup hidden ($host).", host)
+                            }
+                            crossSite -> {
+                                if (popupPermissionPending) return
+                                val child = v
+                                if (child == null) {
+                                    dismissPopup()
+                                    return
+                                }
+                                popupPermissionPending = true
+                                val asked = askPopupPermission(target, host) { allowed ->
+                                    popupPermissionPending = false
+                                    if (popupChild !== child) return@askPopupPermission
+                                    if (allowed) {
+                                        popupHidden = false
+                                        runCatching { showPopupWindow(child, "Popup") }
+                                    } else {
+                                        noteShield("popup", "Blocked popup to $host.", host)
+                                        dismissPopup()
+                                    }
+                                }
+                                if (!asked) {
+                                    popupPermissionPending = false
+                                    noteShield("popup", "Blocked popup to $host.", host)
+                                    dismissPopup()
+                                }
+                            }
+                            v != null -> {
+                                // Same-site and the user did tap: the site's own
+                                // window, safe to show.
+                                popupHidden = false
+                                runCatching { showPopupWindow(v) }
+                            }
                         }
                         return
                     }
@@ -1626,14 +1739,18 @@ internal class AndroidWebBrowserController(
             }
         }
 
-    private fun showPopupWindow(child: WebView) {
+    private fun showPopupWindow(child: WebView, title: String = "Popup") {
         val activity = appContext.findActivity() ?: return
         val titleView = TextView(activity).apply {
-            text = "Popup"
+            text = title
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 15f
             maxLines = 1
             setPadding(28, 0, 16, 0)
+        }
+        val copyButton = Button(activity).apply {
+            text = "Copy"
+            setOnClickListener { copyLinkToClipboard(child.url) }
         }
         val closeButton = Button(activity).apply {
             text = "Close"
@@ -1645,6 +1762,13 @@ internal class AndroidWebBrowserController(
             addView(
                 titleView,
                 LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f),
+            )
+            addView(
+                copyButton,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                ),
             )
             addView(
                 closeButton,
@@ -1710,6 +1834,7 @@ internal class AndroidWebBrowserController(
 
     private fun dismissPopup() {
         popupHidden = false
+        popupPermissionPending = false
         val dialog = popupDialog
         popupDialog = null
         runCatching { dialog?.dismiss() }
@@ -2045,6 +2170,16 @@ internal class AndroidWebBrowserController(
         )
     }
 
+    private fun blockRedirectHost(host: String) {
+        val h = normalizeHost(host) ?: return
+        saveSettings(
+            settings.copy(
+                blockedRedirectHosts = settings.blockedRedirectHosts + h,
+                allowedHosts = settings.allowedHosts - h,
+            )
+        )
+    }
+
     private fun blockedResponse(): WebResourceResponse =
         WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
 
@@ -2101,7 +2236,7 @@ internal class AndroidWebBrowserController(
                 "<script>location.replace(" + JSONObject.quote(destination) + ")</script>"
         } else {
             "<!doctype html><meta charset=\"utf-8\"><style>" + style + "</style>" +
-                "<div class=\"w\"><div>An ad link was blocked.</div>" +
+                "<div class=\"w\"><div>This redirect was blocked.</div>" +
                 "<a href=\"javascript:history.back()\">Go back</a></div>"
         }
         return WebResourceResponse(
@@ -2137,7 +2272,7 @@ internal class AndroidWebBrowserController(
             return false
         }
         mainHandler.post {
-            if (activity.isFinishing || activity.isDestroyed) {
+            if (activity.isFinishing || activity.isDestroyed || choiceShowing) {
                 onCancel()
                 return@post
             }
@@ -2182,6 +2317,45 @@ internal class AndroidWebBrowserController(
         return true
     }
 
+    /** Long-press on a link: copy it, open it as a separate page, or open it in this page. */
+    private fun showLinkActions(url: String) {
+        val host = hostOf(url) ?: url
+        showChoice(
+            title = "Link",
+            message = "$host\n$url",
+            options = listOf(
+                "Copy link" to { copyLinkToClipboard(url) },
+                "Open in new tab" to { openNewPage(url, title = "New tab") },
+                "Open in this tab" to {
+                    allowRedirectTo(url)
+                    mainHandler.post { webView?.loadUrl(url) }
+                },
+                "Open in external browser" to {
+                    runCatching {
+                        appContext.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                },
+            ),
+            onCancel = {},
+        )
+    }
+
+    /**
+     * A tap can legitimately open one window; ad scripts answer it with a burst. Four requests
+     * in ten seconds is a storm even when every individual call carries a gesture flag.
+     */
+    private fun popupStorm(): Boolean {
+        val now = SystemClock.uptimeMillis()
+        while (popupWindowTimes.isNotEmpty() && now - popupWindowTimes.first() > 10_000L) {
+            popupWindowTimes.removeFirst()
+        }
+        popupWindowTimes.addLast(now)
+        return popupWindowTimes.size > 4
+    }
+
     private fun askPopupPermission(url: String, host: String, onAllow: (Boolean) -> Unit): Boolean {
         if (!choiceDue(url)) {
             onAllow(false)
@@ -2207,10 +2381,10 @@ internal class AndroidWebBrowserController(
     }
 
     private fun shouldBlockMainFrame(url: String, hasGesture: Boolean): Boolean {
-        if (allowNextMainFrame) {
-            allowNextMainFrame = false
-            return false
-        }
+        val now = SystemClock.uptimeMillis()
+        if (now < allowMainFrameUntil) return false
+        val allowed = allowedRedirectUrl
+        if (allowed != null && now < allowedRedirectUntil && sameUrl(allowed, url)) return false
         val pending = pendingMainFrameUrl
         if (pending != null && sameUrl(pending, url)) {
             pendingMainFrameUrl = null
@@ -2228,54 +2402,86 @@ internal class AndroidWebBrowserController(
             noteShield("redirect", "Blocked redirect to $host.", host)
             return true
         }
-        // A real tap is the user choosing this navigation, and it resets the chain.
-        val gesture = hasGesture || recentGesture(3_000L)
-        if (gesture) {
+        // A real tap is the user choosing this navigation. The caller remembers that URL so
+        // Chromium's second (gesture-less) check does not ask about the same click twice.
+        if (hasGesture) {
             redirectChainCount = 0
             redirectChainHost = ""
+            return false
         }
-        // A foreign redirect while a video is already playing is an ad hijack.
-        if (videoPlaying && !gesture) {
-            noteShield("redirect", "Blocked an ad redirect to $host during playback.", host)
+        // An automatic navigation to a host the ad lists know is a redirect
+        // hijack, not a page the user asked for. A click-tracker's destination
+        // is followed by the caller when it carries one.
+        val adNavigation = runCatching {
+            WebAdBlocker.isBlocked(url, includeExtra = true) ||
+                WebAdBlocker.matchesPatternUrl(
+                    url,
+                    current,
+                    type = "document",
+                    includeFilterRules = true,
+                )
+        }.getOrDefault(false)
+        if (adNavigation) {
+            noteShield("redirect", "Blocked an ad redirect to $host.", host)
             return true
         }
-        if (!gesture) {
-            // An automatic navigation to a host the ad lists know is a redirect
-            // hijack, not a page the user asked for. A click-tracker's destination
-            // is followed by the caller when it carries one.
-            val adNavigation = runCatching {
-                WebAdBlocker.isBlocked(url, includeExtra = true) ||
-                    WebAdBlocker.matchesPatternUrl(
-                        url,
-                        current,
-                        type = "document",
-                        includeFilterRules = true,
-                    )
-            }.getOrDefault(false)
-            if (adNavigation) {
-                noteShield("redirect", "Blocked an ad redirect to $host.", host)
-                return true
-            }
-            // A short chain of ordinary redirects (http -> https, a login hop, a
-            // mirror) is normal. Three distinct foreign hosts inside eight
-            // seconds is a hijack: real redirects do not tour ad domains.
-            val now = SystemClock.uptimeMillis()
-            if (now - redirectChainAt > 8_000L || host == redirectChainHost) {
-                redirectChainHost = host
-                redirectChainCount = 1
-            } else {
-                redirectChainHost = host
-                redirectChainCount += 1
-            }
-            redirectChainAt = now
-            if (redirectChainCount >= 3) {
-                noteShield("redirect", "Blocked a redirect chain through $host.", host)
-                return true
-            }
+        // A foreign redirect while a video is already playing is usually a hijack, but a
+        // viewer may still want the page it leads to. Block it and offer the same choice.
+        if (videoPlaying) {
+            noteShield("redirect", "Blocked a redirect to $host during playback.", host)
+            askRedirectPermission(url, host)
+            return true
         }
-        // Everything else fails open: a page that cannot redirect at all looks
-        // broken, and the gates above already cover the hijacks that matter.
-        return false
+        // A short chain of ordinary redirects (http -> https, a login hop, a
+        // mirror) is normal. Three distinct foreign hosts inside eight
+        // seconds is a hijack: real redirects do not tour ad domains.
+        if (now - redirectChainAt > 8_000L || host == redirectChainHost) {
+            redirectChainHost = host
+            redirectChainCount = 1
+        } else {
+            redirectChainHost = host
+            redirectChainCount += 1
+        }
+        redirectChainAt = now
+        if (redirectChainCount >= 3) {
+            noteShield("redirect", "Blocked a redirect chain through $host.", host)
+            return true
+        }
+        // Every other automatic cross-site navigation is blocked and offered to the viewer.
+        // Failing open here is what let ad hijacks replace the page after a tap.
+        askRedirectPermission(url, host)
+        return true
+    }
+
+    /**
+     * Asks before a page navigates itself to another site. The URL is already blocked; allowing
+     * it re-issues the navigation with a one-URL pass so both of Chromium's checks agree.
+     */
+    private fun askRedirectPermission(url: String, host: String) {
+        if (!choiceDue(url)) return
+        showChoice(
+            title = "Redirect to another site?",
+            message = currentPageHost()?.let { "This page tried to open $host." }
+                ?: "The page tried to open $host.",
+            options = listOf(
+                "Redirect once" to {
+                    noteShield("redirect", "Allowed a redirect to $host.", host)
+                    allowRedirectTo(url)
+                    mainHandler.post { webView?.loadUrl(url) }
+                },
+                "Always allow $host" to {
+                    allowHost(host)
+                    noteShield("redirect", "Allowed redirects to $host.", host)
+                    allowRedirectTo(url)
+                    mainHandler.post { webView?.loadUrl(url) }
+                },
+                "Block always $host" to {
+                    blockRedirectHost(host)
+                    noteShield("redirect", "Blocked redirects to $host.", host)
+                },
+            ),
+            onCancel = { noteShield("redirect", "Cancelled a redirect to $host.", host) },
+        )
     }
 
     private fun updateNavigation() {

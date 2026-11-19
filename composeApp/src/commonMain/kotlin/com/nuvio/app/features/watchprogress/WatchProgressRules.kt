@@ -144,6 +144,10 @@ internal fun WatchProgressEntry.shouldTreatAsInProgressForContinueWatching(): Bo
         entry.normalizedProgressPercent?.let { it > 0f } == true
     if (!hasStartedPlayback) return false
 
+    // A live YouTube stream has no duration and is not an "unfinished video". Only VOD
+    // history belongs in Continue Watching.
+    if (entry.isYouTubeProgressEntry() && entry.durationMs <= 0L) return false
+
     return entry.source != WatchProgressSourceTraktHistory &&
         entry.source != WatchProgressSourceTraktShowProgress
 }
@@ -213,3 +217,15 @@ internal const val LiveTvWatchProgressType = "livetv"
 
 internal fun WatchProgressEntry.isLiveTvEntry(): Boolean =
     contentType == LiveTvWatchProgressType || parentMetaType == LiveTvWatchProgressType
+
+/**
+ * YouTube progress is Nuvio's own local history. It is never part of a Trakt/Simkl snapshot, so
+ * it has to be merged back into Continue Watching when one of those providers is the active
+ * progress source.
+ */
+internal const val YouTubeWatchProgressType = "youtube"
+
+internal fun WatchProgressEntry.isYouTubeProgressEntry(): Boolean =
+    contentType.equals(YouTubeWatchProgressType, ignoreCase = true) ||
+        parentMetaType.equals(YouTubeWatchProgressType, ignoreCase = true) ||
+        parentMetaId.startsWith("$YouTubeWatchProgressType:", ignoreCase = true)

@@ -28,6 +28,7 @@ internal object VirtualChannelPlayback {
 
     /** Resolves and stores the launch; returns its id for a PlayerRoute, or the reason it failed. */
     suspend fun prepare(channel: LiveChannel, profileId: Int): VirtualPrepareOutcome {
+        VirtualChannelRepository.ensureLoaded()
         val outcome = resolve(channel, profileId)
         val resolved = outcome.resolved
             ?: return VirtualPrepareOutcome(message = outcome.message)

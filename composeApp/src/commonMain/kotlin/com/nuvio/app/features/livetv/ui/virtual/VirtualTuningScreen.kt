@@ -35,7 +35,10 @@ import com.nuvio.app.core.ui.DialogButtonStyle
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.livetv.model.LiveChannel
 import com.nuvio.app.features.livetv.player.VirtualChannelPlayback
+import com.nuvio.app.features.livetv.player.VirtualPrepareOutcome
 import com.nuvio.app.features.livetv.virtual.VirtualChannels
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Shown the instant a Lucid TV channel is picked, so the guide disappears and the viewer sees
@@ -73,8 +76,20 @@ fun VirtualTuningScreen(
 
     LaunchedEffect(attempt) {
         message = null
-        if (attempt > 0) VirtualChannelPlayback.invalidate(channelKey)
-        val prepared = VirtualChannelPlayback.prepare(channel, profileId)
+        // Never leave the viewer on a spinner: a pool fetch, an add-on lookup or a resolver
+        // exception must all end in either the player or an actionable message.
+        val prepared = withTimeoutOrNull(TuningScreenTimeoutMs) {
+            runCatching {
+                if (attempt > 0) VirtualChannelPlayback.invalidate(channelKey)
+                VirtualChannelPlayback.prepare(channel, profileId)
+            }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                VirtualPrepareOutcome(
+                    message = error.message?.takeIf { it.isNotBlank() }
+                        ?: "This Lucid TV channel is offline right now.",
+                )
+            }
+        } ?: VirtualPrepareOutcome(message = "This channel took too long to tune. Try again.")
         if (prepared.launchId != null) {
             onReady(prepared.launchId, channelName)
         } else {
@@ -117,12 +132,6 @@ fun VirtualTuningScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = tokens.colors.textMuted,
                 )
-                Text(
-                    text = "Finding the best stream. Direct HTTP is tried first.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = tokens.colors.textMuted,
-                    textAlign = TextAlign.Center,
-                )
             } else {
                 Text(
                     text = message.orEmpty(),
@@ -143,3 +152,5 @@ fun VirtualTuningScreen(
         }
     }
 }
+
+private const val TuningScreenTimeoutMs = 30_000L

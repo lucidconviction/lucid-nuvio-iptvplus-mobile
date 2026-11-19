@@ -61,7 +61,13 @@ internal object StreamValidationRepository {
 
         val previousFailed = LiveTvPreferences.currentValidationFailed()
         val allChannels = LiveTvRepository.channels.value
-        val considered = if (recheckHiddenOnly) allChannels.filter { it.key in previousFailed } else allChannels
+        // Lucid TV channels have no single URL to probe: their URL is the virtual channel key
+        // and the stream is resolved when the channel is tuned. Probing them marked every
+        // Lucid TV channel as dead and removed it from the guide.
+        val probeable = allChannels.filterNot { channel ->
+            com.nuvio.app.features.livetv.virtual.VirtualChannels.isVirtualKey(channel.key)
+        }
+        val considered = if (recheckHiddenOnly) probeable.filter { it.key in previousFailed } else probeable
         if (considered.isEmpty()) {
             if (recheckHiddenOnly) {
                 _state.value = _state.value.copy(
