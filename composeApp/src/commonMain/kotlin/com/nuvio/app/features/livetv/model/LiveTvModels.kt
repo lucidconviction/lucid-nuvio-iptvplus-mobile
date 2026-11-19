@@ -20,6 +20,12 @@ data class PlaylistSource(
     val xtreamServer: String = "",
     val xtreamUsername: String = "",
     val xtreamPassword: String = "",
+    /** Stalker portal: the portal address (for example http://host:port/c/). */
+    val stalkerPortal: String = "",
+    /** Stalker portal: the MAC address the provider registered for this device. */
+    val stalkerMac: String = "",
+    /** Stalker portal: the portal's time zone, used for its guide. */
+    val stalkerTimezone: String = "",
     val lastUpdatedMs: Long = 0L,
     val lastError: String? = null,
     val channelCount: Int = 0,
@@ -44,14 +50,33 @@ data class PlaylistSource(
     val logoSource: String = "playlist"
 ) {
     val isXtream: Boolean get() = xtreamServer.isNotBlank()
+    val isStalker: Boolean get() = !isXtream && stalkerPortal.isNotBlank()
 
     /** Whether this source's live channels (and their guide) are loaded. */
     val liveEnabled: Boolean get() = enabled && (!isXtream || importLive)
 
     fun resolvedUrl(): String {
+        // Stalker portals are read through server/load.php, not a playlist URL.
+        if (isStalker) return ""
         if (!isXtream) return tidyLink(url)
         return "${xtreamBase()}/get.php?username=${enc(xtreamUsername)}&password=${enc(xtreamPassword)}&type=m3u_plus&output=ts"
     }
+
+    /** The portal's base URL without a trailing slash (…/c or …/stalker_portal/c). */
+    fun stalkerBase(): String {
+        val cleaned = cleanStalkerPortal(stalkerPortal)
+        return cleaned.trimEnd('/')
+    }
+
+    fun stalkerEndpoint(): String = "${stalkerBase()}/server/load.php"
+
+    /** The Cookie every Stalker request (and stream) needs. */
+    fun stalkerCookie(): String {
+        val zone = stalkerTimezone.trim().ifBlank { "UTC" }
+        return "mac=${normalizeMac(stalkerMac)}; stb_lang=en; timezone=$zone"
+    }
+
+    fun stalkerUserAgent(): String = userAgent.trim().ifBlank { STALKER_DEFAULT_UA }
 
     fun xtreamEpgUrl(): String? {
         if (!isXtream) return null
@@ -67,6 +92,38 @@ data class PlaylistSource(
     private fun enc(s: String) = s.trim().encodeURLParameter()
 
     companion object {
+        const val STALKER_DEFAULT_UA =
+            "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) " +
+                "MAG200 stbapp ver: 2 rev: 250 Safari/533.3"
+
+        /** "00:1a:79:aa:bb:cc", "00-1A-79-AA-BB-CC" or "001A79AABBCC" → the portal's form. */
+        fun normalizeMac(raw: String): String {
+            val hex = raw.uppercase().filter { it.isDigit() || it in 'A'..'F' }
+            return hex.chunked(2).take(6).joinToString(":")
+        }
+
+        fun isValidMac(raw: String): Boolean {
+            val hex = raw.uppercase().filter { it.isDigit() || it in 'A'..'F' }
+            return hex.length == 12
+        }
+
+        /**
+         * A Stalker portal address, whatever was pasted: a bare host, a portal.php link, a
+         * full server/load.php link or the usual …/c/ form. The result never ends in a slash.
+         */
+        fun cleanStalkerPortal(raw: String): String {
+            var s = tidyLink(raw.trim())
+            if (s.isEmpty()) return s
+            if (!s.startsWith("http://", true) && !s.startsWith("https://", true)) s = "http://$s"
+            val parsed = runCatching { Url(s) }.getOrNull() ?: return s.trimEnd('/')
+            val host = parsed.host.ifBlank { return s.trimEnd('/') }
+            val port = if (parsed.specifiedPort > 0) ":${parsed.specifiedPort}" else ""
+            var path = parsed.encodedPath.trimEnd('/')
+            path = path.removeSuffix("/server/load.php").removeSuffix("/portal.php")
+            if (path.isBlank() || path == "/") path = "/c"
+            return "${parsed.protocol.name.lowercase()}://$host$port$path".trimEnd('/')
+        }
+
         /**
          * A typed or pasted link made safe: dashes that only look like "-" (the longer dashes a
          * phone keyboard or a chat app swaps in, the non-breaking hyphen) become a real hyphen,

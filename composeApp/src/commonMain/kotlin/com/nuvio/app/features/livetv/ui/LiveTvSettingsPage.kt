@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -91,6 +92,11 @@ import nuvio.composeapp.generated.resources.livetv_browse_m3u
 import nuvio.composeapp.generated.resources.livetv_browse_m3u_description
 import nuvio.composeapp.generated.resources.livetv_add_xtream
 import nuvio.composeapp.generated.resources.livetv_add_xtream_description
+import nuvio.composeapp.generated.resources.livetv_add_stalker
+import nuvio.composeapp.generated.resources.livetv_add_stalker_description
+import nuvio.composeapp.generated.resources.livetv_field_portal
+import nuvio.composeapp.generated.resources.livetv_field_mac
+import nuvio.composeapp.generated.resources.livetv_stalker_load_epg
 import nuvio.composeapp.generated.resources.livetv_backup_now
 import nuvio.composeapp.generated.resources.livetv_backup_now_description
 import nuvio.composeapp.generated.resources.livetv_catchup_prefer_hls
@@ -295,6 +301,7 @@ private sealed interface LiveDialog {
     data object AddM3u : LiveDialog
     data object BrowseM3u : LiveDialog
     data object AddXtream : LiveDialog
+    data object AddStalker : LiveDialog
     data object AddEpg : LiveDialog
     data class PlaylistActions(val source: PlaylistSource) : LiveDialog
     data class EditPlaylist(val source: PlaylistSource) : LiveDialog
@@ -401,7 +408,11 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
                     SettingsNavigationRow(
                         title = pl.name,
                         description = playlistStatus(pl, accounts[pl.id]),
-                        icon = if (pl.isXtream) Icons.Filled.Login else Icons.Filled.ListAlt,
+                        icon = when {
+                            pl.isXtream -> Icons.Filled.Login
+                            pl.isStalker -> Icons.Filled.Tv
+                            else -> Icons.Filled.ListAlt
+                        },
                         isTablet = isTablet,
                         onClick = { dialog = LiveDialog.PlaylistActions(pl) },
                     )
@@ -429,6 +440,14 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
                     icon = Icons.Filled.Add,
                     isTablet = isTablet,
                     onClick = { dialog = LiveDialog.AddXtream },
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.livetv_add_stalker),
+                    description = stringResource(Res.string.livetv_add_stalker_description),
+                    icon = Icons.Filled.Add,
+                    isTablet = isTablet,
+                    onClick = { dialog = LiveDialog.AddStalker },
                 )
             }
         }
@@ -946,8 +965,13 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
             onAdd = { list -> LiveTvRepository.addPlaylist("iptv-org · ${list.name}", list.url, "") },
         )
         LiveDialog.AddXtream -> XtreamForm(null, onDismiss = close)
+        LiveDialog.AddStalker -> StalkerForm(null, onDismiss = close)
         LiveDialog.AddEpg -> EpgForm(null, onDismiss = close)
-        is LiveDialog.EditPlaylist -> if (d.source.isXtream) XtreamForm(d.source, onDismiss = close) else M3uForm(d.source, onDismiss = close)
+        is LiveDialog.EditPlaylist -> when {
+            d.source.isXtream -> XtreamForm(d.source, onDismiss = close)
+            d.source.isStalker -> StalkerForm(d.source, onDismiss = close)
+            else -> M3uForm(d.source, onDismiss = close)
+        }
         is LiveDialog.EditEpg -> EpgForm(d.source, onDismiss = close)
         is LiveDialog.PlaylistActions -> ActionsDialog(
             title = d.source.name,
@@ -1274,6 +1298,58 @@ private fun XtreamForm(existing: PlaylistSource?, onDismiss: () -> Unit) {
                     else LiveTvRepository.updatePlaylist(
                         existing.copy(name = name.ifBlank { "Xtream" }, xtreamServer = server, xtreamUsername = user, xtreamPassword = pass, userAgent = ua.trim(), useEmbeddedEpg = embedded, importVod = includeVod, importLive = includeLive)
                     )
+                    onDismiss()
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun StalkerForm(existing: PlaylistSource?, onDismiss: () -> Unit) {
+    var name by remember { mutableStateOf(existing?.name.orEmpty()) }
+    var portal by remember { mutableStateOf(existing?.stalkerPortal.orEmpty()) }
+    var mac by remember { mutableStateOf(existing?.stalkerMac.orEmpty()) }
+    var ua by remember { mutableStateOf(existing?.userAgent.orEmpty()) }
+    var loadGuide by remember { mutableStateOf(existing?.useEmbeddedEpg ?: true) }
+    DialogSurface(
+        onDismissRequest = onDismiss,
+        title = stringResource(if (existing == null) Res.string.livetv_add_stalker else Res.string.action_edit),
+    ) {
+        NuvioInputField(value = name, onValueChange = { name = it }, placeholder = stringResource(Res.string.livetv_field_name))
+        NuvioInputField(value = portal, onValueChange = { portal = it }, placeholder = stringResource(Res.string.livetv_field_portal))
+        NuvioInputField(value = mac, onValueChange = { mac = it }, placeholder = stringResource(Res.string.livetv_field_mac))
+        NuvioInputField(value = ua, onValueChange = { ua = it }, placeholder = stringResource(Res.string.livetv_field_user_agent))
+        SettingsSwitchRow(
+            title = stringResource(Res.string.livetv_stalker_load_epg),
+            checked = loadGuide,
+            isTablet = false,
+            horizontalPadding = 0.dp,
+            onCheckedChange = { loadGuide = it },
+        )
+        DialogButtons {
+            DialogButton(text = stringResource(Res.string.action_cancel), onClick = onDismiss)
+            DialogButton(
+                text = stringResource(Res.string.action_save),
+                style = DialogButtonStyle.Primary,
+                enabled = portal.isNotBlank() && PlaylistSource.isValidMac(mac),
+                onClick = {
+                    if (existing == null) {
+                        LiveTvRepository.addStalker(name, portal, mac, ua.trim(), loadGuide)
+                    } else {
+                        LiveTvRepository.updatePlaylist(
+                            existing.copy(
+                                name = name.ifBlank { "Stalker portal" },
+                                url = "",
+                                stalkerPortal = portal.trim(),
+                                stalkerMac = mac.trim(),
+                                userAgent = ua.trim(),
+                                useEmbeddedEpg = loadGuide,
+                                importVod = false,
+                                importLive = true,
+                            )
+                        )
+                    }
                     onDismiss()
                 },
             )

@@ -252,14 +252,20 @@ private class NuvioNavigationBarScopeImpl(
                     .padding(vertical = itemVerticalPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(
-                    modifier = Modifier
-                        .size(iconSize)
-                        .then(if (selected) Modifier.gradientMask(palette.accentBrush()) else Modifier),
-                    imageVector = icon,
-                    contentDescription = contentDescription,
-                    tint = if (selected) Color.White else iconColor,
-                )
+                LiquidGlassRoundIconFrame(
+                    modifier = Modifier.size(iconSize + 8.dp),
+                    accent = iconColor,
+                    selected = selected,
+                ) {
+                    Icon(
+                        modifier = Modifier
+                            .size(iconSize)
+                            .then(if (selected) Modifier.gradientMask(palette.accentBrush()) else Modifier),
+                        imageVector = icon,
+                        contentDescription = contentDescription,
+                        tint = if (selected) Color.White else iconColor,
+                    )
+                }
                 NavItemLabel(label = label, labelFraction = labelFraction, iconColor = iconColor, selected = selected, compactSize = compactSize)
             }
         }
@@ -301,14 +307,20 @@ private class NuvioNavigationBarScopeImpl(
                     .padding(vertical = itemVerticalPadding),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Icon(
-                    modifier = Modifier
-                        .size(iconSize)
-                        .then(if (selected) Modifier.gradientMask(palette.accentBrush()) else Modifier),
-                    painter = painterResource(icon),
-                    contentDescription = contentDescription,
-                    tint = if (selected) Color.White else iconColor,
-                )
+                LiquidGlassRoundIconFrame(
+                    modifier = Modifier.size(iconSize + 8.dp),
+                    accent = iconColor,
+                    selected = selected,
+                ) {
+                    Icon(
+                        modifier = Modifier
+                            .size(iconSize)
+                            .then(if (selected) Modifier.gradientMask(palette.accentBrush()) else Modifier),
+                        painter = painterResource(icon),
+                        contentDescription = contentDescription,
+                        tint = if (selected) Color.White else iconColor,
+                    )
+                }
                 NavItemLabel(label = label, labelFraction = labelFraction, iconColor = iconColor, selected = selected, compactSize = compactSize)
             }
         }

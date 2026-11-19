@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.ui.LiquidGlassIconFrame
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.NuvioActionLabel
 import com.nuvio.app.core.ui.NuvioBackButton
@@ -265,30 +266,25 @@ internal fun SettingsNavigationRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (icon != null || iconPainter != null) {
-                Surface(
+                LiquidGlassIconFrame(
                     modifier = Modifier.size(iconSize),
-                    color = tokens.colors.accent.copy(alpha = tokens.opacity.pressed),
                     shape = tokens.shapes.compactCard,
+                    accent = tokens.colors.accent,
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (iconPainter != null) {
-                            androidx.compose.foundation.Image(
-                                painter = iconPainter,
-                                contentDescription = null,
-                                modifier = Modifier.size(if (isTablet) 28.dp else 24.dp),
-                                contentScale = ContentScale.Fit,
-                            )
-                        } else if (icon != null) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = tokens.colors.accent,
-                            )
-                        }
+                    if (iconPainter != null) {
+                        androidx.compose.foundation.Image(
+                            painter = iconPainter,
+                            contentDescription = null,
+                            modifier = Modifier.size(if (isTablet) 28.dp else 24.dp),
+                            contentScale = ContentScale.Fit,
+                        )
+                    } else if (icon != null) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = tokens.colors.accent,
+                            modifier = Modifier.size(if (isTablet) 24.dp else 21.dp),
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.width(if (isTablet) 16.dp else 14.dp))

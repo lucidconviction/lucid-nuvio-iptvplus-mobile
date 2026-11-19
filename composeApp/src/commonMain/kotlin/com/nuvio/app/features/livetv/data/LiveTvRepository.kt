@@ -52,6 +52,7 @@ internal object LiveTvRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
     private val xtream = XtreamClient()
+    private val stalker = StalkerClient()
 
     private val _channels = MutableStateFlow<List<LiveChannel>>(emptyList())
     /** Every channel from every enabled playlist, as the playlists have them. */
@@ -208,15 +209,47 @@ internal object LiveTvRepository {
         return id
     }
 
-    fun updatePlaylist(input: PlaylistSource) {
-        val source = if (input.isXtream) {
-            val fromLink = PlaylistSource.credentialsFromLink(input.xtreamServer)
-            input.copy(
-                xtreamServer = PlaylistSource.cleanXtreamServer(input.xtreamServer),
-                xtreamUsername = input.xtreamUsername.trim().ifBlank { fromLink?.first.orEmpty() },
-                xtreamPassword = input.xtreamPassword.trim().ifBlank { fromLink?.second.orEmpty() }
+    fun addStalker(
+        name: String,
+        portal: String,
+        mac: String,
+        userAgent: String = "",
+        loadGuide: Boolean = true,
+    ): String {
+        val id = newId()
+        prefs.updatePlaylists {
+            it + PlaylistSource(
+                id = id,
+                name = name.ifBlank { "Stalker portal" },
+                url = "",
+                userAgent = userAgent.trim(),
+                useEmbeddedEpg = loadGuide,
+                stalkerPortal = PlaylistSource.cleanStalkerPortal(portal),
+                stalkerMac = PlaylistSource.normalizeMac(mac),
+                importVod = false,
+                importLive = true,
             )
-        } else input
+        }
+        scope.launch { runCatching { refreshInternal(forcePlaylists = false, forceEpg = false, forceIds = setOf(id)) } }
+        return id
+    }
+
+    fun updatePlaylist(input: PlaylistSource) {
+        val source = when {
+            input.isXtream -> {
+                val fromLink = PlaylistSource.credentialsFromLink(input.xtreamServer)
+                input.copy(
+                    xtreamServer = PlaylistSource.cleanXtreamServer(input.xtreamServer),
+                    xtreamUsername = input.xtreamUsername.trim().ifBlank { fromLink?.first.orEmpty() },
+                    xtreamPassword = input.xtreamPassword.trim().ifBlank { fromLink?.second.orEmpty() }
+                )
+            }
+            input.isStalker -> input.copy(
+                stalkerPortal = PlaylistSource.cleanStalkerPortal(input.stalkerPortal),
+                stalkerMac = PlaylistSource.normalizeMac(input.stalkerMac),
+            )
+            else -> input
+        }
         val before = prefs.currentPlaylists().firstOrNull { it.id == source.id }
         prefs.updatePlaylists { list -> list.map { if (it.id == source.id) source else it } }
         if (!source.liveEnabled) {
@@ -226,7 +259,9 @@ internal object LiveTvRepository {
         }
         val credentialsChanged = before == null || before.url != source.url || before.xtreamServer != source.xtreamServer ||
             before.xtreamUsername != source.xtreamUsername || before.xtreamPassword != source.xtreamPassword ||
-            before.userAgent != source.userAgent || before.streamFormat != source.streamFormat
+            before.stalkerPortal != source.stalkerPortal || before.stalkerMac != source.stalkerMac ||
+            before.userAgent != source.userAgent || before.streamFormat != source.streamFormat ||
+            before.useEmbeddedEpg != source.useEmbeddedEpg
         scope.launch {
             runCatching { mutex.withLock { rebuildLocked() } }
             runCatching { refreshInternal(forcePlaylists = false, forceEpg = false, forceIds = if (credentialsChanged) setOf(source.id) else emptySet()) }
@@ -241,6 +276,7 @@ internal object LiveTvRepository {
         prefs.updatePlaylists { list -> list.filterNot { it.id == id } }
         prefs.setPlaylistAccount(id, null)
         LiveTvFiles.delete(LiveTvDirs.PLAYLISTS, "$id.m3u")
+        LiveTvFiles.delete(LiveTvDirs.EPG, epgFile(stalkerEpgFileId(id)))
         embeddedEpgUrls.remove(id)
         dropPlaylistNow(id)
         scope.launch { runCatching { mutex.withLock { rebuildLocked() } } }
@@ -339,11 +375,16 @@ internal object LiveTvRepository {
         for (pl in playlists) {
             val file = playlistFile(pl.id)
             val exists = LiveTvFiles.exists(LiveTvDirs.PLAYLISTS, file)
-            val stale = !exists || now - LiveTvFiles.lastModified(LiveTvDirs.PLAYLISTS, file) > settings.playlistRefreshHours.coerceAtLeast(1) * HOUR
+            val guideFile = epgFile(stalkerEpgFileId(pl.id))
+            val guideStale = pl.isStalker && pl.useEmbeddedEpg &&
+                (!LiveTvFiles.exists(LiveTvDirs.EPG, guideFile) ||
+                    now - LiveTvFiles.lastModified(LiveTvDirs.EPG, guideFile) > settings.epgRefreshHours.coerceAtLeast(1) * HOUR)
+            val stale = guideStale || !exists ||
+                now - LiveTvFiles.lastModified(LiveTvDirs.PLAYLISTS, file) > settings.playlistRefreshHours.coerceAtLeast(1) * HOUR
             if (!(forcePlaylists || stale || pl.id in forceIds)) continue
             // A provider can leave a malformed address behind. Skip that one source and keep
             // updating the rest of the playlists instead of failing the whole refresh.
-            if (!StreamUrls.isUsable(pl.resolvedUrl())) {
+            if (!pl.isStalker && !StreamUrls.isUsable(pl.resolvedUrl())) {
                 prefs.updatePlaylists { list ->
                     list.map { if (it.id == pl.id) it.copy(lastError = INVALID_ADDRESS) else it }
                 }
@@ -351,12 +392,15 @@ internal object LiveTvRepository {
             }
             setStatus(loading = true, message = "Updating playlist \"${pl.name}\"…")
             val result = runCatching {
-                if (pl.isXtream) downloadXtream(pl, file)
-                else LiveTvFiles.download(pl.resolvedUrl(), LiveTvDirs.PLAYLISTS, file, pl.userAgent) { bytes ->
-                    setStatus(loading = true, message = "Downloading playlist \"${pl.name}\" (${sizeLabel(bytes)})…")
+                when {
+                    pl.isStalker -> downloadStalker(pl, file)
+                    pl.isXtream -> downloadXtream(pl, file)
+                    else -> LiveTvFiles.download(pl.resolvedUrl(), LiveTvDirs.PLAYLISTS, file, pl.userAgent) { bytes ->
+                        setStatus(loading = true, message = "Downloading playlist \"${pl.name}\" (${sizeLabel(bytes)})…")
+                    }
                 }
             }
-            if (!pl.isXtream) runCatching { refreshM3uAccount(pl) }
+            if (!pl.isXtream && !pl.isStalker) runCatching { refreshM3uAccount(pl) }
             val err = result.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it else it.message ?: "Download failed" }
             prefs.updatePlaylists { list ->
                 list.map { if (it.id == pl.id) it.copy(lastUpdatedMs = if (err == null) now else it.lastUpdatedMs, lastError = err) else it }
@@ -377,6 +421,8 @@ internal object LiveTvRepository {
             val stale = !exists || now - LiveTvFiles.lastModified(LiveTvDirs.EPG, file) > settings.epgRefreshHours.coerceAtLeast(1) * HOUR
             val forcedHere = target.sourceId in forceIds || target.playlistId in forceIds
             if (!(forceEpg || stale || forcedHere)) continue
+            // A Stalker guide is refreshed together with its playlist; there is no URL to fetch.
+            if (target.localFile) continue
             if (!StreamUrls.isUsable(target.url)) {
                 if (target.sourceId != null) {
                     prefs.updateEpgSources { list ->
@@ -445,6 +491,9 @@ internal object LiveTvRepository {
     private fun playlistFile(id: String) = "$id.m3u"
     private fun epgFile(id: String) = "$id.xml"
 
+    /** The EPG file a Stalker portal writes; prefixed so it cannot collide with a named guide. */
+    private fun stalkerEpgFileId(playlistId: String) = "stalker_$playlistId"
+
     /** An Xtream login: the API's channel list written as an M3U; get.php when the API won't answer. */
     private suspend fun downloadXtream(pl: PlaylistSource, file: String): Boolean {
         val viaApi = runCatching { xtream.livePlaylistM3u(pl) { count -> setStatus(loading = true, message = "Reading \"${pl.name}\": $count channels…") } }
@@ -463,6 +512,35 @@ internal object LiveTvRepository {
         return LiveTvFiles.download(pl.resolvedUrl(), LiveTvDirs.PLAYLISTS, file, pl.userAgent) { bytes ->
             setStatus(loading = true, message = "Downloading playlist \"${pl.name}\" (${sizeLabel(bytes)})…")
         }
+    }
+
+    /**
+     * A Stalker portal: handshake, genre/channel list, written as the same M3U the rest of Live
+     * TV reads. The portal's EPG is written beside it; a guide failure must not fail the
+     * channel import.
+     */
+    private suspend fun downloadStalker(pl: PlaylistSource, file: String): Boolean {
+        val playlist = stalker.livePlaylistM3u(pl) { count ->
+            setStatus(loading = true, message = "Reading \"${pl.name}\": $count channels…")
+        }
+        if (playlist.timezone.isNotBlank() && playlist.timezone != pl.stalkerTimezone) {
+            prefs.updatePlaylists { list ->
+                list.map { if (it.id == pl.id) it.copy(stalkerTimezone = playlist.timezone) else it }
+            }
+        }
+        val wrote = LiveTvFiles.writeText(LiveTvDirs.PLAYLISTS, file, playlist.m3u)
+        if (pl.useEmbeddedEpg) {
+            setStatus(loading = true, message = "Reading the guide from \"${pl.name}\"…")
+            runCatching {
+                stalker.epgXml(pl, playlist) { count ->
+                    setStatus(loading = true, message = "Reading \"${pl.name}\": $count guide entries…")
+                }
+            }.getOrNull()?.takeIf { it.isNotBlank() }?.let { xml ->
+                // Keep the channels even if the guide file cannot be written.
+                runCatching { LiveTvFiles.writeText(LiveTvDirs.EPG, epgFile(stalkerEpgFileId(pl.id)), xml) }
+            }
+        }
+        return wrote
     }
 
     /** M3U links from Xtream providers (get.php with a login): the account's expiry and status. */
@@ -562,6 +640,8 @@ internal object LiveTvRepository {
         val url: String,
         val userAgent: String,
         val playlistId: String? = null,
+        /** Already written by the source itself (a Stalker portal's guide): never download it. */
+        val localFile: Boolean = false,
     )
 
     private fun hostOf(u: String): String? = runCatching { Url(PlaylistSource.tidyLink(u)).host.lowercase() }.getOrNull()
@@ -578,6 +658,19 @@ internal object LiveTvRepository {
             targets += EpgTarget(src.id, src.id, src.name, src.url, ua)
         }
         for (pl in allPlaylists.filter { it.liveEnabled && it.useEmbeddedEpg }) {
+            if (pl.isStalker) {
+                // The portal's guide is written next to its playlist, not downloaded from a URL.
+                targets += EpgTarget(
+                    fileId = stalkerEpgFileId(pl.id),
+                    sourceId = null,
+                    name = "${pl.name} (portal)",
+                    url = "",
+                    userAgent = pl.userAgent,
+                    playlistId = pl.id,
+                    localFile = true,
+                )
+                continue
+            }
             val urls = mutableListOf<String>()
             pl.xtreamEpgUrl()?.let { urls += it }
             urls += embeddedEpgUrls[pl.id].orEmpty()

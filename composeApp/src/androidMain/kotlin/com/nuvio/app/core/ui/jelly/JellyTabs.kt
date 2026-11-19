@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nuvio.app.core.ui.FloatingNavigationItem
+import com.nuvio.app.core.ui.LiquidGlassRoundIconFrame
 import com.nuvio.app.core.ui.accentBrush
 import com.nuvio.app.core.ui.gradientMask
 import com.nuvio.app.core.ui.nuvio
@@ -75,10 +76,18 @@ internal fun JellyTabRow(
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(Modifier.size(iconSize).graphicsLayer { translationY = 2.dp.toPx() * labelFraction }) {
-                        when {
-                            item.icon != null -> Icon(item.icon, null, iconModifier, tint = iconTint)
-                            item.drawable != null -> Icon(painterResource(item.drawable), null, iconModifier, tint = iconTint)
+                    LiquidGlassRoundIconFrame(
+                        modifier = Modifier
+                            .size(iconSize + 8.dp)
+                            .graphicsLayer { translationY = 2.dp.toPx() * labelFraction },
+                        accent = color,
+                        selected = active,
+                    ) {
+                        Box(Modifier.size(iconSize)) {
+                            when {
+                                item.icon != null -> Icon(item.icon, null, iconModifier, tint = iconTint)
+                                item.drawable != null -> Icon(painterResource(item.drawable), null, iconModifier, tint = iconTint)
+                            }
                         }
                     }
                     Box(Modifier.height(labelHeight * labelFraction).fillMaxWidth().clipToBounds().alpha(labelFraction)) {

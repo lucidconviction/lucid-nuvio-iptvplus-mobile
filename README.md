@@ -36,6 +36,7 @@
 - A full TV guide with channels, now/next programmes and a live time line.
 - Multiple M3U playlists and XMLTV guides, merged into one guide.
 - Xtream logins, including your provider's movies and series.
+- Stalker/MAG portals (portal URL + MAC), with genres, channel logos and the portal's guide.
 - Favourites, hidden groups, channel reordering and custom channel logos.
 - Catch-up, reminders and recordings.
 - Quick Channels for fast switching without leaving the player.

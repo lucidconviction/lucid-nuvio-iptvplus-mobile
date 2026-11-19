@@ -100,7 +100,8 @@ internal object LiveTvBackup {
                         v = LiveTvCodec.encodePlaylists(LiveTvCodec.decodePlaylists(v).map { r ->
                             localPlaylists[r.id]?.let { l ->
                                 if (l.url != r.url || l.xtreamServer != r.xtreamServer || l.xtreamUsername != r.xtreamUsername ||
-                                    l.xtreamPassword != r.xtreamPassword || l.userAgent != r.userAgent || l.streamFormat != r.streamFormat
+                                    l.xtreamPassword != r.xtreamPassword || l.stalkerPortal != r.stalkerPortal ||
+                                    l.stalkerMac != r.stalkerMac || l.userAgent != r.userAgent || l.streamFormat != r.streamFormat
                                 ) changed += r.id
                                 r.copy(
                                     lastUpdatedMs = l.lastUpdatedMs, lastError = l.lastError, channelCount = l.channelCount,

@@ -356,6 +356,9 @@ internal object LiveTvCodec {
                     xtreamServer = o.optString("xtreamServer"),
                     xtreamUsername = o.optString("xtreamUsername"),
                     xtreamPassword = o.optString("xtreamPassword"),
+                    stalkerPortal = o.optString("stalkerPortal"),
+                    stalkerMac = o.optString("stalkerMac"),
+                    stalkerTimezone = o.optString("stalkerTimezone"),
                     lastUpdatedMs = o.optLong("lastUpdatedMs"),
                     lastError = o.optString("lastError").ifBlank { null },
                     channelCount = o.optInt("channelCount"),
@@ -379,6 +382,8 @@ internal object LiveTvCodec {
                 put("useEmbeddedEpg", s.useEmbeddedEpg)
                 put("xtreamServer", s.xtreamServer); put("xtreamUsername", s.xtreamUsername)
                 put("xtreamPassword", s.xtreamPassword)
+                put("stalkerPortal", s.stalkerPortal); put("stalkerMac", s.stalkerMac)
+                put("stalkerTimezone", s.stalkerTimezone)
                 put("lastUpdatedMs", s.lastUpdatedMs); put("lastError", s.lastError ?: "")
                 put("channelCount", s.channelCount)
                 put("importVod", s.importVod)

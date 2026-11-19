@@ -181,11 +181,17 @@ fun NuvioScreenHeader(
             ) {
                 if (onBack != null) {
                     IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = stringResource(Res.string.action_back),
-                            tint = tokens.colors.textPrimary,
-                        )
+                        LiquidGlassRoundIconFrame(
+                            modifier = Modifier.size(NuvioTokens.Space.s36),
+                            accent = tokens.colors.textPrimary,
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = stringResource(Res.string.action_back),
+                                tint = tokens.colors.textPrimary,
+                                modifier = Modifier.size(NuvioTokens.Icon.sm),
+                            )
+                        }
                     }
                 }
                 AnimatedContent(
@@ -251,20 +257,21 @@ fun NuvioIconActionButton(
     tint: Color = MaterialTheme.nuvio.colors.textPrimary,
     onClick: () -> Unit = {},
 ) {
-    val tokens = MaterialTheme.nuvio
     IconButton(
-        modifier = modifier
-            .background(
-                color = tokens.colors.background.copy(alpha = 0.001f),
-                shape = tokens.shapes.avatar,
-            ),
+        modifier = modifier,
         onClick = onClick,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = tint,
-        )
+        LiquidGlassRoundIconFrame(
+            modifier = Modifier.size(NuvioTokens.Space.s36),
+            accent = tint,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = tint,
+                modifier = Modifier.size(NuvioTokens.Icon.sm),
+            )
+        }
     }
 }
 
@@ -281,13 +288,13 @@ fun NuvioBackButton(
 ) {
     if (LocalUseNativeNavigation.current && !LocalNativeNavigationBarHidden.current) return
 
-    Box(
+    LiquidGlassIconFrame(
         modifier = modifier
             .size(buttonSize)
-            .clip(shape)
-            .background(containerColor)
+            .background(containerColor.copy(alpha = 0.35f), shape)
             .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+        shape = shape,
+        accent = contentColor,
     ) {
         Icon(
             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
