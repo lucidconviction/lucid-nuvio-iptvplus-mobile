@@ -129,6 +129,12 @@ internal class AndroidWebBrowserController(
     private var rendererRestarts = 0
     private var pendingMainFrameUrl: String? = null
     private var allowNextMainFrame = false
+    /** Whether the popup now on screen was opened by an actual tap. */
+    @Volatile private var popupFromGesture = false
+    /** Distinct foreign hosts crossed without a gesture in one automatic chain. */
+    @Volatile private var redirectChainHost = ""
+    @Volatile private var redirectChainCount = 0
+    @Volatile private var redirectChainAt = 0L
     private var lastChoiceAt = 0L
     private var lastChoiceUrl: String? = null
     private var customView: View? = null
@@ -157,9 +163,30 @@ internal class AndroidWebBrowserController(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-    private val chromeMobileUa =
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+    /**
+     * The device's own WebView user agent, without the WebView-only markers.
+     *
+     * This used to be a hardcoded "Pixel 8 / Chrome 124" string. Sites feature-
+     * detect from the UA, and serving them a year-old Chromium while the WebView
+     * is actually current is how menus and players set themselves up for APIs
+     * the reported build never had — Dailymotion's drawer stayed in its closed
+     * DOM state (height 0) while the page behind it dimmed. Hikari uses the
+     * stock UA for the same reason; only an explicit desktop/iPhone/custom
+     * choice overrides it.
+     */
+    private val chromeMobileUa: String by lazy {
+        val stock = runCatching {
+            android.webkit.WebSettings.getDefaultUserAgent(appContext)
+        }.getOrDefault(
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        )
+        stock
+            .replace("; wv", "")
+            .replace(" Version/4.0", "")
+            .replace("  ", " ")
+            .trim()
+    }
 
     private val iphoneUa =
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) " +
@@ -224,7 +251,46 @@ internal class AndroidWebBrowserController(
         configure(view)
         val url = pendingUrl ?: lastLoadedUrl.takeIf { it.isNotBlank() }
         pendingUrl = null
-        if (!url.isNullOrBlank()) view.loadUrl(url)
+        if (!url.isNullOrBlank()) loadWhenMeasured(view, url)
+    }
+
+    /**
+     * Loads [url] once the WebView has a real size.
+     *
+     * Loading during composition happens before the first layout, and a WebView
+     * laid out at 0 height resolves every CSS `vh`/`dvh` to **0 for the life of
+     * the page**. The page still draws (the layout viewport is measured later),
+     * so the symptom is not a blank page: it is site UI that computes its own
+     * height from the viewport — Dailymotion's menu drawer opened with
+     * `height: 0px`, dimming the page while the menu never appeared. Chrome on
+     * the same phone, given a measured viewport, shows the menu normally.
+     */
+    private fun loadWhenMeasured(view: WebView, url: String) {
+        if (view.width > 0 && view.height > 0) {
+            view.loadUrl(url)
+            return
+        }
+        pendingUrl = url
+        view.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View,
+                left: Int,
+                top: Int,
+                right: Int,
+                bottom: Int,
+                oldLeft: Int,
+                oldTop: Int,
+                oldRight: Int,
+                oldBottom: Int,
+            ) {
+                if (v.width <= 0 || v.height <= 0) return
+                v.removeOnLayoutChangeListener(this)
+                if (v !== webView) return
+                val queued = pendingUrl
+                pendingUrl = null
+                if (!queued.isNullOrBlank()) v.loadUrl(queued)
+            }
+        })
     }
 
     /** Compose removed this WebView (renderer restart or leaving the screen). */
@@ -262,7 +328,7 @@ internal class AndroidWebBrowserController(
         if (view == null) {
             pendingUrl = normalized
         } else {
-            view.loadUrl(normalized)
+            loadWhenMeasured(view, normalized)
         }
     }
 
@@ -582,8 +648,14 @@ internal class AndroidWebBrowserController(
         settings.mediaPlaybackRequiresUserGesture = false
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.setSupportMultipleWindows(true)
-        settings.useWideViewPort = true
-        settings.loadWithOverviewMode = true
+        // Wide viewport mode gives Chromium a 980-px-wide layout box whose
+        // HEIGHT is not the view; on this WebView every CSS vh/dvh unit
+        // resolved to 0 while 100vw stayed correct. Sites that size a drawer
+        // or player with vh then computed height 0 — Dailymotion's menu opened
+        // into an invisible 0px box while its dim backdrop covered the page.
+        // Hikari leaves both at the WebView defaults; so do we.
+        settings.useWideViewPort = false
+        settings.loadWithOverviewMode = false
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
@@ -591,7 +663,12 @@ internal class AndroidWebBrowserController(
         settings.allowContentAccess = true
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.cacheMode = WebSettings.LOAD_DEFAULT
-        settings.offscreenPreRaster = true
+        // Deliberately NOT offscreenPreRaster: it pre-rasterises a band around
+        // the viewport, and on this WebView that band rendered page content but
+        // dropped fixed-position layers — the site's own menu drawer and the
+        // player's control overlay existed in the DOM (visible, z-index 200)
+        // and never appeared on screen. Hikari never enables it.
+        settings.offscreenPreRaster = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             runCatching { settings.safeBrowsingEnabled = true }
         }
@@ -792,8 +869,13 @@ internal class AndroidWebBrowserController(
                         return null
                     }
                     if (shouldBlockMainFrame(url, request.hasGesture())) {
-                        val dest = adGateDestination(url) ?: return blockedResponse()
-                        noteShield("redirect", "Followed the link behind ${hostOf(url)}.", hostOf(url).orEmpty())
+                        // A main frame is never answered with an empty body: that is
+                        // the white page users read as "the app broke". A gate with a
+                        // destination is followed; anything else gets a way back.
+                        val dest = adGateDestination(url)
+                        if (dest != null) {
+                            noteShield("redirect", "Followed the link behind ${hostOf(url)}.", hostOf(url).orEmpty())
+                        }
                         return adGatePage(dest)
                     }
                     return null
@@ -872,7 +954,14 @@ internal class AndroidWebBrowserController(
                         return blockedResponse()
                     }
                 }
-                return null
+                // Streams are routinely served from a CDN that sends no CORS
+                // headers, while the page's player fetches them with XHR (HLS
+                // via MSE does). Blink then refuses the response and the player
+                // sits on "0 seconds of 0 seconds" — the reported ppv.st player
+                // failure. Re-fetching cross-origin XHR/media here and returning
+                // it with CORS headers is the only place an embedded WebView can
+                // bridge that gap.
+                return corsProxyResponse(request)
             }
         }
         view.webChromeClient = object : WebChromeClient() {
@@ -895,19 +984,26 @@ internal class AndroidWebBrowserController(
                 resultMsg: Message?,
             ): Boolean {
                 // Some sites open the player from an async click handler, so the WebView does
-                // not always credit a gesture. A tap in the last 10 s still counts as the user
-                // asking for the window; popunders that fire on page load do not.
-                val recentGesture = isUserGesture || recentGesture(10_000L)
-                if (this@AndroidWebBrowserController.settings.popupProtection && !recentGesture) {
+                // not always credit a gesture. A tap in the last 3 s still counts as the user
+                // asking for the window; popunders that fire seconds later do not.
+                val tapped = isUserGesture || recentGesture(3_000L)
+                if (this@AndroidWebBrowserController.settings.popupProtection && !tapped) {
                     noteShield("popup", "Blocked a popup that was not opened by a tap.", currentPageHost().orEmpty())
                     showBlockedToast("Blocked an automatic popup")
                     return false
                 }
-                if (videoPlaying && !recentGesture) {
+                // One popup at a time. Ad scripts answer a single tap with a storm of
+                // windows; replacing the open one let the storm keep the screen busy.
+                if (popupDialog != null) {
+                    noteShield("popup", "Blocked an extra popup while one is open.", currentPageHost().orEmpty())
+                    return false
+                }
+                if (videoPlaying && !isUserGesture && !recentGesture(1_500L)) {
                     noteShield("popup", "Blocked an ad popup during playback.", currentPageHost().orEmpty())
                     showBlockedToast("Blocked an ad popup")
                     return false
                 }
+                popupFromGesture = tapped
                 val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
                 val activity = appContext.findActivity()
                 if (activity == null) {
@@ -1235,6 +1331,119 @@ internal class AndroidWebBrowserController(
         }
     }
 
+    /**
+     * Re-fetches a cross-origin XHR/media request and returns it with CORS
+     * headers, or null to let Blink handle it normally.
+     *
+     * A WebView has no switch that relaxes CORS, and a page cannot read a
+     * stream host that does not send `Access-Control-Allow-Origin` — HLS over
+     * MSE is always read, so the player fails even though the URL is public.
+     * Only requests that carry an `Origin` and are cross-site are touched;
+     * same-site traffic, documents, styles, fonts and scripts are untouched.
+     * The body is streamed, so a multi-megabyte segment is not buffered in
+     * memory. A failed proxy fetch returns null: the original request then
+     * behaves exactly as before rather than becoming a new failure.
+     */
+    private fun corsProxyResponse(request: WebResourceRequest): WebResourceResponse? {
+        if (request.isForMainFrame) return null
+        // Chromium omits Origin on same-process fetches often enough that the
+        // main page's own API call (ppv.st -> mumbai.television.st/api/event)
+        // arrived without it. A missing Origin is treated as an anonymous
+        // request: `*` is exactly the grant such a fetch needs.
+        val origin = request.requestHeaders?.entries
+            ?.firstOrNull { it.key.equals("Origin", ignoreCase = true) }?.value
+            ?.takeIf { it.isNotBlank() }
+        val host = request.url.host ?: return null
+        if (origin != null) {
+            val originHost = runCatching { java.net.URI(origin).host }.getOrNull() ?: return null
+            if (isSameSite(host, originHost)) return null
+        }
+        val type = WebAdBlocker.requestType(request)
+        if (type != "xmlhttprequest" && type != "media" && type != "other") return null
+        val method = request.method.uppercase()
+        // A request body is not available here, so POST/PUT cannot be replayed
+        // faithfully — and replaying one without its body would be worse than
+        // the CORS refusal.
+        if (method != "GET" && method != "HEAD" && method != "OPTIONS") return null
+
+        val allowedOrigin = origin ?: "*"
+        val allowHeaders = mapOf(
+            "Access-Control-Allow-Origin" to allowedOrigin,
+            "Access-Control-Allow-Credentials" to if (origin == null) "false" else "true",
+            "Access-Control-Allow-Methods" to "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers" to (
+                request.requestHeaders?.keys?.joinToString(", ").orEmpty().ifBlank { "*" }
+                ),
+            "Access-Control-Expose-Headers" to "*",
+            "Access-Control-Max-Age" to "600",
+            "Vary" to "Origin",
+        )
+        if (method == "OPTIONS") {
+            return WebResourceResponse(
+                "text/plain",
+                "utf-8",
+                204,
+                "No Content",
+                allowHeaders,
+                ByteArrayInputStream(ByteArray(0)),
+            )
+        }
+        val url = request.url.toString()
+        return runCatching {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = method
+                instanceFollowRedirects = true
+                connectTimeout = 15_000
+                readTimeout = 30_000
+                // The WebView would hand back gzip; keep the bytes untouched so
+                // Content-Length/Range stay truthful.
+                setRequestProperty("Accept-Encoding", "identity")
+                request.requestHeaders?.forEach { (key, value) ->
+                    if (key.equals("Origin", true) || key.equals("Referer", true) ||
+                        key.equals("User-Agent", true) || key.startsWith("Accept", true) ||
+                        key.equals("Range", true) || key.equals("If-Range", true)
+                    ) {
+                        setRequestProperty(key, value)
+                    }
+                }
+                // The embed player's XHR often omits Referer; some stream CDNs
+                // reject a request without it (403 from nginx) even when the
+                // token is valid. The page the user is on is the honest one.
+                if (getRequestProperty("Referer") == null && pageUrl.isNotBlank()) {
+                    setRequestProperty("Referer", pageUrl)
+                }
+                CookieManager.getInstance().getCookie(url)?.let { setRequestProperty("Cookie", it) }
+            }
+            val code = connection.responseCode
+            android.util.Log.d(
+                "NuvioWebProxy",
+                "proxy " + code + " " + host + " " + mimeShort(url) + " (origin=" + allowedOrigin + ")",
+            )
+            if (code !in 200..299) return@runCatching null
+            val body = connection.inputStream
+            val mime = connection.contentType?.substringBefore(';')?.trim()
+                ?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
+            val headers = LinkedHashMap(allowHeaders)
+            if (connection.contentLengthLong >= 0) {
+                headers["Content-Length"] = connection.contentLengthLong.toString()
+            }
+            connection.getHeaderField("Content-Range")?.let { headers["Content-Range"] = it }
+            connection.getHeaderField("Accept-Ranges")?.let { headers["Accept-Ranges"] = it }
+            connection.getHeaderField("Content-Encoding")?.let { headers["Content-Encoding"] = it }
+            WebResourceResponse(
+                mime,
+                "utf-8",
+                code,
+                connection.responseMessage ?: "OK",
+                headers,
+                body,
+            )
+        }.getOrNull()
+    }
+
+    private fun mimeShort(url: String): String =
+        url.substringAfterLast('/').substringBefore('?').take(60)
+
     private fun createPopupWebView(activity: Activity): WebView =
         WebView(activity).apply {
             settings.javaScriptEnabled = true
@@ -1264,19 +1473,37 @@ internal class AndroidWebBrowserController(
                 override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(v, url, favicon)
                     val target = url.orEmpty()
-                    if (target.startsWith("http://") || target.startsWith("https://")) {
-                        val host = hostOf(target).orEmpty()
-                        if (isBlockedPopupHost(host) ||
+                    // The blank window an ad script opens before writing into it is not
+                    // itself an ad. Judging it by its first real navigation is what keeps
+                    // real popup players working.
+                    if (target == "about:blank" || target.startsWith("javascript:")) return
+                    if (!target.startsWith("http://") && !target.startsWith("https://")) {
+                        // A popup to an app scheme is a hand-off the user did not ask for.
+                        if (popupFromGesture) return
+                        dismissPopup()
+                        return
+                    }
+                    val host = hostOf(target).orEmpty()
+                    val opener = currentPageHost()
+                    val sameSite = opener != null && host.isNotBlank() && isSameSite(host, opener)
+                    val adTarget = !sameSite && runCatching {
+                        WebAdBlocker.isBlocked(target, includeExtra = true) ||
                             WebAdBlocker.matchesPatternUrl(
                                 target,
-                                currentPageHost(),
+                                opener,
                                 type = "document",
-                                includeFilterRules = false,
+                                includeFilterRules = true,
                             )
-                        ) {
-                            noteShield("popup", "Blocked ad popup from $host.", host)
-                            dismissPopup()
-                        }
+                    }.getOrDefault(false)
+                    // A player's play button is the most common popup trigger on
+                    // streaming sites, and the window it opens is almost never
+                    // same-site. With protection on, only the page's own site (or
+                    // a host the user allowed) may own a popup; a cross-site one is
+                    // closed even when the tap that opened it was real.
+                    val crossSite = !sameSite && !isAllowedHost(host)
+                    if (isBlockedPopupHost(host) || adTarget || (this@AndroidWebBrowserController.settings.popupProtection && crossSite)) {
+                        noteShield("popup", "Blocked popup to $host.", host)
+                        dismissPopup()
                     }
                 }
 
@@ -1928,15 +2155,53 @@ internal class AndroidWebBrowserController(
             noteShield("redirect", "Blocked redirect to $host.", host)
             return true
         }
+        // A real tap is the user choosing this navigation, and it resets the chain.
+        val gesture = hasGesture || recentGesture(3_000L)
+        if (gesture) {
+            redirectChainCount = 0
+            redirectChainHost = ""
+        }
         // A foreign redirect while a video is already playing is an ad hijack.
-        if (videoPlaying && !hasGesture && !recentGesture()) {
+        if (videoPlaying && !gesture) {
             noteShield("redirect", "Blocked an ad redirect to $host during playback.", host)
             return true
         }
-        // Real taps and ordinary automatic redirects (http -> https, login, mirrors, CDNs) are
-        // normal navigation. Blocking them behind a prompt left users on an empty page, which
-        // looked like the site was broken. Only the user's block list and playback hijacks are
-        // stopped; everything else fails open.
+        if (!gesture) {
+            // An automatic navigation to a host the ad lists know is a redirect
+            // hijack, not a page the user asked for. A click-tracker's destination
+            // is followed by the caller when it carries one.
+            val adNavigation = runCatching {
+                WebAdBlocker.isBlocked(url, includeExtra = true) ||
+                    WebAdBlocker.matchesPatternUrl(
+                        url,
+                        current,
+                        type = "document",
+                        includeFilterRules = true,
+                    )
+            }.getOrDefault(false)
+            if (adNavigation) {
+                noteShield("redirect", "Blocked an ad redirect to $host.", host)
+                return true
+            }
+            // A short chain of ordinary redirects (http -> https, a login hop, a
+            // mirror) is normal. Three distinct foreign hosts inside eight
+            // seconds is a hijack: real redirects do not tour ad domains.
+            val now = SystemClock.uptimeMillis()
+            if (now - redirectChainAt > 8_000L || host == redirectChainHost) {
+                redirectChainHost = host
+                redirectChainCount = 1
+            } else {
+                redirectChainHost = host
+                redirectChainCount += 1
+            }
+            redirectChainAt = now
+            if (redirectChainCount >= 3) {
+                noteShield("redirect", "Blocked a redirect chain through $host.", host)
+                return true
+            }
+        }
+        // Everything else fails open: a page that cannot redirect at all looks
+        // broken, and the gates above already cover the hijacks that matter.
         return false
     }
 
@@ -3065,7 +3330,19 @@ actual fun WebBrowserHost(
         AndroidView(
             factory = { viewContext ->
                 runCatching {
-                    WebView(viewContext).also { view -> android?.attach(view) }
+                    WebView(viewContext).apply {
+                        // Compose creates the native view inside its layout pass; an
+                        // implicit WRAP_CONTENT would let the WebView measure at 0
+                        // height first, and Chromium keeps that 0 as the viewport
+                        // size for CSS vh/dvh (100vh === 0, (min-height: 500px)
+                        // never matches). An explicit MATCH_PARENT gives it the real
+                        // size before the page is loaded.
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                        android?.attach(this)
+                    }
                 }.getOrElse { error ->
                     android?.reportWebViewUnavailable(error)
                     FrameLayout(viewContext)
