@@ -1180,6 +1180,8 @@
     <string name="settings_playback_engine_libmpv_description">Use libmpv for Android playback.</string>
     <string name="settings_playback_auto_switch_engine_on_error">Auto-switch engine on playback error</string>
     <string name="settings_playback_auto_switch_engine_on_error_description">Switch to the other playback engine when playback fails, no matter which engine is selected.</string>
+    <string name="settings_playback_auto_rotate_player_landscape">Auto-rotate player to landscape</string>
+    <string name="settings_playback_auto_rotate_player_landscape_description">Starts the player in landscape when a stream opens, and returns to the previous orientation when you leave.</string>
     <string name="settings_playback_libmpv_video_output">libmpv Renderer</string>
     <string name="settings_playback_libmpv_video_output_dialog">libmpv Renderer</string>
     <string name="settings_playback_libmpv_hardware_decoding">libmpv Hardware Decoding</string>

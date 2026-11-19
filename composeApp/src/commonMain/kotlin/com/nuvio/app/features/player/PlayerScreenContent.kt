@@ -71,6 +71,11 @@ internal fun PlayerScreenContent(args: PlayerScreenArgs) {
     val addonSubtitles by SubtitleRepository.addonSubtitles.collectAsStateWithLifecycle()
     val isLoadingAddonSubtitles by SubtitleRepository.isLoading.collectAsStateWithLifecycle()
 
+    // Before the player surface: an orientation change inside the first player
+    // frame would resize the video twice. The effect restores the previous
+    // orientation when the player leaves.
+    ApplyPlayerLandscape(playerSettingsUiState.autoRotatePlayerToLandscape)
+
     val runtime = remember { PlayerScreenRuntime(args) }
     runtime.args = args
 

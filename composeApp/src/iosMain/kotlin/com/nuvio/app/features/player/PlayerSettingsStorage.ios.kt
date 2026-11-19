@@ -52,6 +52,7 @@ actual object PlayerSettingsStorage {
     private const val streamReuseLastLinkCacheHoursKey = "stream_reuse_last_link_cache_hours"
     private const val androidPlaybackEngineKey = "android_playback_engine"
     private const val autoSwitchPlaybackEngineOnErrorKey = "auto_switch_playback_engine_on_error"
+    private const val autoRotatePlayerToLandscapeKey = "auto_rotate_player_to_landscape"
     private const val androidLibmpvVideoOutputKey = "android_libmpv_video_output"
     private const val androidLibmpvHardwareDecodingEnabledKey = "android_libmpv_hardware_decoding_enabled"
     private const val androidLibmpvYuv420pEnabledKey = "android_libmpv_yuv420p_enabled"
@@ -142,6 +143,7 @@ actual object PlayerSettingsStorage {
         streamReuseLastLinkCacheHoursKey,
         androidPlaybackEngineKey,
         autoSwitchPlaybackEngineOnErrorKey,
+        autoRotatePlayerToLandscapeKey,
         androidLibmpvVideoOutputKey,
         androidLibmpvHardwareDecodingEnabledKey,
         androidLibmpvYuv420pEnabledKey,
@@ -590,8 +592,14 @@ actual object PlayerSettingsStorage {
 
     actual fun loadAutoSwitchPlaybackEngineOnError(): Boolean? = loadBoolean(autoSwitchPlaybackEngineOnErrorKey)
 
+    actual fun loadAutoRotatePlayerToLandscape(): Boolean? = loadBoolean(autoRotatePlayerToLandscapeKey)
+
     actual fun saveAutoSwitchPlaybackEngineOnError(enabled: Boolean) {
         saveBoolean(autoSwitchPlaybackEngineOnErrorKey, enabled)
+    }
+
+    actual fun saveAutoRotatePlayerToLandscape(enabled: Boolean) {
+        saveBoolean(autoRotatePlayerToLandscapeKey, enabled)
     }
 
     actual fun loadAndroidLibmpvVideoOutput(): String? =
@@ -1153,6 +1161,7 @@ actual object PlayerSettingsStorage {
         loadAndroidPlaybackEngine()?.let { put(androidPlaybackEngineKey, encodeSyncString(it)) }
         loadAutoSwitchPlaybackEngineOnError()?.let {
             put(autoSwitchPlaybackEngineOnErrorKey, encodeSyncBoolean(it))
+            put(autoRotatePlayerToLandscapeKey, encodeSyncBoolean(it))
         }
         loadAndroidLibmpvVideoOutput()?.let { put(androidLibmpvVideoOutputKey, encodeSyncString(it)) }
         loadAndroidLibmpvHardwareDecodingEnabled()?.let {
@@ -1238,6 +1247,7 @@ actual object PlayerSettingsStorage {
         payload.decodeSyncInt(streamReuseLastLinkCacheHoursKey)?.let(::saveStreamReuseLastLinkCacheHours)
         payload.decodeSyncString(androidPlaybackEngineKey)?.let(::saveAndroidPlaybackEngine)
         payload.decodeSyncBoolean(autoSwitchPlaybackEngineOnErrorKey)?.let(::saveAutoSwitchPlaybackEngineOnError)
+        payload.decodeSyncBoolean(autoRotatePlayerToLandscapeKey)?.let(::saveAutoRotatePlayerToLandscape)
         payload.decodeSyncString(androidLibmpvVideoOutputKey)?.let(::saveAndroidLibmpvVideoOutput)
         payload.decodeSyncBoolean(androidLibmpvHardwareDecodingEnabledKey)
             ?.let(::saveAndroidLibmpvHardwareDecodingEnabled)

@@ -13,6 +13,8 @@ internal expect object PlayerSettingsStorage {
     fun saveShowLoadingOverlay(enabled: Boolean)
     fun loadAutoSwitchPlaybackEngineOnError(): Boolean?
     fun saveAutoSwitchPlaybackEngineOnError(enabled: Boolean)
+    fun loadAutoRotatePlayerToLandscape(): Boolean?
+    fun saveAutoRotatePlayerToLandscape(enabled: Boolean)
     fun loadShowPlayerLoadingStatus(): Boolean?
     fun saveShowPlayerLoadingStatus(enabled: Boolean)
     fun loadPauseOverlayEnabled(): Boolean?

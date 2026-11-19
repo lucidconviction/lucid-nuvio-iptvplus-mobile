@@ -109,6 +109,15 @@ internal fun PlaybackPlayerSettings(
                         isTablet = isTablet,
                         onCheckedChange = PlayerSettingsRepository::setAutoSwitchPlaybackEngineOnError,
                     )
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_playback_auto_rotate_player_landscape),
+                        description = stringResource(Res.string.settings_playback_auto_rotate_player_landscape_description),
+                        checked = settings.autoRotatePlayerToLandscape,
+                        enabled = !settings.externalPlayerEnabled,
+                        isTablet = isTablet,
+                        onCheckedChange = PlayerSettingsRepository::setAutoRotatePlayerToLandscape,
+                    )
                 }
             }
         }

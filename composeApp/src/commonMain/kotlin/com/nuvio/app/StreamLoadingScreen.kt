@@ -1,7 +1,11 @@
 package com.nuvio.app
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.features.player.ApplyPlayerLandscape
+import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.OpeningOverlay
 import com.nuvio.app.features.player.subtitleLoadingStatusMessage
 import com.nuvio.app.features.streams.StreamLaunch
@@ -24,6 +28,10 @@ internal fun StreamLoadingScreen(
     onBack: () -> Unit,
     preparingPlayback: Boolean = false,
 ) {
+    val playerSettings by PlayerSettingsRepository.uiState.collectAsStateWithLifecycle()
+    // "Starting a stream" includes the sourcing overlay; rotating only once the
+    // player appears makes the wait feel like a failed launch.
+    ApplyPlayerLandscape(playerSettings.autoRotatePlayerToLandscape)
     val message = when {
         !showStatus -> null
         resolvingDebridStream -> stringResource(Res.string.debrid_resolving_stream)
