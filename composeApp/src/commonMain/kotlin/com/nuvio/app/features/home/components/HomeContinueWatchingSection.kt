@@ -61,6 +61,7 @@ import com.nuvio.app.core.ui.landscapePosterHeightForWidth
 import com.nuvio.app.core.ui.landscapePosterWidth
 import com.nuvio.app.core.ui.posterCardClickable
 import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
+import com.nuvio.app.core.ui.scrollReveal
 import com.nuvio.app.features.cloud.CloudLibraryContentType
 import com.nuvio.app.features.cloud.cloudLibraryDisplayArtworkUrl
 import com.nuvio.app.features.tracking.WatchProgressSource
@@ -728,6 +729,7 @@ private fun ContinueWatchingCard(
 
     Box(
         modifier = Modifier
+            .scrollReveal(key = "${item.parentMetaId}:${item.videoId}")
             .width(cardMetrics.width)
             .aspectRatio(PosterLandscapeAspectRatio)
             .clip(RoundedCornerShape(cardMetrics.cornerRadius))
@@ -914,6 +916,7 @@ private fun ContinueWatchingWideCard(
     val cornerRadius = rememberPosterCardStyleUiState().cornerRadiusDp.dp
     Row(
         modifier = Modifier
+            .scrollReveal(key = "${item.parentMetaId}:${item.videoId}")
             .width(layout.wideCardWidth)
             .height(layout.wideCardHeight)
             .clip(RoundedCornerShape(cornerRadius))
@@ -1050,7 +1053,9 @@ private fun ContinueWatchingPosterCard(
     val cornerRadius = rememberPosterCardStyleUiState().cornerRadiusDp.dp
     val imageUrl = item.continueWatchingPosterArtworkUrl(useEpisodeThumbnails)
     Column(
-        modifier = Modifier.width(layout.posterCardWidth),
+        modifier = Modifier
+            .scrollReveal(key = "${item.parentMetaId}:${item.videoId}")
+            .width(layout.posterCardWidth),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Box(

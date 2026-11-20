@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -54,6 +55,8 @@ import com.nuvio.app.features.livetv.model.PlaylistAccount
 import com.nuvio.app.features.livetv.model.PlaylistSource
 import com.nuvio.app.features.livetv.ondemand.OnDemandRepository
 import com.nuvio.app.features.livetv.ondemand.VodSort
+import com.nuvio.app.features.livetv.portal.PortalGeneratorDialog
+import com.nuvio.app.features.livetv.portal.PortalGeneratorPlatform
 import com.nuvio.app.features.livetv.record.LiveTvRecorder
 import com.nuvio.app.features.livetv.record.RecordingPlatform
 import com.nuvio.app.features.livetv.record.RecordingRules
@@ -94,6 +97,8 @@ import nuvio.composeapp.generated.resources.livetv_add_xtream
 import nuvio.composeapp.generated.resources.livetv_add_xtream_description
 import nuvio.composeapp.generated.resources.livetv_add_stalker
 import nuvio.composeapp.generated.resources.livetv_add_stalker_description
+import nuvio.composeapp.generated.resources.livetv_generate_portals
+import nuvio.composeapp.generated.resources.livetv_generate_portals_description
 import nuvio.composeapp.generated.resources.livetv_field_portal
 import nuvio.composeapp.generated.resources.livetv_field_mac
 import nuvio.composeapp.generated.resources.livetv_stalker_load_epg
@@ -302,6 +307,7 @@ private sealed interface LiveDialog {
     data object BrowseM3u : LiveDialog
     data object AddXtream : LiveDialog
     data object AddStalker : LiveDialog
+    data object GeneratePortals : LiveDialog
     data object AddEpg : LiveDialog
     data class PlaylistActions(val source: PlaylistSource) : LiveDialog
     data class EditPlaylist(val source: PlaylistSource) : LiveDialog
@@ -449,6 +455,16 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
                     isTablet = isTablet,
                     onClick = { dialog = LiveDialog.AddStalker },
                 )
+                if (PortalGeneratorPlatform.available) {
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.livetv_generate_portals),
+                        description = stringResource(Res.string.livetv_generate_portals_description),
+                        icon = Icons.Filled.Search,
+                        isTablet = isTablet,
+                        onClick = { dialog = LiveDialog.GeneratePortals },
+                    )
+                }
             }
         }
 
@@ -966,6 +982,7 @@ private fun LiveTvSettingsBody(isTablet: Boolean) {
         )
         LiveDialog.AddXtream -> XtreamForm(null, onDismiss = close)
         LiveDialog.AddStalker -> StalkerForm(null, onDismiss = close)
+        LiveDialog.GeneratePortals -> PortalGeneratorDialog(onDismiss = close)
         LiveDialog.AddEpg -> EpgForm(null, onDismiss = close)
         is LiveDialog.EditPlaylist -> when {
             d.source.isXtream -> XtreamForm(d.source, onDismiss = close)

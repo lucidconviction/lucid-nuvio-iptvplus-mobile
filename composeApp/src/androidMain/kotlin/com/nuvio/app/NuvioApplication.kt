@@ -42,6 +42,9 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
             com.nuvio.app.youtube.YouTubeMoreVideos(videoId, buttonVisible, bottomInset, onPlay)
         }
         com.nuvio.app.features.youtube.YouTubeHost.settingsContent = { com.nuvio.app.youtube.YouTubeSettingsContent() }
+        com.nuvio.app.features.youtube.YouTubeHome.setContinueWatchingEnabled(
+            com.nuvio.app.youtube.YouTubeSettings.continueWatchingOnHome(this),
+        )
         com.nuvio.app.features.youtube.YouTubeHost.recordProgress = { contentId, position, duration ->
             com.nuvio.app.youtube.YouTubeProgress.record(this, contentId, position, duration)
         }

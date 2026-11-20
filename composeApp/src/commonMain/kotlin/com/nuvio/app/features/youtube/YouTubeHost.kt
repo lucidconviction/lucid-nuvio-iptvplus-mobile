@@ -3,6 +3,9 @@ package com.nuvio.app.features.youtube
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** What the YouTube page hands back when you pick a video. */
 data class YouTubePlayRequest(
@@ -58,6 +61,19 @@ class YouTubePlayerAction(
 )
 
 val LocalYouTubePlayerAction = androidx.compose.runtime.compositionLocalOf<YouTubePlayerAction?> { null }
+
+/**
+ * YouTube's Home integration, shared by the Android YouTube settings and the common Home
+ * screen. The YouTube sheet owns the switch; Home only reads this state.
+ */
+object YouTubeHome {
+    private val _continueWatchingEnabled = MutableStateFlow(true)
+    val continueWatchingEnabled: StateFlow<Boolean> = _continueWatchingEnabled.asStateFlow()
+
+    fun setContinueWatchingEnabled(enabled: Boolean) {
+        _continueWatchingEnabled.value = enabled
+    }
+}
 
 object YouTubeHost {
     /** The panel opened from the player's YouTube button: like, subscribe, save, comments. */

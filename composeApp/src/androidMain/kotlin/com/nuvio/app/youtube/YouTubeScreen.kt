@@ -75,6 +75,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
 import com.nuvio.app.core.ui.LocalScreenActive
+import com.nuvio.app.core.ui.scrollReveal
 import com.nuvio.app.features.youtube.YouTubePlayRequest
 
 /** The YouTube page: feeds, search and sign-in, laid out for touch. Playing hands off to Nuvio's own player. */
@@ -503,7 +504,12 @@ private fun FeedGrid(
 
 @Composable
 private fun VideoCard(item: YtItem, modifier: Modifier, onClick: () -> Unit) {
-    Column(modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)) {
+    Column(
+        modifier
+            .scrollReveal(key = item.videoId ?: item.title)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+    ) {
         Box(Modifier.fillMaxWidth().aspectRatio(if (item.isShorts) 9f / 16f else 16f / 9f).clip(RoundedCornerShape(12.dp)).background(Color(0xFF222222))) {
             AsyncImage(
                 model = item.thumbnail,

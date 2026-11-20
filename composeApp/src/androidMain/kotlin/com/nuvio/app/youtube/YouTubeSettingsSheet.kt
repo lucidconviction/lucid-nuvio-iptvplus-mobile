@@ -112,6 +112,9 @@ private fun YouTubeSettingsBody() {
         Toggle("Resume playback", "Start where you left off, instead of from the beginning", YouTubeSettings.resumePlayback(context)) {
             changed { YouTubeSettings.setResumePlayback(context, it) }
         }
+        Toggle("Continue Watching on Home", "Show unfinished YouTube videos in Home's Continue Watching row", YouTubeSettings.continueWatchingOnHome(context)) {
+            changed { YouTubeSettings.setContinueWatchingOnHome(context, it) }
+        }
         Choice("Start at", YouTubeSettings.qualityLabel(YouTubeSettings.preferredHeight(context))) {
             val c = YouTubeSettings.qualityChoices
             changed { YouTubeSettings.setPreferredHeight(context, c[(c.indexOf(YouTubeSettings.preferredHeight(context)) + 1) % c.size]) }

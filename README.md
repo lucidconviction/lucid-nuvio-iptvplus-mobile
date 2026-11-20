@@ -37,6 +37,7 @@
 - Multiple M3U playlists and XMLTV guides, merged into one guide.
 - Xtream logins, including your provider's movies and series.
 - Stalker/MAG portals (portal URL + MAC), with genres, channel logos and the portal's guide.
+- **Generate portals** finds working Xtream accounts from Cloud Vault and Reddit; add only the ones you want.
 - Favourites, hidden groups, channel reordering and custom channel logos.
 - Catch-up, reminders and recordings.
 - Quick Channels for fast switching without leaving the player.

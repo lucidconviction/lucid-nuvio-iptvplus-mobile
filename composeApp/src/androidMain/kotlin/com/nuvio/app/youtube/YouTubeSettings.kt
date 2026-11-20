@@ -1,6 +1,7 @@
 package com.nuvio.app.youtube
 
 import android.content.Context
+import com.nuvio.app.features.youtube.YouTubeHome
 
 /** Your YouTube choices, kept on this device. */
 object YouTubeSettings {
@@ -27,6 +28,7 @@ object YouTubeSettings {
     private const val KEY_FEED_PREVIEW = "feed_preview"
     private const val KEY_CONTENT_REGION = "content_region"
     private const val KEY_RESUME = "resume_playback"
+    private const val KEY_CONTINUE_WATCHING_HOME = "continue_watching_home"
 
     /** SponsorBlock's segment types, in the order they're listed. */
     val sponsorCategories: List<Pair<String, String>> = listOf(
@@ -219,6 +221,15 @@ object YouTubeSettings {
 
     fun setResumePlayback(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean(KEY_RESUME, on).apply()
+    }
+
+    /** Show unfinished YouTube videos in Home's Continue Watching row. */
+    fun continueWatchingOnHome(context: Context) =
+        prefs(context).getBoolean(KEY_CONTINUE_WATCHING_HOME, true)
+
+    fun setContinueWatchingOnHome(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_CONTINUE_WATCHING_HOME, on).apply()
+        YouTubeHome.setContinueWatchingEnabled(on)
     }
 
     fun qualityLabel(height: Int) = if (height <= 0) "Auto" else "${height}p"

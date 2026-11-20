@@ -2686,6 +2686,8 @@
     <string name="livetv_add_xtream_description">Sign in with the server, username and password from your provider. Its TV guide comes with it.</string>
     <string name="livetv_add_stalker">Add Stalker portal</string>
     <string name="livetv_add_stalker_description">Connect with the portal address and the MAC address registered by your provider.</string>
+    <string name="livetv_generate_portals">Generate portals</string>
+    <string name="livetv_generate_portals_description">Find working Xtream accounts from Cloud Vault and Reddit. Add only the ones you want.</string>
     <string name="livetv_field_portal">Portal URL (http://host:port/c/)</string>
     <string name="livetv_field_mac">MAC address (00:1A:79:…)</string>
     <string name="livetv_stalker_load_epg">Load the portal's TV guide</string>

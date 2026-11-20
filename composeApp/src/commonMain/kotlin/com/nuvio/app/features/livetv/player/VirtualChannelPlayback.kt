@@ -26,6 +26,15 @@ internal object VirtualChannelPlayback {
         nowMs: Long = LiveTvClock.nowMs(),
     ): VirtualPlaybackOutcome = VirtualTuneResolver.resolve(channel, profileId, nowMs)
 
+    /**
+     * Starts resolving a channel while its tuning screen is still being opened, so the screen's
+     * own prepare usually finds the stream cache already warm.
+     */
+    suspend fun prewarm(channel: LiveChannel, profileId: Int) {
+        VirtualChannelRepository.ensureLoaded()
+        resolve(channel, profileId)
+    }
+
     /** Resolves and stores the launch; returns its id for a PlayerRoute, or the reason it failed. */
     suspend fun prepare(channel: LiveChannel, profileId: Int): VirtualPrepareOutcome {
         VirtualChannelRepository.ensureLoaded()

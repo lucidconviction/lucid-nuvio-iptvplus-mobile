@@ -353,12 +353,13 @@ internal object VirtualChannelRepository {
      */
     suspend fun ensurePool(channelKey: String, timeoutMs: Long = POOL_WAIT_MS): Boolean {
         ensureLoaded()
+        val id = VirtualChannels.specIdOf(channelKey) ?: return false
+        if (_allSpecs.value.none { spec -> spec.id == id && spec.enabled }) return false
+        // The warm path: a restored pool needs no add-on work at all.
+        if (_pools.value[id]?.items?.isNotEmpty() == true) return true
         // A cold start can tune before the add-on manifests load; initialize them here so the
         // first catalog fetch has somewhere to read from.
         runCatching { AddonRepository.initialize() }
-        val id = VirtualChannels.specIdOf(channelKey) ?: return false
-        if (_allSpecs.value.none { spec -> spec.id == id && spec.enabled }) return false
-        if (_pools.value[id]?.items?.isNotEmpty() == true) return true
         if (id !in _refreshing.value) refreshPool(id, force = true)
         val deadline = LiveTvClock.nowMs() + timeoutMs.coerceAtLeast(500L)
         while (LiveTvClock.nowMs() < deadline) {

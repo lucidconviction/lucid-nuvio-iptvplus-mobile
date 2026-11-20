@@ -52,6 +52,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import coil3.compose.AsyncImage
+import com.nuvio.app.core.ui.scrollReveal
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -142,7 +143,12 @@ internal fun BigVideoCard(
     }
     val details = item.author.orEmpty()
     val channelName = details.substringBefore(" • ").trim()
-    Column(modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .scrollReveal(key = item.videoId ?: item.title)
+            .clickable(onClick = onClick),
+    ) {
         Box(
             Modifier.fillMaxWidth().aspectRatio(if (item.isShorts) 9f / 16f else 16f / 9f)
                 .clip(RoundedCornerShape(12.dp)).background(Color(0xFF222222)),

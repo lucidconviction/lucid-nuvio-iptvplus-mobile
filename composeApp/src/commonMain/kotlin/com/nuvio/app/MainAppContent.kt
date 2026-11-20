@@ -953,6 +953,11 @@ internal fun MainAppContent(
 
         fun openLiveChannel(channel: LiveChannel, nowTitle: String?) {
             if (VirtualChannels.isVirtualKey(channel.key)) {
+                // Warm the channel while its tuning screen is being pushed; prepare() joins the
+                // same in-flight lookup and usually gets the cached stream back immediately.
+                coroutineScope.launch {
+                    runCatching { VirtualChannelPlayback.prewarm(channel, activePlaybackProfileId) }
+                }
                 navController.navigate(
                     LiveTvVirtualTuneRoute(
                         channelKey = channel.key,

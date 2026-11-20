@@ -122,6 +122,7 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.NuvioColorTokens
 import com.nuvio.app.core.ui.ScreenActivityEffect
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.scrollReveal
 import com.nuvio.app.features.livetv.data.LiveTvPreferences
 import com.nuvio.app.features.livetv.data.LiveTvRepository
 import com.nuvio.app.features.livetv.data.NowNext
@@ -132,6 +133,8 @@ import com.nuvio.app.features.livetv.model.EpgProgram
 import com.nuvio.app.features.livetv.model.LiveTvClock
 import com.nuvio.app.features.livetv.ondemand.OnDemandRepository
 import com.nuvio.app.features.livetv.player.LiveTvCatchup
+import com.nuvio.app.features.livetv.portal.PortalGeneratorDialog
+import com.nuvio.app.features.livetv.portal.PortalGeneratorPlatform
 import com.nuvio.app.features.livetv.record.LiveTvRecorder
 import com.nuvio.app.features.livetv.record.LiveTvRecordingScheduler
 import com.nuvio.app.features.livetv.sports.SportsLive
@@ -279,6 +282,7 @@ fun LiveTvScreen(
     var unlockGroup by remember { mutableStateOf<ChannelGroup?>(null) }
     var overflow by remember { mutableStateOf(false) }
     var streamValidation by remember { mutableStateOf(false) }
+    var portalGenerator by remember { mutableStateOf(false) }
     val validation by StreamValidationRepository.state.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
 
@@ -425,6 +429,9 @@ fun LiveTvScreen(
                                 Icon(Icons.Filled.MoreVert, contentDescription = null, tint = tokens.colors.textPrimary)
                             }
                             Menu(expanded = overflow, onDismissRequest = { overflow = false }) {
+                                if (PortalGeneratorPlatform.available) {
+                                    MenuItem(text = "Generate portals", onClick = { overflow = false; portalGenerator = true })
+                                }
                                 MenuItem(text = "Lucid TV channels", onClick = { overflow = false; onOpenVirtualChannels() })
                                 if (state.hasSources) {
                                     MenuItem(text = stringResource(Res.string.livetv_manage_menu), onClick = { overflow = false; onOpenManage() })
@@ -630,6 +637,9 @@ fun LiveTvScreen(
     }
     unlockGroup?.let { g -> UnlockGroupDialog(g.id, g.title, onDismiss = { unlockGroup = null }) }
 
+    if (portalGenerator) {
+        PortalGeneratorDialog(onDismiss = { portalGenerator = false })
+    }
     if (streamValidation) {
         StreamValidationSheet(onDismiss = { streamValidation = false })
     }
@@ -1759,6 +1769,7 @@ internal fun ChannelRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .scrollReveal(key = channel.key)
             .clip(RoundedCornerShape(NuvioTokens.Radius.xl))
             .background(tokens.colors.surface)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)

@@ -88,6 +88,7 @@ import com.nuvio.app.features.watchprogress.WatchProgressSourceCoordinator
 import com.nuvio.app.features.watchprogress.buildContinueWatchingEpisodeSubtitle
 import com.nuvio.app.features.watchprogress.continueWatchingEntries
 import com.nuvio.app.features.watchprogress.isYouTubeProgressEntry
+import com.nuvio.app.features.youtube.YouTubeHome
 import com.nuvio.app.features.watchprogress.toContinueWatchingItem
 import com.nuvio.app.features.watchprogress.toUpNextContinueWatchingItem
 import com.nuvio.app.core.ui.DisintegrationRequest
@@ -163,6 +164,7 @@ fun HomeScreen(
     val watchedUiState by WatchedRepository.uiState.collectAsStateWithLifecycle()
     val fullyWatchedSeriesKeys by WatchedRepository.fullyWatchedSeriesKeys.collectAsStateWithLifecycle()
     val watchProgressUiState by WatchProgressRepository.uiState.collectAsStateWithLifecycle()
+    val youtubeContinueWatchingOnHome by YouTubeHome.continueWatchingEnabled.collectAsStateWithLifecycle()
     val effectiveWatchProgressSource = watchProgressUiState.source
     val cloudLibraryUiState by CloudLibraryRepository.uiState.collectAsStateWithLifecycle()
     val networkStatusUiState by NetworkStatusRepository.uiState.collectAsStateWithLifecycle()
@@ -222,9 +224,11 @@ fun HomeScreen(
         watchProgressUiState.entries,
         watchProgressUiState.hiddenContentIds,
         continueWatchingCutoffEpochMs,
+        youtubeContinueWatchingOnHome,
     ) {
         val visibleProviderEntries = watchProgressUiState.entries.filterNot { entry ->
-            entry.parentMetaId in watchProgressUiState.hiddenContentIds ||
+            (entry.isYouTubeProgressEntry() && !youtubeContinueWatchingOnHome) ||
+                entry.parentMetaId in watchProgressUiState.hiddenContentIds ||
                 WatchProgressRepository.isDroppedShow(entry.parentMetaId)
         }
         filterEntriesForContinueWatchingWindow(
