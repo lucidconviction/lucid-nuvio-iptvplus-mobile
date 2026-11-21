@@ -50,12 +50,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import com.nuvio.app.core.ui.Chip
 import com.nuvio.app.core.ui.DialogButton
 import com.nuvio.app.core.ui.DialogButtonStyle
@@ -72,6 +74,8 @@ import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.livetv.data.LiveTvRepository
 import com.nuvio.app.features.livetv.model.EpgProgram
 import com.nuvio.app.features.livetv.model.LiveChannel
@@ -116,6 +120,9 @@ import nuvio.composeapp.generated.resources.livetv_sports_your_pick
 import nuvio.composeapp.generated.resources.livetv_watch_from_start
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.roundToInt
+
+/** Add-on event streams for this game; null while the first search is still running. */
+private data class SportsAddonLookup(val matches: List<SportsAddonMatch>)
 
 /**
  * A game's page: who's playing and the score, the channels showing it (tap to play, long-press
@@ -177,6 +184,12 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
     }
     val checkingStreams = streamHealth.checking.contains(ev.id)
     val checkedStreams = streamHealth.checked.contains(ev.id)
+    val addonUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    val readyAddonCount = addonUiState.addons.count { it.enabled && it.manifest != null }
+    val addonLookup by produceState<SportsAddonLookup?>(null, ev.id, readyAddonCount) {
+        value = SportsAddonLookup(SportsAddonSearch.matches(ev))
+    }
+    val addonMatches = addonLookup?.matches.orEmpty()
     val visibleMatches = remember(matches, streamHealth, ev.id) {
         SportsStreamValidation.visibleMatches(ev.id, matches)
     }
@@ -295,7 +308,7 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
                 if (matching) NuvioLoadingIndicator(size = NuvioTokens.Space.s16)
             }
         }
-        if (grouped.isEmpty()) {
+        if (grouped.isEmpty() && addonMatches.isEmpty()) {
             item(key = "channels-none") {
                 Text(
                     when {
@@ -318,6 +331,28 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
                 onPlay = { c -> actions.onPlay(c.channel, ev.title) },
                 onLongPress = { c -> haptics.performHapticFeedback(HapticFeedbackType.LongPress); channelMenu = c },
             )
+        }
+        if (addonMatches.isNotEmpty()) {
+            item(key = "addon-streams-h") {
+                Column(modifier = Modifier.padding(top = NuvioTokens.Space.s6)) {
+                    Text(
+                        "Event streams from your add-ons",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = tokens.colors.textPrimary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "Found in ${addonMatches.map { it.addonName }.distinct().joinToString(", ")}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            items(addonMatches, key = { "addon:" + it.manifestUrl + ":" + it.item.id }) { match ->
+                SportsAddonRow(match, onClick = { actions.onPlayAddonItem(match.item) })
+            }
         }
         // ---- YouTube videos for this game: previews before it, highlights and reaction after it.
         if (eventVideosOn) {
@@ -405,6 +440,61 @@ private fun preGameLine(s: Side, table: Standings?, x: GameExtras?): String? {
     val win = if (s.home) x?.homeWin else x?.awayWin
     return listOfNotNull(row?.pos?.let { Standings.ordinal(it) }, form?.takeLast(5)?.uppercase()?.takeIf { it.isNotEmpty() }, win?.let { "${it.roundToInt()}% win" })
         .joinToString(" · ").ifBlank { null }
+}
+
+@Composable
+private fun SportsAddonRow(match: SportsAddonMatch, onClick: () -> Unit) {
+    val tokens = MaterialTheme.nuvio.colors
+    val item: MetaPreview = match.item
+    val artwork = item.landscapePoster ?: item.poster ?: item.banner ?: item.logo
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(NuvioTokens.Radius.xl))
+            .background(tokens.surface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = NuvioTokens.Space.s10, vertical = NuvioTokens.Space.s10),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(64.dp)
+                .height(44.dp)
+                .clip(RoundedCornerShape(NuvioTokens.Radius.md))
+                .background(tokens.surfaceCard),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!artwork.isNullOrBlank()) {
+                AsyncImage(
+                    model = artwork,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = tokens.textMuted, modifier = Modifier.size(NuvioTokens.Icon.md))
+            }
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s2)) {
+            Text(
+                item.name,
+                style = MaterialTheme.typography.bodyLarge,
+                color = tokens.textPrimary,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                listOfNotNull(match.addonName, item.releaseInfo?.takeIf { it.isNotBlank() } ?: "Event stream").joinToString("  ·  "),
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(Icons.Filled.PlayArrow, contentDescription = "Play", tint = tokens.accent, modifier = Modifier.size(NuvioTokens.Icon.md))
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

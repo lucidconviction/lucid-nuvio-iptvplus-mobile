@@ -66,6 +66,7 @@ import com.nuvio.app.features.livetv.sports.League
 import com.nuvio.app.features.livetv.sports.Sport
 import com.nuvio.app.features.livetv.sports.SportsCatalog
 import com.nuvio.app.features.livetv.sports.SportsDates
+import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.livetv.sports.SportsEvent
 import com.nuvio.app.features.livetv.sports.SportsFollows
 import com.nuvio.app.features.livetv.sports.SportsLive
@@ -101,6 +102,8 @@ data class SportsActions(
     val onPlayCatchup: (LiveChannel, EpgProgram) -> Unit,
     val onOpenGame: (SportsEvent) -> Unit,
     val onOpenLeague: (League) -> Unit,
+    /** Plays an event stream found in an installed add-on. */
+    val onPlayAddonItem: (MetaPreview) -> Unit = {},
 )
 
 private enum class SportsTab { MINE, ALL, LIVE, SEARCH, FOLLOWING, REPLAYS }

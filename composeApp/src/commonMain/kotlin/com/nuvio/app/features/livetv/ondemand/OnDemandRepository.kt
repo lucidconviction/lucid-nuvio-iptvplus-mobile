@@ -61,6 +61,8 @@ internal object OnDemandRepository {
     /** Each playlist's last import problem (by id), so one login's success doesn't hide another's failure. */
     private val problemByPlaylist = HashMap<String, String>()
     private val infoCache = HashMap<String, VodInfo>()
+    /** Title details and poster matches are looked up from several screens at once. */
+    private val cacheLock = kotlinx.atomicfu.locks.SynchronizedObject()
     private var started = false
 
     /** Playlists whose movies and series are imported. */
@@ -184,33 +186,39 @@ internal object OnDemandRepository {
             OnDemandStore.replace(pl.id, VodKind.MOVIE, emptyList(), emptySequence())
             return@withContext
         }
-        val parsed = LiveTvFiles.readChunks(LiveTvDirs.PLAYLISTS, file) { chunks -> M3uParser.parse(LiveTvRepository.linesOf(chunks)) } ?: return@withContext
         val latest = VodTitles.latestYear()
         val categories = LinkedHashMap<String, String>()
         val items = ArrayList<VodItem>()
         var count = 0
-        for (e in parsed.entries) {
-            if (!LiveTvRepository.isVodEntry(e.url)) continue
-            val group = e.group?.ifBlank { null } ?: "Uncategorized"
-            val catId = stableHash(group)
-            categories.putIfAbsent(catId, group)
-            val ext = e.url.substringBefore('?').substringAfterLast('.', "").takeIf { it.length in 2..5 && it.all { c -> c.isLetterOrDigit() } }
-            items += VodItem(
-                playlistId = pl.id,
-                kind = VodKind.MOVIE,
-                id = stableHash(e.url),
-                name = e.name,
-                icon = e.logo?.takeIf { it.startsWith("http") },
-                categoryId = catId,
-                ext = ext,
-                tmdbId = null,
-                year = VodTitles.releaseYearInName(e.name, latest),
-                rating = null,
-                // Playlist order stands in for "added".
-                addedSec = (count++).toLong(),
-                url = e.url,
-            )
+        // Stream the playlist instead of holding every entry in memory: a 170k-channel M3U
+        // parsed twice (entries plus the movies kept from it) can exhaust the phone's heap.
+        val read = runCatching {
+            LiveTvFiles.readChunks(LiveTvDirs.PLAYLISTS, file) { chunks ->
+                M3uParser.parseEach(LiveTvRepository.linesOf(chunks)) { e ->
+                    if (!LiveTvRepository.isVodEntry(e.url)) return@parseEach
+                    val group = e.group?.ifBlank { null } ?: "Uncategorized"
+                    val catId = stableHash(group)
+                    categories.putIfAbsent(catId, group)
+                    val ext = e.url.substringBefore('?').substringAfterLast('.', "").takeIf { it.length in 2..5 && it.all { c -> c.isLetterOrDigit() } }
+                    items += VodItem(
+                        playlistId = pl.id,
+                        kind = VodKind.MOVIE,
+                        id = stableHash(e.url),
+                        name = e.name,
+                        icon = e.logo?.takeIf { it.startsWith("http") },
+                        categoryId = catId,
+                        ext = ext,
+                        tmdbId = null,
+                        year = VodTitles.releaseYearInName(e.name, latest),
+                        rating = null,
+                        // Playlist order stands in for "added".
+                        addedSec = (count++).toLong(),
+                        url = e.url,
+                    )
+                }
+            }
         }
+        read.getOrThrow()
         _status.value = OnDemandStatus(true, "Storing ${items.size} titles from ${pl.name}…")
         OnDemandStore.replace(pl.id, VodKind.MOVIE, categories.entries.map { it.key to it.value }, items.asSequence())
         OnDemandStore.replace(pl.id, VodKind.SERIES, emptyList(), emptySequence())
@@ -388,7 +396,7 @@ internal object OnDemandRepository {
 
     /** Provider details for a movie or series (series include every episode). Cached. */
     suspend fun info(item: VodItem): VodInfo? = withContext(Dispatchers.Default) {
-        infoCache[item.uid]?.let { return@withContext it }
+        kotlinx.atomicfu.locks.synchronized(cacheLock) { infoCache[item.uid] }?.let { return@withContext it }
         if (item.url != null) return@withContext null
         val pl = playlist(item.playlistId) ?: return@withContext null
         val json = runCatching { xtream.vodInfo(pl, item.kind == VodKind.SERIES, item.id) }.getOrNull() ?: return@withContext null
@@ -428,7 +436,10 @@ internal object OnDemandRepository {
             tmdbId = (info.optString("tmdb_id").ifBlank { info.optString("tmdb") }).takeIf { it.isNotBlank() && it != "0" },
             episodes = episodes.sortedWith(compareBy({ it.season }, { it.episode })),
         )
-        infoCache[item.uid] = result
+        kotlinx.atomicfu.locks.synchronized(cacheLock) {
+            if (infoCache.size > 200) infoCache.clear()
+            infoCache[item.uid] = result
+        }
         result
     }
 
@@ -444,19 +455,27 @@ internal object OnDemandRepository {
      * again after a week. Null when TMDB is off (no key) or the lookup failed.
      */
     suspend fun match(item: VodItem): VodMatch? {
-        matchCache[item.uid]?.let { return it }
+        kotlinx.atomicfu.locks.synchronized(cacheLock) { matchCache[item.uid] }?.let { return it }
         val cached = withContext(Dispatchers.Default) { runCatching { OnDemandStore.cachedMatch(item.uid) }.getOrNull() }
         val now = LiveTvClock.nowMs()
         if (cached != null && (cached.found || now - cached.checkedMs < MATCH_RETRY_MS)) {
-            matchCache[item.uid] = cached
+            rememberMatch(item.uid, cached)
             return cached
         }
         val apiKey = TmdbSettingsRepository.effectiveApiKey()
         if (apiKey.isBlank()) return null
         val found = matchLimit.withPermit { runCatching { lookup(item, apiKey, now) }.getOrNull() } ?: return null
-        matchCache[item.uid] = found
+        rememberMatch(item.uid, found)
         withContext(Dispatchers.Default) { runCatching { OnDemandStore.cacheMatch(item.uid, found) } }
         return found
+    }
+
+    private fun rememberMatch(uid: String, match: VodMatch) {
+        kotlinx.atomicfu.locks.synchronized(cacheLock) {
+            // Browsing thousands of titles must not grow these caches without a limit.
+            if (matchCache.size > 2_000) matchCache.clear()
+            matchCache[uid] = match
+        }
     }
 
     private suspend fun lookup(item: VodItem, apiKey: String, now: Long): VodMatch {

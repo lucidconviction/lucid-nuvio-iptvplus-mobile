@@ -39,8 +39,19 @@ object M3uParser {
 
     /** Parses a playlist line by line, so a big file needn't be split up front. */
     fun parse(lines: Sequence<String>): M3uPlaylist {
-        val epgUrls = mutableListOf<String>()
         val entries = ArrayList<M3uEntry>(4096)
+        val epgUrls = parseEach(lines) { entries.add(it) }
+        return M3uPlaylist(epgUrls, entries)
+    }
+
+    /**
+     * Parses a playlist without keeping every entry in memory: each one is handed to [onEntry]
+     * as it is read and can then be dropped. A 170k-channel list would otherwise hold the parsed
+     * entries and the built channel list at the same time, which is enough to run a phone out of
+     * memory. Returns the playlist's EPG links.
+     */
+    fun parseEach(lines: Sequence<String>, onEntry: (M3uEntry) -> Unit): List<String> {
+        val epgUrls = mutableListOf<String>()
 
         var pendingInfo: String? = null
         var pendingGroup: String? = null
@@ -108,7 +119,7 @@ object M3uParser {
                                 if (k.isNotEmpty()) pendingHeaders[normalizeHeader(k)] = urlDecode(part.substringAfter('=', ""))
                             }
                         }
-                        entries.add(buildEntry(info, pendingGroup, line, pendingHeaders.toMap(), headerCatchup).copy(drm = drmFrom(pendingProps)))
+                        onEntry(buildEntry(info, pendingGroup, line, pendingHeaders.toMap(), headerCatchup).copy(drm = drmFrom(pendingProps)))
                     }
                     pendingInfo = null
                     pendingGroup = null
@@ -117,7 +128,7 @@ object M3uParser {
                 }
             }
         }
-        return M3uPlaylist(epgUrls.distinct(), entries)
+        return epgUrls.distinct()
     }
 
     /** Like java.net.URLDecoder: "+" is a space; a broken escape leaves the text as it was. */
@@ -172,20 +183,24 @@ object M3uParser {
         // Display name follows the first comma that is outside quotes.
         val name = displayName(info).ifBlank { attrs["tvg-name"].orEmpty() }.ifBlank { "Channel" }
 
-        val headers = LinkedHashMap(vlcHeaders)
+        // Most channels in a large playlist have no request headers at all. Only make a map
+        // when there is one to put in it: 170k empty maps is tens of megabytes on a phone.
+        val hasHeaderAttrs = attrs["user-agent"] != null || attrs["http-user-agent"] != null || attrs["http-referrer"] != null
+        var headers = if (vlcHeaders.isEmpty() && !hasHeaderAttrs) null else LinkedHashMap(vlcHeaders)
         var url = urlLine
         val pipe = urlLine.indexOf('|')
         if (pipe > 0) {
             url = urlLine.substring(0, pipe)
+            if (headers == null) headers = LinkedHashMap()
             urlLine.substring(pipe + 1).split('&').forEach { part ->
                 val k = part.substringBefore('=').trim()
                 val v = urlDecode(part.substringAfter('=', ""))
                 if (k.isNotEmpty()) headers[normalizeHeader(k)] = v
             }
         }
-        attrs["user-agent"]?.let { headers["User-Agent"] = it }
-        attrs["http-user-agent"]?.let { headers["User-Agent"] = it }
-        attrs["http-referrer"]?.let { headers["Referer"] = it }
+        attrs["user-agent"]?.let { headers?.put("User-Agent", it) }
+        attrs["http-user-agent"]?.let { headers?.put("User-Agent", it) }
+        attrs["http-referrer"]?.let { headers?.put("Referer", it) }
 
         val catchupType = attrs["catchup"] ?: attrs["catchup-type"]
         val catchupDays = (attrs["catchup-days"] ?: attrs["tvg-rec"] ?: attrs["timeshift"])?.toIntOrNull()
@@ -208,7 +223,7 @@ object M3uParser {
                 ?.split(';')?.firstOrNull()?.trim(),
             chno = (attrs["tvg-chno"] ?: attrs["channel-number"] ?: attrs["tvg-num"])?.trim()?.toIntOrNull(),
             url = url.trim(),
-            headers = headers,
+            headers = headers ?: emptyMap(),
             catchup = catchup
         )
     }

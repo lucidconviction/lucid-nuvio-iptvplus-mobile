@@ -72,16 +72,41 @@ internal object LiveTvViewState {
         shown.distinctBy { it.groupId }.forEach { c -> if (locked(c.groupId, c.group)) { lockedIds += c.groupId; lockedTitles[c.groupId] = c.group } }
         user.customGroups.forEach { g -> if (g.id !in user.hiddenGroups && locked(g.id, g.name)) { lockedIds += g.id; lockedTitles[g.id] = g.name } }
         val visible = shown.filter { it.groupId !in lockedIds }
-        val byKey = visible.associateBy { it.key }
+        // Only build the lookup map for the keys that actually need it (favorites, recent, your
+        // own groups and copies). A full associateBy over a 170k-channel list is a large extra
+        // allocation on every rebuild, and most channels are never looked up this way.
+        val customKeys = user.customGroups.flatMapTo(HashSet()) { it.channelKeys }
+        val lookupKeys = HashSet<String>(user.favorites.size + user.recent.size + customKeys.size + 16).apply {
+            addAll(user.favorites)
+            addAll(user.recent)
+            addAll(customKeys)
+            user.channelCopies.values.forEach { addAll(it) }
+        }
+        val byKey = if (lookupKeys.isEmpty()) {
+            emptyMap()
+        } else {
+            val out = HashMap<String, LiveChannel>(lookupKeys.size * 2)
+            for (c in visible) if (c.key in lookupKeys) out[c.key] = c
+            out
+        }
         // What your own groups can show: also channels whose playlist group is hidden (hiding a
         // group only hides that group). Channels hidden one by one, or in a locked group, stay out.
-        val customPool = run {
+        val customPool = if (customKeys.isEmpty()) {
+            emptyMap()
+        } else {
             val hiddenLocked = HashSet<String>()
             channels.filter { it.groupId in user.hiddenGroups }.distinctBy { it.groupId }
                 .forEach { c -> if (locked(c.groupId, c.group)) hiddenLocked += c.groupId }
-            byKey + channels
-                .filter { it.groupId in user.hiddenGroups && it.key !in user.hiddenChannels && it.groupId !in hiddenLocked }
-                .associateBy { it.key }
+            val pool = HashMap<String, LiveChannel>(customKeys.size * 2)
+            byKey.forEach { (key, channel) -> if (key in customKeys) pool[key] = channel }
+            channels.forEach { c ->
+                if (c.groupId in user.hiddenGroups && c.key in customKeys &&
+                    c.key !in user.hiddenChannels && c.groupId !in hiddenLocked
+                ) {
+                    pool[c.key] = c
+                }
+            }
+            pool
         }
         val favorites = user.favorites.mapNotNull { byKey[it] }
         // Adult channels never show in Recently watched.
@@ -182,13 +207,23 @@ internal object LiveTvViewState {
         )
     }
 
-    /** Channels whose name or number matches [query], with a little tolerance for typos. */
-    fun search(visible: List<LiveChannel>, query: String): List<LiveChannel> {
+    /**
+     * Channels whose name or number matches [query], with a little tolerance for typos. Results
+     * are capped: a one-letter query in a 170k-channel playlist would otherwise build a huge
+     * list on the UI thread.
+     */
+    fun search(visible: List<LiveChannel>, query: String, limit: Int = 500): List<LiveChannel> {
         val q = query.trim()
         if (q.isEmpty()) return emptyList()
-        return visible.filter {
-            it.number.toString() == q ||
-                com.nuvio.app.core.text.FuzzyTextSearch.matches(it.name, q)
+        val out = ArrayList<LiveChannel>(minOf(limit, 64))
+        for (channel in visible) {
+            if (channel.number.toString() == q ||
+                com.nuvio.app.core.text.FuzzyTextSearch.matches(channel.name, q)
+            ) {
+                out += channel
+                if (out.size >= limit) break
+            }
         }
+        return out
     }
 }

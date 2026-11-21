@@ -23,6 +23,9 @@ import com.nuvio.app.features.debrid.DirectDebridPlayableResult
 import com.nuvio.app.features.debrid.DirectDebridPlaybackResolver
 import com.nuvio.app.features.debrid.toastMessage
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.livetv.ui.ChannelPreviewRepository
+import com.nuvio.app.features.livetv.ui.ChannelPreviewSettings
+import com.nuvio.app.features.livetv.ui.ChannelPreviewSource
 import com.nuvio.app.features.p2p.P2pConsentDialog
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerLaunch
@@ -151,6 +154,20 @@ internal fun StreamDestination(
         PlayerSettingsRepository.uiState
     }.collectAsStateWithLifecycle()
 
+    /**
+     * PIP Ch Preview: the source is ready, so put it in a floating window and leave the stream
+     * picker. Returns true when handled; the caller must stop its own navigation.
+     */
+    fun openInPip(playerLaunch: PlayerLaunch): Boolean {
+        if (!ChannelPreviewSettings.enabled.value) return false
+        ChannelPreviewRepository.show(ChannelPreviewSource.Player(playerLaunch))
+        StreamsRepository.consumeAutoPlay()
+        StreamsRepository.cancelLoading()
+        StreamsRepository.setOverlayVisible(false)
+        navController.popBackStack()
+        return true
+    }
+
     fun p2pSentinelUrl(infoHash: String, fileIdx: Int?): String =
         "torrent://$infoHash${fileIdx?.let { "?index=$it" }.orEmpty()}"
 
@@ -244,6 +261,7 @@ internal fun StreamDestination(
             stream = stream,
         )
 
+        if (openInPip(playerLaunch)) return
         autoPlayNavigationStarted = replaceStreamRoute
         val launchId = PlayerLaunchStore.put(playerLaunch)
         StreamsRepository.cancelLoading()
@@ -375,6 +393,10 @@ internal fun StreamDestination(
                     ),
                 ),
             )
+            if (openInPip(playerLaunch)) {
+                reuseNavigated = true
+                return@LaunchedEffect
+            }
             if (playerSettings.externalPlayerEnabled) {
                 openExternalPlayback(playerLaunch)
                 StreamsRepository.cancelLoading()
@@ -542,6 +564,7 @@ internal fun StreamDestination(
             sourceFilename = stream.behaviorHints.filename,
             stream = stream,
         )
+        if (openInPip(playerLaunch)) return@LaunchedEffect
         if (playerSettings.externalPlayerEnabled && stream.serverTarget == null) {
             openExternalPlayback(playerLaunch)
             StreamsRepository.consumeAutoPlay()
@@ -739,6 +762,7 @@ internal fun StreamDestination(
             stream = stream,
         )
 
+        if (openInPip(playerLaunch)) return
         if (!forceInternal && (forceExternal || playerSettings.externalPlayerEnabled)) {
             streamRouteScope.launch {
                 openExternalPlayback(playerLaunch)

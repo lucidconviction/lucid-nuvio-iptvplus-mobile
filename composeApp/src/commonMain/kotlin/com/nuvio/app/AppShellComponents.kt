@@ -140,6 +140,7 @@ internal data class AppTabActions(
     val onLiveTvMakeVirtualChannel: (com.nuvio.app.features.addons.ManagedAddon, com.nuvio.app.features.addons.AddonCatalog) -> Unit = { _, _ -> },
     val onLiveTvOpenAddonCatalog: (manifestUrl: String, catalog: com.nuvio.app.features.addons.AddonCatalog) -> Unit = { _, _ -> },
     val onLiveTvPlayAddonItem: (MetaPreview) -> Unit = {},
+    val onLiveTvPlayAddonItemInPip: (MetaPreview) -> Unit = {},
     val onLiveTvAddonItemToMultiView: (MetaPreview) -> Unit = {},
     val onLiveTvOpenAddonSettings: () -> Unit = {},
     val onWebPlayMedia: (WebMediaSource) -> Unit = {},
@@ -240,6 +241,7 @@ internal fun AppTabHost(
                     onMakeVirtualChannel = actions.onLiveTvMakeVirtualChannel,
                     onOpenAddonCatalog = actions.onLiveTvOpenAddonCatalog,
                     onPlayAddonItem = actions.onLiveTvPlayAddonItem,
+                    onPlayAddonItemInPip = actions.onLiveTvPlayAddonItemInPip,
                     onAddonItemToMultiView = actions.onLiveTvAddonItemToMultiView,
                     onOpenAddonSettings = actions.onLiveTvOpenAddonSettings,
                 )

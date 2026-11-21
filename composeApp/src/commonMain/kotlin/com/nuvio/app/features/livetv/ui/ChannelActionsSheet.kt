@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Schedule
@@ -88,6 +89,8 @@ internal fun ChannelActionsSheet(
     onPlay: () -> Unit,
     /** Sends this channel to the open Multi-view page. */
     onAddToMultiView: (() -> Unit)? = null,
+    /** Opens this channel in another floating PIP preview window. */
+    onPlayInPip: (() -> Unit)? = null,
     /** Set when the show on now can be restarted from its beginning (catch-up). */
     onWatchFromStart: (() -> Unit)? = null,
     /** More rows, after Play (recordings and the like). */
@@ -116,6 +119,13 @@ internal fun ChannelActionsSheet(
             }
             NuvioBottomSheetDivider()
             NuvioBottomSheetActionRow(title = stringResource(Res.string.action_play), icon = Icons.Filled.PlayArrow, onClick = { close(onPlay) })
+            if (onPlayInPip != null) {
+                NuvioBottomSheetActionRow(
+                    title = "Play in PIP",
+                    icon = Icons.Filled.PictureInPictureAlt,
+                    onClick = { close(onPlayInPip) },
+                )
+            }
             if (onAddToMultiView != null) {
                 NuvioBottomSheetActionRow(
                     title = "Multi-view",

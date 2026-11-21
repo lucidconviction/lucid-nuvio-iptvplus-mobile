@@ -153,4 +153,5 @@ fun VirtualTuningScreen(
     }
 }
 
-private const val TuningScreenTimeoutMs = 30_000L
+/** A cold start includes the pool fetch, add-on manifests and the source search. */
+private const val TuningScreenTimeoutMs = 75_000L

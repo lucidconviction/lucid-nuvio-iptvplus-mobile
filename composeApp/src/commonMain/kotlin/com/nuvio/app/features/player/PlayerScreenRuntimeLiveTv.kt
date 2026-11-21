@@ -45,12 +45,10 @@ internal fun PlayerScreenRuntime.switchLiveChannel(channel: LiveChannel, nowTitl
         addonCatalogPlayJob?.cancel()
         addonCatalogPlayJob = null
         virtualSwitchJob?.cancel()
-        // Show the channel name/logo while the item resolves, like a tuner.
+        // Show the incoming channel's own name/artwork while the item resolves, like a tuner.
         streamTransition = PlayerStreamTransition(
-            artwork = channel.thumbnail?.takeIf { it.isNotBlank() }
-                ?: channel.logo?.takeIf { it.isNotBlank() }
-                ?: background ?: poster,
-            logo = channel.logo?.takeIf { it.isNotBlank() } ?: logo,
+            artwork = channelTransitionArtwork(channel),
+            logo = channel.logo?.takeIf { it.isNotBlank() },
             title = channel.name,
         )
         virtualSwitchJob = scope.launch {
@@ -87,10 +85,8 @@ internal fun PlayerScreenRuntime.switchLiveChannel(channel: LiveChannel, nowTitl
             streamTransition = PlayerStreamTransition(
                 artwork = tune.item.backdrop?.takeIf { it.isNotBlank() }
                     ?: tune.item.poster?.takeIf { it.isNotBlank() }
-                    ?: channel.thumbnail?.takeIf { it.isNotBlank() }
-                    ?: channel.logo?.takeIf { it.isNotBlank() }
-                    ?: background ?: poster,
-                logo = channel.logo?.takeIf { it.isNotBlank() } ?: logo,
+                    ?: channelTransitionArtwork(channel),
+                logo = channel.logo?.takeIf { it.isNotBlank() },
                 title = channel.name,
             )
         }
@@ -125,12 +121,25 @@ internal fun PlayerScreenRuntime.switchLiveChannel(channel: LiveChannel, nowTitl
     // Show the incoming channel's own artwork while it tunes in, even if the previous source
     // never finished loading (the artwork effect below keeps it in sync afterwards).
     streamTransition = PlayerStreamTransition(
-        artwork = channel.thumbnail?.takeIf { it.isNotBlank() }
-            ?: channel.logo?.takeIf { it.isNotBlank() }
-            ?: background ?: poster,
-        logo = channel.logo?.takeIf { it.isNotBlank() } ?: logo,
+        artwork = channelTransitionArtwork(channel),
+        logo = channel.logo?.takeIf { it.isNotBlank() },
         title = channel.name,
     )
+}
+
+/**
+ * The incoming channel's own artwork: its thumbnail first, then what's on now, then its logo.
+ * Never falls back to the previous source's backdrop/poster, which would show the wrong channel
+ * during the tuning transition.
+ */
+private fun channelTransitionArtwork(channel: LiveChannel): String? {
+    if (channel.thumbnail?.isNotBlank() == true) return channel.thumbnail
+    val now = LiveTvClock.nowMs()
+    val programIcon = LiveTvRepository.programs.value[channel.key]
+        ?.firstOrNull { now >= it.startMs && now < it.stopMs }
+        ?.icon
+        ?.takeIf { it.isNotBlank() }
+    return programIcon ?: channel.logo?.takeIf { it.isNotBlank() }
 }
 
 /** The artwork/logo/title of the source being tuned in, used by the stream transition overlay. */
@@ -145,18 +154,12 @@ internal fun PlayerScreenRuntime.incomingStreamTransition(): PlayerStreamTransit
     } else {
         null
     }
-    // When the channel has no thumbnail of its own, its current show's artwork reads better than
-    // the (usually transparent) channel logo.
-    val nowProgram = channel?.let { c ->
-        val now = LiveTvClock.nowMs()
-        LiveTvRepository.programs.value[c.key]?.firstOrNull { it.startMs <= now && it.stopMs > now }
-    }
+    val channelArtwork = channel?.let(::channelTransitionArtwork)
     return PlayerStreamTransition(
-        artwork = channel?.thumbnail?.takeIf { it.isNotBlank() }
-            ?: nowProgram?.icon?.takeIf { it.isNotBlank() }
-            ?: channel?.logo?.takeIf { it.isNotBlank() }
-            ?: background ?: poster,
-        logo = channel?.logo?.takeIf { it.isNotBlank() } ?: logo,
+        // A non-live switch (a new source for the same title) can keep using the player's own
+        // artwork; a live channel must only ever show its own.
+        artwork = if (channel != null) channelArtwork else background ?: poster,
+        logo = channel?.logo?.takeIf { it.isNotBlank() } ?: if (channel == null) logo else null,
         title = channel?.name ?: activeStreamTitle.takeIf { it.isNotBlank() } ?: title,
     )
 }

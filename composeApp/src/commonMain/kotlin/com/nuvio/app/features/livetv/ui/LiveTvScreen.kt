@@ -34,7 +34,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -151,7 +150,9 @@ import com.nuvio.app.features.livetv.ui.addonscatalog.AddonCatalogScreen
 import com.nuvio.app.features.livetv.ui.quickchannels.QuickChannelList
 import com.nuvio.app.features.livetv.ui.quickchannels.QuickChannel
 import com.nuvio.app.features.livetv.ui.quickchannels.rememberQuickChannelMatchState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import nuvio.composeapp.generated.resources.Res
@@ -223,6 +224,8 @@ fun LiveTvScreen(
     onOpenAddonCatalog: (manifestUrl: String, com.nuvio.app.features.addons.AddonCatalog) -> Unit = { _, _ -> },
     /** Plays a catalog item (MetaPreview) tapped inside an inline add-on folder. */
     onPlayAddonItem: (MetaPreview) -> Unit = {},
+    /** Opens a catalog item's stream in another floating PIP window. */
+    onPlayAddonItemInPip: (MetaPreview) -> Unit = {},
     /** Sends an add-on item straight to the Multi-view page. */
     onAddonItemToMultiView: (MetaPreview) -> Unit = {},
     /** Opens the add-on settings / manage screen. */
@@ -286,6 +289,13 @@ fun LiveTvScreen(
     val validation by StreamValidationRepository.state.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
 
+    // PIP Ch Preview: when on, a tap previews the channel in a floating window instead of
+    // opening the player. The toggle is off by default and remembered on this device.
+    val channelPreviewEnabled by ChannelPreviewSettings.enabled.collectAsStateWithLifecycle()
+    LaunchedEffect(channelPreviewEnabled) {
+        if (!channelPreviewEnabled) ChannelPreviewRepository.hide()
+    }
+
     LaunchedEffect(scrollToTopRequests) {
         scrollToTopRequests.collect { listState.animateScrollToItem(0) }
     }
@@ -332,8 +342,16 @@ fun LiveTvScreen(
         }
     }
 
-    val searchResults by remember(state.visible, query, playlistId) {
-        derivedStateOf {
+    // Searching 170k channels is too much work for the UI thread on every keystroke. Debounce
+    // the query and run the scan on the default dispatcher; results are capped by the search.
+    val searchResults by produceState(emptyList(), state.visible, query, playlistId) {
+        val q = query.trim()
+        if (q.isEmpty()) {
+            value = emptyList()
+            return@produceState
+        }
+        delay(160)
+        value = withContext(Dispatchers.Default) {
             val pool = when {
                 playlistId == null -> state.visible
                 playlistId.startsWith("addon:") -> emptyList()
@@ -341,7 +359,7 @@ fun LiveTvScreen(
                     state.visible.filter { it.sourceId == com.nuvio.app.features.livetv.virtual.VirtualChannels.SOURCE_ID }
                 else -> state.visible.filter { it.sourceId == playlistId }
             }
-            LiveTvViewState.search(pool, query)
+            LiveTvViewState.search(pool, q)
         }
     }
     val nowNext: Map<String, NowNext> = remember(programs, now) {
@@ -407,10 +425,14 @@ fun LiveTvScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().liveTvSideInsets().onGloballyPositioned { boxTopPx = it.positionInRoot().y }) {
+    Box(modifier = modifier.fillMaxSize().liveTvSideInsets().onGloballyPositioned {
+        boxTopPx = it.positionInRoot().y
+    }) {
         NuvioScreen(modifier = Modifier.fillMaxSize(), listState = listState) {
             stickyHeader {
-                Column(modifier = Modifier.background(tokens.colors.background).onGloballyPositioned { headerBottomPx = it.positionInRoot().y + it.size.height }) {
+                Column(modifier = Modifier.background(tokens.colors.background).onGloballyPositioned {
+                    headerBottomPx = it.positionInRoot().y + it.size.height
+                }) {
                     // The title has the top row to itself (with the menu for managing playlists); every page
                     // button sits in one labelled row under it, so none are hidden.
                     val headerActions = buildList {
@@ -521,21 +543,30 @@ fun LiveTvScreen(
                     }
                 }
                 // Inline Quick Channels section
-                item {
+                item(key = "quick-channels") {
                     QuickChannelsInlineSection(
                         onPlayChannel = { ch -> onPlayChannel(ch, null) },
-                        onAddToMultiView = onAddChannelToMultiView,
+                        onChannelLongPress = { ch ->
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            sheetChannel = ch
+                        },
                     )
                 }
-                // The playlist picker sits directly under Quick Channels.
-                item(key = "playlist-dropdown") {
-                    PlaylistDropdown(
-                        choices = playlistChoices,
-                        selectedId = playlistId,
-                        allDetail = (state.sections.count { it.group.sourceId != null }).let { if (it == 1) "1 group" else "$it groups" },
-                        onSelect = { id -> PlaylistFilter.select(id) },
-                        modifier = Modifier.padding(horizontal = NuvioTokens.Space.s12, vertical = NuvioTokens.Space.s8),
-                    )
+                // The preview toggle and the playlist picker read as one control group.
+                item(key = "preview-and-playlist") {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = NuvioTokens.Space.s12),
+                        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                    ) {
+                        ChannelPreviewToggle(modifier = Modifier.padding(top = NuvioTokens.Space.s8))
+                        PlaylistDropdown(
+                            choices = playlistChoices,
+                            selectedId = playlistId,
+                            allDetail = (state.sections.count { it.group.sourceId != null }).let { if (it == 1) "1 group" else "$it groups" },
+                            onSelect = { id -> PlaylistFilter.select(id) },
+                            modifier = Modifier.padding(bottom = NuvioTokens.Space.s8),
+                        )
+                    }
                 }
                 combinedSections.forEachIndexed { index, combinedSection ->
                     if (combinedSection.isAddonsSection) {
@@ -543,6 +574,7 @@ fun LiveTvScreen(
                             AddonsCatalogInlineSection(
                                 onOpenSettings = { onOpenAddonSettings() },
                                 onPlayItem = onPlayAddonItem,
+                                onPlayInPip = if (channelPreviewEnabled) onPlayAddonItemInPip else null,
                                 onAddToMultiView = onAddonItemToMultiView,
                                 onMakeChannel = onMakeVirtualChannel,
                                 onlyManifestUrl = onlyAddonManifest,
@@ -614,6 +646,11 @@ fun LiveTvScreen(
             customGroups = state.customGroups,
             onDismiss = { sheetChannel = null },
             onPlay = { onPlayChannel(channel, nowNext[channel.key]?.now?.title) },
+            onPlayInPip = if (channelPreviewEnabled) {
+                { ChannelPreviewRepository.add(channel, nowNext[channel.key]?.now?.title) }
+            } else {
+                null
+            },
             onAddToMultiView = { onAddChannelToMultiView(channel) },
             onWatchFromStart = nowNext[channel.key]?.now
                 ?.takeIf { LiveTvCatchup.canWatchFromStart(channel, it, now) }
@@ -649,7 +686,7 @@ fun LiveTvScreen(
 @Composable
 private fun QuickChannelsInlineSection(
     onPlayChannel: (com.nuvio.app.features.livetv.model.LiveChannel) -> Unit,
-    onAddToMultiView: (com.nuvio.app.features.livetv.model.LiveChannel) -> Unit = {},
+    onChannelLongPress: (com.nuvio.app.features.livetv.model.LiveChannel) -> Unit = {},
 ) {
     val tokens = MaterialTheme.nuvio.colors
     val liveChannels by com.nuvio.app.features.livetv.data.LiveTvRepository.displayChannels.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -858,7 +895,7 @@ private fun QuickChannelsInlineSection(
                             channel = ch,
                             isAlive = isAlive,
                             onClick = { onPlayChannel(ch) },
-                            onLongClick = { onAddToMultiView(ch) },
+                            onLongClick = { onChannelLongPress(ch) },
                         )
                     }
                 }
@@ -1028,6 +1065,7 @@ private fun QuickChannelInlineRow(
 private fun AddonsCatalogInlineSection(
     onOpenSettings: () -> Unit,
     onPlayItem: (MetaPreview) -> Unit,
+    onPlayInPip: ((MetaPreview) -> Unit)?,
     onAddToMultiView: (MetaPreview) -> Unit,
     onMakeChannel: (com.nuvio.app.features.addons.ManagedAddon, com.nuvio.app.features.addons.AddonCatalog) -> Unit,
     onlyManifestUrl: String? = null,
@@ -1076,6 +1114,7 @@ private fun AddonsCatalogInlineSection(
                                 expanded = isCatExpanded,
                                 onToggle = { expandedCatalogs[catalogKey] = !isCatExpanded },
                                 onPlayItem = onPlayItem,
+                                onPlayInPip = onPlayInPip,
                                 onAddToMultiView = onAddToMultiView,
                                 onMakeChannel = { onMakeChannel(addon, catalog) },
                             )
@@ -1321,6 +1360,7 @@ private fun ExpandableCatalogSection(
     expanded: Boolean,
     onToggle: () -> Unit,
     onPlayItem: (MetaPreview) -> Unit,
+    onPlayInPip: ((MetaPreview) -> Unit)?,
     onAddToMultiView: (MetaPreview) -> Unit,
     onMakeChannel: () -> Unit,
 ) {
@@ -1369,6 +1409,7 @@ private fun ExpandableCatalogSection(
         CatalogItemsList(
             uiState = catalogState.value,
             onPlayItem = onPlayItem,
+            onPlayInPip = onPlayInPip,
             onAddToMultiView = onAddToMultiView,
         )
     }
@@ -1380,6 +1421,7 @@ private fun ExpandableCatalogSection(
 private fun CatalogItemsList(
     uiState: CatalogUiState,
     onPlayItem: (MetaPreview) -> Unit,
+    onPlayInPip: ((MetaPreview) -> Unit)?,
     onAddToMultiView: (MetaPreview) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio.colors
@@ -1424,6 +1466,7 @@ private fun CatalogItemsList(
                     AddonItemRow(
                         item = item,
                         onClick = { onPlayItem(item) },
+                        onPlayInPip = onPlayInPip?.let { play -> { play(item) } },
                         onAddToMultiView = { onAddToMultiView(item) },
                     )
                 }
@@ -1439,6 +1482,7 @@ private fun CatalogItemsList(
 private fun AddonItemRow(
     item: MetaPreview,
     onClick: () -> Unit,
+    onPlayInPip: (() -> Unit)? = null,
     onAddToMultiView: (() -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.nuvio.colors
@@ -1515,6 +1559,15 @@ private fun AddonItemRow(
                     onClick()
                 },
             )
+            if (onPlayInPip != null) {
+                MenuItem(
+                    text = "Play in PIP",
+                    onClick = {
+                        menuOpen = false
+                        onPlayInPip()
+                    },
+                )
+            }
             if (onAddToMultiView != null) {
                 MenuItem(
                     text = "Multi-view",

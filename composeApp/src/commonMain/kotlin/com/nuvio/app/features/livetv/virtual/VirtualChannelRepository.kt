@@ -1263,5 +1263,5 @@ internal object VirtualChannelRepository {
     private const val MAX_RUNTIME_LOOKUPS = 24
     private const val META_CONCURRENCY = 3
     private const val UNPLAYABLE_TTL_MS = 60L * 60 * 1000
-    private const val POOL_WAIT_MS = 5_000L
+    private const val POOL_WAIT_MS = 20_000L
 }

@@ -173,6 +173,10 @@ import com.nuvio.app.features.livetv.LiveTvLink
 import com.nuvio.app.features.livetv.data.LiveTvRepository
 import com.nuvio.app.features.livetv.record.LiveTvRecorder
 import com.nuvio.app.features.livetv.record.LiveTvRecording
+import com.nuvio.app.features.livetv.ui.ChannelPreviewHost
+import com.nuvio.app.features.livetv.ui.ChannelPreviewRepository
+import com.nuvio.app.features.livetv.ui.ChannelPreviewSettings
+import com.nuvio.app.features.livetv.ui.ChannelPreviewSource
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
@@ -317,9 +321,12 @@ internal fun MainAppContent(
         val liveTvScrollToTopRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val settingsRootActionRequests = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
         val currentRoute = navBackStack.lastOrNull() as? AppRoute
-        // The mini player hands back to the full player when one opens.
+        // The mini player and channel preview hand back to the full player when one opens.
         LaunchedEffect(currentRoute) {
-            if (currentRoute is PlayerRoute) MiniPlayerRepository.hide()
+            if (currentRoute is PlayerRoute) {
+                MiniPlayerRepository.hide()
+                ChannelPreviewRepository.hide()
+            }
         }
         LaunchedEffect(currentRoute, posterNavigationEnabled) {
             val request = posterNavigation.active
@@ -910,6 +917,34 @@ internal fun MainAppContent(
             }
         }
 
+        /**
+         * PIP Ch Preview is global: any finished launch goes into a floating window instead of
+         * the full player. Returns true when it was handled.
+         */
+        fun playInPipIfEnabled(playerLaunch: PlayerLaunch): Boolean {
+            if (!ChannelPreviewSettings.enabled.value) return false
+            ChannelPreviewRepository.show(ChannelPreviewSource.Player(playerLaunch))
+            return true
+        }
+
+        /** Opens a stored launch in the player, or in the floating preview when PIP is on. */
+        fun openPlayer(launchId: Long, title: String, popCurrentPlayer: Boolean = false) {
+            if (ChannelPreviewSettings.enabled.value) {
+                PlayerLaunchStore.get(launchId)?.let { launch ->
+                    ChannelPreviewRepository.show(ChannelPreviewSource.Player(launch))
+                    if (popCurrentPlayer) navController.popBackStack()
+                    return
+                }
+            }
+            if (popCurrentPlayer) {
+                navController.navigate(PlayerRoute(launchId = launchId, title = title)) {
+                    popUpTo<PlayerRoute> { inclusive = true }
+                }
+            } else {
+                navController.navigate(PlayerRoute(launchId = launchId, title = title))
+            }
+        }
+
         fun openDownloadedItem(item: DownloadItem) {
             val sourceUrl = DownloadsRepository.playableLocalFileUri(item) ?: return
             val resumeEntry = item.videoId
@@ -943,15 +978,16 @@ internal fun MainAppContent(
                 initialPositionMs = resumeEntry?.lastPositionMs?.takeIf { it > 0L } ?: 0L,
                 initialProgressFraction = resumeEntry?.progressFraction?.takeIf { it > 0f },
             )
+            if (playInPipIfEnabled(playerLaunch)) return
             if (playerSettingsUiState.externalPlayerEnabled) {
                 coroutineScope.launch { openExternalPlayback(playerLaunch) }
                 return
             }
             val launchId = PlayerLaunchStore.put(playerLaunch)
-            navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+            openPlayer(launchId, playerLaunch.title)
         }
 
-        fun openLiveChannel(channel: LiveChannel, nowTitle: String?) {
+        fun openLiveChannelFull(channel: LiveChannel, nowTitle: String?) {
             if (VirtualChannels.isVirtualKey(channel.key)) {
                 // Warm the channel while its tuning screen is being pushed; prepare() joins the
                 // same in-flight lookup and usually gets the cached stream back immediately.
@@ -970,16 +1006,37 @@ internal fun MainAppContent(
                 return
             }
             val launchId = LiveTvPlayback.prepare(channel, activePlaybackProfileId, nowTitle)
-            navController.navigate(PlayerRoute(launchId = launchId, title = channel.name))
+            openPlayer(launchId, channel.name)
         }
 
-        fun openOnDemandLaunch(playerLaunch: PlayerLaunch) {
+        /**
+         * Every live channel from every screen (Live TV list, guide, Sports, add-on catalogs)
+         * goes through here. With PIP Ch Preview on it starts in the floating window; otherwise
+         * it opens the full player.
+         */
+        fun openLiveChannel(channel: LiveChannel, nowTitle: String?) {
+            if (ChannelPreviewSettings.enabled.value) {
+                ChannelPreviewRepository.show(channel, nowTitle)
+                return
+            }
+            openLiveChannelFull(channel, nowTitle)
+        }
+
+        fun openPlayerLaunchFull(playerLaunch: PlayerLaunch) {
             if (playerSettingsUiState.externalPlayerEnabled) {
                 coroutineScope.launch { openExternalPlayback(playerLaunch) }
                 return
             }
             val launchId = PlayerLaunchStore.put(playerLaunch)
             navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+        }
+
+        fun openOnDemandLaunch(playerLaunch: PlayerLaunch) {
+            if (ChannelPreviewSettings.enabled.value) {
+                ChannelPreviewRepository.show(ChannelPreviewSource.Player(playerLaunch))
+                return
+            }
+            openPlayerLaunchFull(playerLaunch)
         }
 
         val onDemandActions = OnDemandActions(
@@ -1008,8 +1065,12 @@ internal fun MainAppContent(
                 parentMetaType = LiveTvPlayback.CONTENT_TYPE,
                 sourceFilename = rec.fileName,
             )
+            if (ChannelPreviewSettings.enabled.value) {
+                ChannelPreviewRepository.show(ChannelPreviewSource.Player(playerLaunch))
+                return
+            }
             val launchId = PlayerLaunchStore.put(playerLaunch)
-            navController.navigate(PlayerRoute(launchId = launchId, title = rec.title))
+            openPlayer(launchId, rec.title)
         }
 
         fun openLiveCatchup(channel: LiveChannel, program: EpgProgram) {
@@ -1019,7 +1080,7 @@ internal fun MainAppContent(
                     NuvioToastController.show(liveTvCatchupUnavailable)
                     return@launch
                 }
-                navController.navigate(PlayerRoute(launchId = launchId, title = program.title))
+                openPlayer(launchId, program.title)
             }
         }
 
@@ -1052,7 +1113,7 @@ internal fun MainAppContent(
                 initialPositionMs = 0L,
             )
             val launchId = PlayerLaunchStore.put(launch)
-            navController.navigate(PlayerRoute(launchId = launchId, title = launch.title))
+            openPlayer(launchId, launch.title)
         }
 
         fun openYouTubeVideo(request: com.nuvio.app.features.youtube.YouTubePlayRequest) {            val playerLaunch = PlayerLaunch(
@@ -1070,22 +1131,13 @@ internal fun MainAppContent(
             )
             val launchId = PlayerLaunchStore.put(playerLaunch)
             // Picking another video from the player's "More Videos" list swaps it in place
-            // instead of stacking a new player on the back stack.
-            navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title)) {
-                popUpTo<PlayerRoute> { inclusive = true }
-            }
+            // instead of stacking a new player on the back stack (or replaces the PiP).
+            openPlayer(launchId, playerLaunch.title, popCurrentPlayer = true)
         }
         // The player's "More Videos" overlay uses this to switch videos without owning navigation.
         SideEffect {
             com.nuvio.app.features.youtube.YouTubeHost.openVideo = { request -> openYouTubeVideo(request) }
         }
-
-        val sportsActions = SportsActions(
-            onPlay = ::openLiveChannel,
-            onPlayCatchup = ::openLiveCatchup,
-            onOpenGame = { ev -> navController.navigate(LiveTvSportsGameRoute(eventId = ev.id, title = ev.title)) },
-            onOpenLeague = { l -> navController.navigate(LiveTvSportsLeagueRoute(leagueId = l.id, title = l.name)) },
-        )
 
         // Live TV hook: a reminder or game notification was tapped.
         LaunchedEffect(navController) {
@@ -1158,12 +1210,14 @@ internal fun MainAppContent(
                         initialPositionMs = if (startFromBeginning) 0L else (resumePositionMs ?: 0L),
                         initialProgressFraction = if (startFromBeginning) null else resumeProgressFraction,
                     )
-                    if (playerSettingsUiState.externalPlayerEnabled) {
+                    if (playInPipIfEnabled(playerLaunch)) {
+                        true
+                    } else if (playerSettingsUiState.externalPlayerEnabled) {
                         openExternalPlayback(playerLaunch)
                         true
                     } else {
                         val launchId = PlayerLaunchStore.put(playerLaunch)
-                        navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+                        openPlayer(launchId, playerLaunch.title)
                         true
                     }
                 }
@@ -1230,12 +1284,13 @@ internal fun MainAppContent(
                         initialPositionMs = targetResumePositionMs,
                         initialProgressFraction = targetResumeProgressFraction,
                     )
+                    if (playInPipIfEnabled(playerLaunch)) return
                     if (playerSettingsUiState.externalPlayerEnabled) {
                         coroutineScope.launch { openExternalPlayback(playerLaunch) }
                         return
                     }
                     val launchId = PlayerLaunchStore.put(playerLaunch)
-                    navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+                    openPlayer(launchId, playerLaunch.title)
                     return
                 }
             }
@@ -1277,7 +1332,7 @@ internal fun MainAppContent(
          * Plays an add-on catalog item from the Live TV add-on folders without opening its
          * details page. Series start at their first episode; a saved resume point is honored.
          */
-        fun openLiveTvAddonItem(item: MetaPreview) {
+        fun openLiveTvAddonItemInternal(item: MetaPreview, allowPreview: Boolean, forceAnotherWindow: Boolean = false) {
             coroutineScope.launch {
                 var videoId = item.id
                 var seasonNumber: Int? = null
@@ -1297,6 +1352,17 @@ internal fun MainAppContent(
                         episodeTitle = episode.title
                         episodeThumbnail = episode.thumbnail
                     }
+                }
+
+                if (forceAnotherWindow || (allowPreview && ChannelPreviewSettings.enabled.value)) {
+                    val source = ChannelPreviewSource.Addon(
+                        item = item,
+                        videoId = videoId,
+                        season = seasonNumber,
+                        episode = episodeNumber,
+                    )
+                    if (forceAnotherWindow) ChannelPreviewRepository.add(source) else ChannelPreviewRepository.show(source)
+                    return@launch
                 }
 
                 val resume = WatchProgressRepository.progressForVideo(
@@ -1328,6 +1394,21 @@ internal fun MainAppContent(
                 )
             }
         }
+
+        fun openLiveTvAddonItem(item: MetaPreview) = openLiveTvAddonItemInternal(item, allowPreview = true)
+
+        fun openLiveTvAddonItemFull(item: MetaPreview) = openLiveTvAddonItemInternal(item, allowPreview = false)
+
+        fun openLiveTvAddonItemInPip(item: MetaPreview) =
+            openLiveTvAddonItemInternal(item, allowPreview = false, forceAnotherWindow = true)
+
+        val sportsActions = SportsActions(
+            onPlay = ::openLiveChannel,
+            onPlayCatchup = ::openLiveCatchup,
+            onOpenGame = { ev -> navController.navigate(LiveTvSportsGameRoute(eventId = ev.id, title = ev.title)) },
+            onOpenLeague = { l -> navController.navigate(LiveTvSportsLeagueRoute(leagueId = l.id, title = l.name)) },
+            onPlayAddonItem = ::openLiveTvAddonItem,
+        )
 
         /**
          * Sends a channel from the Live TV list straight to the open Multi-view page.
@@ -1953,6 +2034,7 @@ internal fun MainAppContent(
                                 },
                                 onLiveTvOpenAddonCatalog = openAddonCatalogAction,
                                 onLiveTvPlayAddonItem = ::openLiveTvAddonItem,
+                                onLiveTvPlayAddonItemInPip = ::openLiveTvAddonItemInPip,
                                 onLiveTvAddonItemToMultiView = ::addLiveTvAddonItemToMultiView,
                                 onLiveTvOpenAddonSettings = { navController.navigate(AddonsSettingsRoute(addonsSettingsTitle)) },
                                 onWebPlayMedia = ::openWebMedia,
@@ -2151,8 +2233,15 @@ internal fun MainAppContent(
                         channelLogo = route.channelLogo,
                         onBack = onBack,
                         onReady = { launchId, title ->
-                            navController.navigate(PlayerRoute(launchId = launchId, title = title)) {
-                                popUpTo<LiveTvVirtualTuneRoute> { inclusive = true }
+                            if (ChannelPreviewSettings.enabled.value) {
+                                PlayerLaunchStore.get(launchId)?.let { launch ->
+                                    ChannelPreviewRepository.show(ChannelPreviewSource.Player(launch))
+                                }
+                                navController.popBackStack()
+                            } else {
+                                navController.navigate(PlayerRoute(launchId = launchId, title = title)) {
+                                    popUpTo<LiveTvVirtualTuneRoute> { inclusive = true }
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxSize(),
@@ -2694,6 +2783,20 @@ internal fun MainAppContent(
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(12.dp)
                     .zIndex(17f),
+            )
+
+            // Live TV's channel preview floats above navigation, so it can be dragged and
+            // resized anywhere over the app.
+            ChannelPreviewHost(
+                onExpand = { session ->
+                    ChannelPreviewRepository.hide()
+                    when (val source = session.source) {
+                        is ChannelPreviewSource.Live -> openLiveChannelFull(source.channel, source.nowTitle)
+                        is ChannelPreviewSource.Addon -> openLiveTvAddonItemFull(source.item)
+                        is ChannelPreviewSource.Player -> openPlayerLaunchFull(source.launch)
+                    }
+                },
+                modifier = Modifier.fillMaxSize().zIndex(30f),
             )
 
             NuvioFloatingPrompt(

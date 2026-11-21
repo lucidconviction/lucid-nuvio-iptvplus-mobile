@@ -64,9 +64,11 @@ internal object VirtualTuneResolver {
     private const val SUCCESS_TTL_MS = 10L * 60_000L
     private const val LINK_TTL_MS = 20L * 60_000L
     private const val ERROR_TTL_MS = 30_000L
-    private const val ADDON_WAIT_MS = 4_000L
-    private const val TUNE_BUDGET_MS = 20_000L
-    private const val PREFETCH_BUDGET_MS = 15_000L
+    private const val ADDON_WAIT_MS = 8_000L
+    /** A cold start has to load the add-on manifests and the channel's catalog before it can
+     *  even ask for sources. Give that first tune a realistic budget. */
+    private const val TUNE_BUDGET_MS = 40_000L
+    private const val PREFETCH_BUDGET_MS = 25_000L
     private const val CANDIDATE_TTL_MS = 5L * 60_000L
 
     private data class CachedStream(
@@ -128,11 +130,15 @@ internal object VirtualTuneResolver {
         }
         // A cold start can open the tuning screen before the channel's catalog pool exists.
         // Wait for the first fetch instead of failing immediately.
-        VirtualChannelRepository.ensurePool(channel.key)
+        val poolReady = VirtualChannelRepository.ensurePool(channel.key)
         var tune = VirtualChannelRepository.tune(channel.key, maxOf(nowMs, LiveTvClock.nowMs()))
             ?: return VirtualPlaybackOutcome(
                 message = VirtualChannelRepository.errorMessage(channel.key)
-                    ?: "This channel has nothing to play right now.",
+                    ?: if (!poolReady) {
+                        "Lucid TV is still loading this channel's catalog. Check your add-ons and try again."
+                    } else {
+                        "This channel has nothing to play right now."
+                    },
             )
         if (tune.relay) {
             val stream = relayStream(tune)

@@ -563,51 +563,68 @@ internal object LiveTvRepository {
         val multi = playlists.size > 1
         val out = ArrayList<LiveChannel>()
         val usedKeys = HashSet<String>()
+        // Big providers repeat the same group names, tvg-ids, logos and header maps on every
+        // channel. Sharing one copy keeps a 170k-channel playlist within the phone's memory.
+        val strings = HashMap<String, String>()
+        val headerMaps = HashMap<Map<String, String>, Map<String, String>>()
+        fun pooled(value: String): String = strings.getOrPut(value) { value }
+        fun pooledHeaders(value: Map<String, String>): Map<String, String> =
+            if (value.isEmpty()) emptyMap() else headerMaps.getOrPut(value) { value }
         var counter = 1
         for ((plIndex, pl) in playlists.withIndex()) {
             val file = playlistFile(pl.id)
             if (!LiveTvFiles.exists(LiveTvDirs.PLAYLISTS, file)) continue
             setStatus(loading = true, message = "Reading channels from \"${pl.name}\"" + (if (multi) " (${plIndex + 1} of ${playlists.size})" else "") + "…")
-            val parsed = runCatching {
-                LiveTvFiles.readChunks(LiveTvDirs.PLAYLISTS, file) { chunks -> M3uParser.parse(linesOf(chunks)) }
-            }.getOrNull() ?: continue
-            embeddedEpgUrls[pl.id] = parsed.epgUrls
+            val sourceName = pooled(pl.name)
+            val channelsHere = ArrayList<LiveChannel>(4096)
             var count = 0
-            for (e in parsed.entries) {
-                // Many providers' M3U links also list every movie and episode: not TV channels.
-                if (isVodEntry(e.url)) continue
-                // A malformed link can never play. Skip just that entry; the rest of the
-                // playlist is still imported (and the source is not marked as failed).
-                if (!StreamUrls.isUsable(e.url)) continue
-                count++
-                val groupTitle = e.group?.ifBlank { null } ?: "Uncategorized"
-                val baseKey = "${pl.id}|${e.tvgId ?: ""}|${e.name}"
-                var key = baseKey
-                var n = 2
-                while (!usedKeys.add(key)) { key = "$baseKey#${n++}" }
-                val number = e.chno ?: counter
-                counter = maxOf(counter, number) + 1
-                val headers = if (pl.userAgent.isNotBlank() && e.headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
-                    e.headers + ("User-Agent" to pl.userAgent)
-                } else e.headers
-                out += LiveChannel(
-                    key = key,
-                    sourceId = pl.id,
-                    sourceName = pl.name,
-                    name = e.name,
-                    tvgId = e.tvgId,
-                    tvgName = e.tvgName,
-                    logo = e.logo,
-                    thumbnail = e.image,
-                    groupId = if (multi) "${pl.id}::$groupTitle" else groupTitle,
-                    group = groupTitle,
-                    number = number,
-                    url = e.url,
-                    headers = headers,
-                    catchup = e.catchup,
-                    drm = e.drm
-                )
+            // Parse straight into channels instead of holding every parsed entry and the channel
+            // list at once: that double copy is what made very large playlists crash.
+            val epgUrls = runCatching {
+                LiveTvFiles.readChunks(LiveTvDirs.PLAYLISTS, file) { chunks ->
+                    M3uParser.parseEach(linesOf(chunks)) { e ->
+                        // Many providers' M3U links also list every movie and episode: not TV channels.
+                        if (isVodEntry(e.url)) return@parseEach
+                        // A malformed link can never play. Skip just that entry; the rest of the
+                        // playlist is still imported (and the source is not marked as failed).
+                        if (!StreamUrls.isUsable(e.url)) return@parseEach
+                        count++
+                        val groupTitle = e.group?.ifBlank { null } ?: "Uncategorized"
+                        val baseKey = "${pl.id}|${e.tvgId ?: ""}|${e.name}"
+                        var key = baseKey
+                        var n = 2
+                        while (!usedKeys.add(key)) { key = "$baseKey#${n++}" }
+                        val number = e.chno ?: counter
+                        counter = maxOf(counter, number) + 1
+                        val headers = if (pl.userAgent.isNotBlank() && e.headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+                            e.headers + ("User-Agent" to pl.userAgent)
+                        } else e.headers
+                        channelsHere += LiveChannel(
+                            key = key,
+                            sourceId = pl.id,
+                            sourceName = sourceName,
+                            name = e.name,
+                            tvgId = e.tvgId?.let(::pooled),
+                            tvgName = e.tvgName?.let(::pooled),
+                            logo = e.logo?.let(::pooled),
+                            thumbnail = e.image?.let(::pooled),
+                            groupId = pooled(if (multi) "${pl.id}::$groupTitle" else groupTitle),
+                            group = pooled(groupTitle),
+                            number = number,
+                            url = e.url,
+                            headers = pooledHeaders(headers),
+                            catchup = e.catchup,
+                            drm = e.drm
+                        )
+                    }
+                }
+            }.getOrNull()
+            if (epgUrls == null) {
+                // A partly read playlist is not used: keep what was already loaded for it.
+                continue
             }
+            embeddedEpgUrls[pl.id] = epgUrls
+            out += channelsHere
             if (count != pl.channelCount) {
                 prefs.updatePlaylists { list -> list.map { if (it.id == pl.id) it.copy(channelCount = count) else it } }
             }
