@@ -98,6 +98,10 @@ import com.nuvio.app.features.watching.domain.WatchingContentRef
 import com.nuvio.app.features.watching.domain.isReleasedBy
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
+import com.nuvio.app.features.plugins.PluginScraper
+import com.nuvio.app.features.home.components.HomePluginProviderRow
 import com.nuvio.app.features.home.components.HomeCollectionRowSection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -129,9 +133,11 @@ fun HomeScreen(
     continueWatchingDisintegrationRequest: DisintegrationRequest<String>? = null,
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     onFirstCatalogRendered: (() -> Unit)? = null,
+    onPluginProviderClick: ((PluginScraper) -> Unit)? = null,
 ) {
     LaunchedEffect(Unit) {
         AddonRepository.initialize()
+        PluginRepository.initialize()
         CollectionRepository.initialize()
         ContinueWatchingPreferencesRepository.ensureLoaded()
         WatchedRepository.ensureLoaded()
@@ -143,6 +149,18 @@ fun HomeScreen(
     }
 
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    val pluginsUiState by PluginRepository.uiState.collectAsStateWithLifecycle()
+    val pluginProviders = remember(pluginsUiState.pluginsEnabled, pluginsUiState.scrapers) {
+        if (pluginsUiState.pluginsEnabled) {
+            pluginsUiState.scrapers.filter { scraper ->
+                scraper.enabled &&
+                    scraper.manifestEnabled &&
+                    scraper.type == PluginRepositoryType.EXTERNAL_DEX
+            }
+        } else {
+            emptyList()
+        }
+    }
     val homeUiState by HomeRepository.uiState.collectAsStateWithLifecycle()
     val homeHeroState = rememberHomeHeroState(homeUiState.heroItems)
     val homeSettingsUiState by remember {
@@ -1047,6 +1065,17 @@ fun HomeScreen(
                 }
             }
 
+            if (pluginProviders.isNotEmpty() && onPluginProviderClick != null) {
+                item(key = "home_cloudstream_providers", contentType = "catalog") {
+                    HomePluginProviderRow(
+                        providers = pluginProviders,
+                        sectionPadding = homeSectionPadding,
+                        onProviderClick = onPluginProviderClick,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                }
+            }
+
             when {
                 isInitialHomeContentLoading -> {
                     homeContinueWatchingSections(
@@ -1073,7 +1102,7 @@ fun HomeScreen(
                     }
                 }
 
-                !hasActiveAddons && !hasServerLibraries && !hasRenderableCollectionRows -> {
+                !hasActiveAddons && !hasServerLibraries && !hasRenderableCollectionRows && pluginProviders.isEmpty() -> {
                     homeContinueWatchingSections(
                         preferences = continueWatchingPreferences,
                         continueWatchingItems = continueWatchingItems,
@@ -1126,7 +1155,7 @@ fun HomeScreen(
 
                 homeUiState.sections.isEmpty() && homeUiState.heroItems.isEmpty() &&
                     (!continueWatchingPreferences.isVisible || !hasContinueWatchingRows) &&
-                    !hasRenderableCollectionRows -> {
+                    !hasRenderableCollectionRows && pluginProviders.isEmpty() -> {
                     item(key = "home_empty", contentType = "empty") {
                         val loadFailed = !homeUiState.errorMessage.isNullOrBlank()
                         if (networkStatusUiState.isOfflineLike && loadFailed) {

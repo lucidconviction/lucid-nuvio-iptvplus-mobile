@@ -1,5 +1,7 @@
 package com.nuvio.app.features.plugins
 
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import com.nuvio.app.features.plugins.external.PluginLatestPage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,4 +62,16 @@ actual object PluginRepository {
         contentTitle: String?,
     ): Result<List<PluginRuntimeResult>> =
         Result.failure(UnsupportedOperationException(getString(Res.string.plugins_error_unavailable_build)))
+
+    internal actual suspend fun browseSearch(
+        scraperId: String,
+        query: String,
+    ): List<PluginBrowseItem> = emptyList()
+
+    internal actual suspend fun browseLatest(
+        scraperId: String,
+        page: Int,
+    ): PluginLatestPage? = null
+
+    actual suspend fun detectCloudStreamSettings() = Unit
 }

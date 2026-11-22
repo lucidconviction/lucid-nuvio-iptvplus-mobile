@@ -66,6 +66,7 @@ import org.jetbrains.compose.resources.stringResource
 internal fun PluginBrowseScreen(
     scraperId: String,
     scraperName: String,
+    initialItem: PluginBrowseItem? = null,
     onBack: () -> Unit,
     onPlay: (PluginBrowseItem, PluginBrowseDetail, PluginBrowseEpisode?, PluginRuntimeResult) -> Unit,
 ) {
@@ -231,8 +232,14 @@ internal fun PluginBrowseScreen(
         }
     }
 
-    LaunchedEffect(stateKey) {
-        if (!latestAttempted) loadLatest(reset = true)
+    LaunchedEffect(stateKey, initialItem?.url) {
+        if (initialItem != null) {
+            if (detailItem?.url != initialItem.url) {
+                openDetail(initialItem)
+            }
+        } else if (!latestAttempted) {
+            loadLatest(reset = true)
+        }
     }
 
     NuvioScreen(modifier = Modifier.fillMaxWidth()) {

@@ -1,12 +1,14 @@
 package com.nuvio.app.features.plugins.browse
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import com.nuvio.app.SettingsDestination
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
 import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
 import com.nuvio.app.features.plugins.external.toBrowseStreamItem
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
@@ -24,9 +26,26 @@ internal actual fun PluginBrowseDestination(
 ) {
     SettingsDestination(route, navController) { onBack ->
         val streamUnavailableText = stringResource(Res.string.plugins_browse_stream_unavailable)
+        val initialItem = remember(route.initialUrl, route.initialApiIndex) {
+            val url = route.initialUrl
+            if (url.isNullOrBlank()) {
+                null
+            } else {
+                PluginBrowseItem(
+                    apiIndex = route.initialApiIndex ?: 0,
+                    apiName = route.scraperName,
+                    name = route.initialName ?: route.scraperName,
+                    url = url,
+                    posterUrl = route.initialPoster,
+                    type = route.initialType ?: "movie",
+                    year = route.initialYear,
+                )
+            }
+        }
         PluginBrowseScreen(
             scraperId = route.scraperId,
             scraperName = route.scraperName,
+            initialItem = initialItem,
             onBack = onBack,
             onPlay = { item, detail, episode, result ->
                 val providerName = "CloudStream · ${route.scraperName}"

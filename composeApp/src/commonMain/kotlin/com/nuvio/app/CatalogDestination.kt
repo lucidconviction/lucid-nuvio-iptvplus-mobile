@@ -9,10 +9,12 @@ import com.nuvio.app.features.catalog.CatalogScreen
 import com.nuvio.app.features.catalog.CatalogTarget
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.library.toLibraryItem
+import com.nuvio.app.features.plugins.browse.PluginCatalogRegistry
 import com.nuvio.app.features.servers.ServerCatalog
 import com.nuvio.app.navigation.CatalogRoute
 import com.nuvio.app.navigation.DetailRoute
 import com.nuvio.app.navigation.NuvioNavigator
+import com.nuvio.app.navigation.PluginBrowseRoute
 
 internal data class CatalogLaunch(
     val title: String,
@@ -38,6 +40,21 @@ internal object CatalogLaunchStore {
 }
 
 internal fun NuvioNavigator.openPreview(meta: MetaPreview) {
+    PluginCatalogRegistry.resolve(meta.id)?.let { ref ->
+        navigate(
+            PluginBrowseRoute(
+                scraperId = ref.scraperId,
+                scraperName = ref.scraperName,
+                initialApiIndex = ref.apiIndex,
+                initialUrl = ref.url,
+                initialName = ref.name,
+                initialPoster = ref.posterUrl,
+                initialType = ref.type,
+                initialYear = ref.year,
+            ),
+        )
+        return
+    }
     val collection = ServerCatalog.collectionTarget(meta)
     if (collection == null) {
         navigate(DetailRoute(type = meta.type, id = meta.id, title = meta.name))

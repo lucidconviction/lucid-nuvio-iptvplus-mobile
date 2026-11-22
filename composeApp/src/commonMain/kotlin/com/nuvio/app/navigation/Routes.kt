@@ -107,6 +107,12 @@ data class PluginsSettingsRoute(override val title: String = "") : SettingsDesti
 data class PluginBrowseRoute(
     val scraperId: String,
     val scraperName: String,
+    val initialApiIndex: Int? = null,
+    val initialUrl: String? = null,
+    val initialName: String? = null,
+    val initialPoster: String? = null,
+    val initialType: String? = null,
+    val initialYear: Int? = null,
     override val title: String = scraperName,
 ) : SettingsDestinationRoute
 

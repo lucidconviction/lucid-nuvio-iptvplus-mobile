@@ -36,6 +36,8 @@ data class DiscoverCatalogOption(
     val genreRequired: Boolean = false,
     val supportsPagination: Boolean = false,
     val server: CatalogTarget.Server? = null,
+    /** Set when this catalog is a CloudStream extension provider. */
+    val pluginScraperId: String? = null,
 )
 
 data class DiscoverUiState(

@@ -5,6 +5,8 @@ import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.addons.httpRequestRaw
 import com.nuvio.app.features.plugins.external.ExternalRepoParser
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import com.nuvio.app.features.plugins.external.PluginLatestPage
 import com.nuvio.app.features.plugins.external.cloudStreamContentTypes
 import com.nuvio.app.features.plugins.external.externalExtensionHost
 import com.nuvio.app.features.profiles.ProfileRepository
@@ -31,6 +33,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -90,6 +94,7 @@ actual object PluginRepository {
     private var currentProfileId = 1
     private val activeRefreshJobs = mutableMapOf<String, Job>()
     private val persistenceGeneration = atomic(0L)
+    private val settingsDetectionMutex = Mutex()
     private val persistenceRevision = atomic(0L)
     private val persistenceLock = SynchronizedObject()
     private val persistedRevisionByProfile = mutableMapOf<Int, Long>()
@@ -312,6 +317,7 @@ actual object PluginRepository {
                     )
                 }
                 persist()
+                detectCloudStreamSettings()
                 if (pushAfterRefresh) {
                     pushToServer()
                 }
@@ -572,6 +578,7 @@ actual object PluginRepository {
                             enabled = enabled,
                             manifestEnabled = info.enabled,
                             hasSettings = info.hasSettings,
+                            settingsChecked = true,
                             logo = info.logo,
                             contentLanguage = info.contentLanguage ?: emptyList(),
                             formats = info.formats ?: info.supportedFormats,
@@ -677,9 +684,11 @@ actual object PluginRepository {
             version = entry.version.toString(),
             filename = entry.url,
             supportedTypes = cloudStreamContentTypes(entry.tvTypes),
-            enabled = previous?.enabled ?: (entry.status == 1),
+            // New CloudStream extensions are opt-in. Refreshes preserve the user's choice.
+            enabled = previous?.enabled ?: false,
             manifestEnabled = entry.status == 1,
             hasSettings = previous?.hasSettings ?: false,
+            settingsChecked = previous?.settingsChecked ?: false,
             logo = entry.iconUrl,
             contentLanguage = emptyList(),
             formats = null,
@@ -960,6 +969,68 @@ actual object PluginRepository {
     private fun resolveEffectiveProfileId(profileId: Int): Int {
         val active = ProfileRepository.state.value.activeProfile
         return if (active != null && !active.id.isBlank() && active.usesPrimaryPlugins) 1 else profileId
+    }
+
+    internal actual suspend fun browseSearch(
+        scraperId: String,
+        query: String,
+    ): List<PluginBrowseItem> = externalExtensionHost.search(
+        scraperId = scraperId,
+        profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId),
+        query = query,
+    )
+
+    internal actual suspend fun browseLatest(
+        scraperId: String,
+        page: Int,
+    ): PluginLatestPage? = externalExtensionHost.latest(
+        scraperId = scraperId,
+        profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId),
+        page = page,
+    )
+
+    actual suspend fun detectCloudStreamSettings() = settingsDetectionMutex.withLock {
+        initialize()
+        val pending = _uiState.value.scrapers.filter { scraper ->
+            scraper.type == PluginRepositoryType.EXTERNAL_DEX &&
+                scraper.manifestEnabled &&
+                !scraper.settingsChecked
+        }
+        if (pending.isEmpty()) return@withLock
+        val profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
+        withContext(Dispatchers.IO) {
+            coroutineScope {
+                val semaphore = Semaphore(2)
+                pending.map { scraper ->
+                    async {
+                        semaphore.withPermit {
+                            val hasSettings = try {
+                                externalExtensionHost.hasSettings(scraper.id, profileId)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Throwable) {
+                                false
+                            }
+                            _uiState.update { state ->
+                                state.copy(
+                                    scrapers = state.scrapers.map { current ->
+                                        if (current.id == scraper.id) {
+                                            current.copy(
+                                                hasSettings = hasSettings,
+                                                settingsChecked = true,
+                                            )
+                                        } else {
+                                            current
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+        }
+        persist()
     }
 }
 

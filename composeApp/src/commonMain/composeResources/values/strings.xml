@@ -2300,6 +2300,7 @@
     <string name="plugins_manifest_no_providers">Manifest has no providers.</string>
     <string name="plugins_manifest_version_missing">Manifest version is missing.</string>
     <string name="plugins_message_installed">Installed %1$s.</string>
+    <string name="plugins_message_cloudstream_installed">Installed %1$s. Extensions are disabled until you enable them.</string>
     <string name="plugins_provider_disabled_by_repo">Disabled by repo</string>
     <string name="plugins_provider_no_description">No description</string>
     <string name="plugins_provider_version">v%1$s</string>
@@ -2312,8 +2313,13 @@
     <string name="plugins_section_installed_repos">INSTALLED REPOSITORIES</string>
     <string name="plugins_section_overview">OVERVIEW</string>
     <string name="plugins_section_providers">PROVIDERS</string>
+    <string name="plugins_section_extensions">EXTENSIONS</string>
+    <string name="plugins_section_enabled_extensions">ENABLED EXTENSIONS</string>
+    <string name="plugins_manage_extensions">Manage extensions</string>
+    <string name="plugins_repo_no_enabled">No extensions enabled yet. Open Manage extensions to choose.</string>
     <string name="plugins_test_error_title">Error</string>
     <string name="plugins_browse_action">Browse</string>
+    <string name="plugins_browse_provider_hint">Latest &amp; search</string>
     <string name="plugins_browse_search_placeholder">Search this provider</string>
     <string name="plugins_browse_search">Search</string>
     <string name="plugins_browse_latest">Latest</string>

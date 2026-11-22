@@ -118,6 +118,7 @@ internal data class AppTabActions(
     val onAddonsSettingsClick: () -> Unit = {},
     val onPluginsSettingsClick: () -> Unit = {},
     val onPluginBrowseClick: ((PluginScraper) -> Unit)? = null,
+    val onPluginProviderClick: ((PluginScraper) -> Unit)? = null,
     val onAccountSettingsClick: () -> Unit = {},
     val onSupportersContributorsSettingsClick: () -> Unit = {},
     val onLicensesAttributionsSettingsClick: () -> Unit = {},
@@ -178,6 +179,7 @@ internal fun AppTabHost(
                         continueWatchingDisintegrationRequest = state.continueWatchingDisintegrationRequest,
                         onFolderClick = actions.onFolderClick,
                         onFirstCatalogRendered = actions.onInitialHomeContentRendered,
+                        onPluginProviderClick = actions.onPluginProviderClick,
                     )
                 }
             }

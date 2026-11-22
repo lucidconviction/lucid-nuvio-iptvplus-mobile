@@ -286,6 +286,19 @@ This path does not change title-driven discovery and does not require TMDB metad
 
 The action is available from both plugin surfaces: the full-screen Plugins page and the tablet settings hub (the hub previously bypassed the route callback). A live emulator run against the real `RdNutz` repo verified provider search results, a resolved link (`1 links, 0 subtitles`), ExoPlayer reaching `READY`, and browse state surviving the player round-trip.
 
+### 3.15 Discovery and Home integration (mobile addition)
+
+Extensions are no longer reachable only through Settings:
+
+- **Home** shows a CloudStream provider row immediately below the hero. Tapping a provider opens its Latest feed.
+- **Search → Discover** lists each enabled CloudStream provider as a catalog under its supported Movie/TV type. Selecting one loads the provider's latest/home feed into the normal poster grid, with Load more using the provider's next page.
+- Plugin cards on Discover are registered in an in-memory item index. Tapping a card opens `PluginBrowseRoute` with the selected item already loaded, so its streams are one step away.
+- New CloudStream repositories install all providers **disabled**. The user chooses which extensions to enable; repository refreshes preserve that choice.
+- Provider cards only show the settings gear when the extension actually registers a settings UI. The app probes unchecked extensions once in the background after install/refresh and persists the result.
+- Disabled providers, the global plugin switch, and Play Store/App Store builds are respected.
+
+Current limits: global text search still queries addons only (extension search is available inside a provider's Browse page), and Home shows provider shortcuts rather than separate latest-video rows per extension.
+
 ---
 
 ## 4. Your two apps compared
@@ -1096,10 +1109,13 @@ private fun ExtractorLink.toRuntimeResult(provider: String): PluginRuntimeResult
 - `PluginRepositoryDispatchTest`: mock host; `NUVIO_JS` calls `PluginRuntime`, `EXTERNAL_DEX` calls host; failures become `Result.failure` and don't crash the stream group.
 - `PluginBrowseModelsTest`: provider results map to stream cards with name fallback, quality/size/language subtitles, header filtering, and subtitle handoff.
 - `PluginBrowseStateStoreTest`: browse defaults to Latest and keeps latest feed/pagination state isolated per profile+provider key.
+- `PluginCatalogRegistryTest`: extension cards get stable IDs and resolve back to the correct provider item.
 
 **Instrumentation / manual:**
 
 - Install a CloudStream repo, enable a provider, see streams in the stream list alongside addons/JS.
+- Add a new CloudStream repo: every installed provider starts disabled; enable only the desired ones and confirm a repo refresh keeps those choices.
+- Confirm the settings gear is absent for extensions without a settings screen and present for one that has one.
 - Plugins → provider → Browse: the provider's latest/home feed loads without a query; scroll and use Load more.
 - Plugins → provider → Browse: search the provider's own site, open a result, load a movie link or a series episode, and play it.
 - Return from the player: the browse search/results/latest feed/selected episode are still present.

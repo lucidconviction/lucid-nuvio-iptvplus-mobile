@@ -1988,6 +1988,14 @@ internal fun MainAppContent(
                                         ),
                                     )
                                 },
+                                onPluginProviderClick = { scraper ->
+                                    navController.navigate(
+                                        PluginBrowseRoute(
+                                            scraperId = scraper.id,
+                                            scraperName = scraper.name,
+                                        ),
+                                    )
+                                },
                                 onAccountSettingsClick = { navController.navigate(AccountSettingsRoute(accountSettingsTitle)) },
                                 onSupportersContributorsSettingsClick = {
                                     if (AppFeaturePolicy.supportersContributorsPageEnabled) {

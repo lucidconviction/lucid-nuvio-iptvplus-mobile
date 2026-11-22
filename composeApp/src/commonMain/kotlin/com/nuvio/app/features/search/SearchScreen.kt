@@ -63,6 +63,9 @@ import com.nuvio.app.features.home.components.homeSectionHorizontalPaddingForWid
 import com.nuvio.app.features.home.components.HomeSkeletonRow
 import com.nuvio.app.features.livetv.ui.LiveTvSearchRow
 import com.nuvio.app.features.livetv.ui.OnDemandSearchRows
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
+import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.home.components.posterGridColumnCountForWidth
 import com.nuvio.app.features.watched.WatchedRepository
 import kotlinx.coroutines.delay
@@ -121,6 +124,22 @@ fun SearchScreen(
     }
 
     val addonsUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    val pluginsUiState by PluginRepository.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { PluginRepository.initialize() }
+    val pluginDiscoverScrapers = remember(pluginsUiState.pluginsEnabled, pluginsUiState.scrapers) {
+        if (pluginsUiState.pluginsEnabled) {
+            pluginsUiState.scrapers.filter { scraper ->
+                scraper.enabled &&
+                    scraper.manifestEnabled &&
+                    scraper.type == PluginRepositoryType.EXTERNAL_DEX
+            }
+        } else {
+            emptyList()
+        }
+    }
+    val pluginRefreshKey = remember(pluginDiscoverScrapers) {
+        pluginDiscoverScrapers.joinToString("|") { "${it.id}:${it.version}" }
+    }
     val uiState by SearchRepository.uiState.collectAsStateWithLifecycle()
     val discoverUiState by SearchRepository.discoverUiState.collectAsStateWithLifecycle()
     val homeCatalogSettingsUiState by remember {
@@ -152,9 +171,12 @@ fun SearchScreen(
     }
     val addonManifestsLoading = addonsUiState.addons.hasPendingEnabledManifests()
 
-    ScreenActivityEffect(addonRefreshKey, homeCatalogSettingsUiState.hideUnreleasedContent) { screenActive ->
+    ScreenActivityEffect(addonRefreshKey, homeCatalogSettingsUiState.hideUnreleasedContent, pluginRefreshKey) { screenActive ->
         if (!screenActive) return@ScreenActivityEffect
-        SearchRepository.refreshDiscover(addonsUiState.addons)
+        SearchRepository.refreshDiscover(
+            addons = addonsUiState.addons,
+            pluginScrapers = pluginDiscoverScrapers,
+        )
     }
 
     ScreenActivityEffect(query, addonRefreshKey, homeCatalogSettingsUiState.hideUnreleasedContent) { screenActive ->
@@ -215,6 +237,7 @@ fun SearchScreen(
                     SearchRepository.refreshDiscover(
                         addons = addonsUiState.addons,
                         forceRefresh = true,
+                        pluginScrapers = pluginDiscoverScrapers,
                     )
                 } else {
                     SearchRepository.search(
@@ -322,6 +345,7 @@ fun SearchScreen(
                             SearchRepository.refreshDiscover(
                                 addons = addonsUiState.addons,
                                 forceRefresh = true,
+                                pluginScrapers = pluginDiscoverScrapers,
                             )
                         }
                     },

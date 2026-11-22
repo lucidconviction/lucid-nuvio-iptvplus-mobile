@@ -1,5 +1,7 @@
 package com.nuvio.app.features.plugins
 
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import com.nuvio.app.features.plugins.external.PluginLatestPage
 import kotlinx.coroutines.flow.StateFlow
 
 expect object PluginRepository {
@@ -52,4 +54,19 @@ expect object PluginRepository {
         episode: Int?,
         contentTitle: String? = null,
     ): Result<List<PluginRuntimeResult>>
+
+    /** Provider search used by Discover and the plugin catalog pages. */
+    internal suspend fun browseSearch(
+        scraperId: String,
+        query: String,
+    ): List<PluginBrowseItem>
+
+    /** Provider home/latest feed used by Discover and the plugin catalog pages. */
+    internal suspend fun browseLatest(
+        scraperId: String,
+        page: Int,
+    ): PluginLatestPage?
+
+    /** Loads unchecked CloudStream extensions once to discover whether they expose settings. */
+    suspend fun detectCloudStreamSettings()
 }

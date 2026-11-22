@@ -25,6 +25,10 @@ import com.nuvio.app.features.home.HomeCatalogSection
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.home.filterReleasedItems
 import com.nuvio.app.core.poster.withCustomPosterUrls
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
+import com.nuvio.app.features.plugins.PluginScraper
+import com.nuvio.app.features.plugins.browse.toCatalogMetaPreview
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -240,13 +244,15 @@ object SearchRepository {
     fun refreshDiscover(
         addons: List<ManagedAddon>,
         forceRefresh: Boolean = false,
+        pluginScrapers: List<PluginScraper> = emptyList(),
     ) {
         val enabledAddons = addons.enabledAddons()
         val hasPendingAddonManifests = enabledAddons.hasPendingEnabledManifests()
         val addonManifestErrorMessage = enabledAddons.firstEnabledManifestError()
         val activeAddons = enabledAddons.filter { it.manifest != null }
         val serverLibraries = ServerCatalog.titleLibraries()
-        if (activeAddons.isEmpty() && serverLibraries.isEmpty()) {
+        val pluginSources = buildPluginDiscoverSources(pluginScrapers)
+        if (activeAddons.isEmpty() && serverLibraries.isEmpty() && pluginSources.isEmpty()) {
             activeDiscoverJob?.cancel()
             discoverSources = emptyList()
             lastDiscoverRequestKey = null
@@ -263,7 +269,7 @@ object SearchRepository {
             return
         }
 
-        val sources = buildDiscoverSources(activeAddons) + serverLibraries.filter { it.library.kind != ServerMediaKind.MIXED }.map { ref ->
+        val sources = buildDiscoverSources(activeAddons) + pluginSources + serverLibraries.filter { it.library.kind != ServerMediaKind.MIXED }.map { ref ->
             DiscoverCatalogOption(
                 key = ref.target.let { "server:${it.connectionId}:${it.libraryId}" },
                 addonName = ServerRepository.sourceLabel(ref.connection),
@@ -474,6 +480,35 @@ object SearchRepository {
                 }
         }
 
+    private fun buildPluginDiscoverSources(
+        scrapers: List<PluginScraper>,
+    ): List<DiscoverCatalogOption> =
+        scrapers.asSequence()
+            .filter { scraper ->
+                scraper.enabled &&
+                    scraper.manifestEnabled &&
+                    scraper.type == PluginRepositoryType.EXTERNAL_DEX
+            }
+            .flatMap { scraper ->
+                scraper.supportedTypes.asSequence()
+                    .map { it.lowercase() }
+                    .filter { it == "movie" || it == "tv" }
+                    .distinct()
+                    .map { type ->
+                        DiscoverCatalogOption(
+                            key = "plugin:${scraper.id}:$type",
+                            addonName = scraper.name,
+                            manifestUrl = "",
+                            type = type,
+                            catalogId = "latest",
+                            catalogName = "${scraper.name} · Latest",
+                            supportsPagination = true,
+                            pluginScraperId = scraper.id,
+                        )
+                    }
+            }
+            .toList()
+
     private suspend fun SearchCatalogRequest.toSection(forceRefresh: Boolean): HomeCatalogSection {
         val manifest = requireNotNull(addon.manifest)
         val page = fetchCatalogPage(
@@ -519,6 +554,8 @@ object SearchRepository {
         val requestedSkip = if (reset) 0 else current.nextSkip ?: return
         val requestUrl = if (selectedCatalog.server != null) {
             selectedCatalog.key
+        } else if (selectedCatalog.pluginScraperId != null) {
+            "plugin://${selectedCatalog.pluginScraperId}/latest"
         } else {
             buildCatalogUrl(
                 manifestUrl = selectedCatalog.manifestUrl,
@@ -547,18 +584,35 @@ object SearchRepository {
 
         activeDiscoverJob = scope.launch {
             runCatching {
-                val server = selectedCatalog.server
-                if (server != null) {
-                    ServerCatalog.page(server, skip = requestedSkip)
-                } else {
-                    fetchCatalogPage(
-                        manifestUrl = selectedCatalog.manifestUrl,
-                        type = selectedCatalog.type,
-                        catalogId = selectedCatalog.catalogId,
-                        genre = current.selectedGenre,
-                        skip = requestedSkip.takeIf { it > 0 },
-                        forceRefresh = forceRefresh,
+                val pluginScraperId = selectedCatalog.pluginScraperId
+                if (pluginScraperId != null) {
+                    val pageNumber = if (reset) 1 else requestedSkip.coerceAtLeast(1)
+                    val feed = PluginRepository.browseLatest(pluginScraperId, pageNumber)
+                        ?: error(getString(Res.string.discover_empty_load_failed_message))
+                    CatalogPage(
+                        items = feed.items.map { item ->
+                            item.toCatalogMetaPreview(
+                                scraperId = pluginScraperId,
+                                scraperName = selectedCatalog.addonName,
+                            )
+                        },
+                        rawItemCount = feed.items.size,
+                        nextSkip = if (feed.hasNext) pageNumber + 1 else null,
                     )
+                } else {
+                    val server = selectedCatalog.server
+                    if (server != null) {
+                        ServerCatalog.page(server, skip = requestedSkip)
+                    } else {
+                        fetchCatalogPage(
+                            manifestUrl = selectedCatalog.manifestUrl,
+                            type = selectedCatalog.type,
+                            catalogId = selectedCatalog.catalogId,
+                            genre = current.selectedGenre,
+                            skip = requestedSkip.takeIf { it > 0 },
+                            forceRefresh = forceRefresh,
+                        )
+                    }
                 }.withUnreleasedFilter()
             }.fold(
                 onSuccess = { page ->

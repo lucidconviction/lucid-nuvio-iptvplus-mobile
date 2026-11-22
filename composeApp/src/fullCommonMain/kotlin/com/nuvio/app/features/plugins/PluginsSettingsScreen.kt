@@ -77,6 +77,7 @@ import nuvio.composeapp.generated.resources.plugins_group_by_repo_desc
 import nuvio.composeapp.generated.resources.plugins_group_by_repo_title
 import nuvio.composeapp.generated.resources.plugins_input_manifest_placeholder
 import nuvio.composeapp.generated.resources.plugins_message_installed
+import nuvio.composeapp.generated.resources.plugins_message_cloudstream_installed
 import nuvio.composeapp.generated.resources.plugins_provider_disabled_by_repo
 import nuvio.composeapp.generated.resources.plugins_provider_no_description
 import nuvio.composeapp.generated.resources.plugins_provider_version
@@ -107,6 +108,7 @@ fun PluginsSettingsPageContent(
 ) {
     LaunchedEffect(Unit) {
         PluginRepository.initialize()
+        PluginRepository.detectCloudStreamSettings()
     }
 
     val uiState by PluginRepository.uiState.collectAsStateWithLifecycle()
@@ -147,6 +149,7 @@ fun PluginsSettingsPageContent(
     val testFailedDefault = stringResource(Res.string.plugins_test_failed)
     val testErrorTitle = stringResource(Res.string.plugins_test_error_title)
     val installedTemplate = stringResource(Res.string.plugins_message_installed)
+    val cloudStreamInstalledTemplate = stringResource(Res.string.plugins_message_cloudstream_installed)
     val enterRepoUrlError = stringResource(Res.string.plugins_error_enter_repo_url)
     val noExtensionSettingsMessage = stringResource(Res.string.plugins_extension_no_settings)
     val addRepoHint = stringResource(
@@ -164,7 +167,14 @@ fun PluginsSettingsPageContent(
             when (val result = PluginRepository.addRepository(requested)) {
                 is AddPluginRepositoryResult.Success -> {
                     repositoryUrl = ""
-                    message = installedTemplate.replace("%1\$s", result.repository.name)
+                    message = if (result.repository.type == PluginRepositoryType.EXTERNAL_DEX) {
+                        cloudStreamInstalledTemplate.replace("%1\$s", result.repository.name)
+                    } else {
+                        installedTemplate.replace("%1\$s", result.repository.name)
+                    }
+                    if (result.repository.type == PluginRepositoryType.EXTERNAL_DEX) {
+                        coroutineScope.launch { PluginRepository.detectCloudStreamSettings() }
+                    }
                 }
                 is AddPluginRepositoryResult.Error -> {
                     message = result.message
@@ -429,9 +439,13 @@ fun PluginsSettingsPageContent(
                     ?: scraper.repositoryUrl.fallbackRepositoryLabel(repoFallbackLabel)
                 val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
                 // DEX packages must be loaded to know whether they expose settings.
-                // Show the action for every CloudStream provider and resolve lazily
-                // on tap; querying every package up front would load the whole repo.
-                val showSettings = isCloudStream || scraper.hasSettings
+                // The repository backfills settingsChecked after install/refresh, so a
+                // gear is only shown when a package actually has configurable settings.
+                val showSettings = if (isCloudStream) {
+                    scraper.settingsChecked && scraper.hasSettings
+                } else {
+                    scraper.hasSettings
+                }
 
                 NuvioSurfaceCard {
                     Row(
