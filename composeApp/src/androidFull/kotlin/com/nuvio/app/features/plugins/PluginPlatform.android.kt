@@ -14,6 +14,14 @@ internal object PluginStorage {
     fun initialize(context: Context) {
         preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
         scraperCodeStore = PluginScraperCodeFileStore(context.filesDir.resolve(scraperCodeDirectoryName))
+        com.nuvio.app.features.plugins.external.AndroidExternalExtensionHost.initialize(context)
+    }
+
+    fun hasAcceptedCloudStreamConsent(): Boolean =
+        preferences?.getBoolean("cloudstream_consent_accepted", false) == true
+
+    fun setCloudStreamConsentAccepted() {
+        preferences?.edit()?.putBoolean("cloudstream_consent_accepted", true)?.apply()
     }
 
     fun loadState(profileId: Int): String? =

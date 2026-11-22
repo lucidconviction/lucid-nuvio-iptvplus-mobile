@@ -537,6 +537,25 @@ kotlin {
                 if (androidDistribution == "full") {
                     implementation(files("libs/quickjs-kt-android-1.0.5-nuvio.aar"))
                     implementation(libs.ksoup)
+
+                    // CloudStream .cs3 extension host. Full (GitHub) distribution only:
+                    // the Play Store build must not download or execute DEX code.
+                    implementation("com.github.recloudstream.cloudstream:library:v4.7.0") {
+                        exclude(group = "org.mozilla", module = "rhino")
+                        exclude(group = "com.github.AmarullisVFX", module = "newpipeextractor")
+                        exclude(group = "com.github.AmaryllisVFX", module = "newpipeextractor")
+                        exclude(group = "com.github.AmaryllisVFX.newpipeextractor")
+                        exclude(group = "com.github.TeamNewPipe", module = "nanojson")
+                        exclude(group = "info.debatty", module = "java-string-similarity")
+                    }
+                    implementation("org.jsoup:jsoup:1.17.2")
+                    implementation("com.fasterxml.jackson.core:jackson-databind:2.17.0")
+                    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.0")
+                    implementation("com.github.Blatzar:NiceHttp:0.4.16")
+                    implementation("org.conscrypt:conscrypt-android:2.5.2")
+                    implementation("com.google.android.material:material:1.12.0")
+                    // Some recent CS3 packages call runBlockingK from 1.11.
+                    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
                 }
             }
         }

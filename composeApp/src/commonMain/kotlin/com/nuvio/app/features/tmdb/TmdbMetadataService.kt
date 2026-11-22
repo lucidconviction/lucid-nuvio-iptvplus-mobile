@@ -736,6 +736,19 @@ object TmdbMetadataService {
         )
     }
 
+    internal suspend fun enrichmentForExtension(
+        tmdbId: String,
+        mediaType: String,
+    ): TmdbEnrichment? {
+        val settings = TmdbSettingsRepository.snapshot()
+        return fetchEnrichment(
+            tmdbId = tmdbId,
+            mediaType = if (mediaType.equals("tv", ignoreCase = true)) "tv" else "movie",
+            language = settings.language,
+            settings = settings,
+        )
+    }
+
     suspend fun fetchStandaloneMeta(
         type: String,
         id: String,

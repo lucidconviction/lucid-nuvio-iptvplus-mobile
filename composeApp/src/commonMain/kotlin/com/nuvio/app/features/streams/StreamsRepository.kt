@@ -152,7 +152,7 @@ object StreamsRepository {
             }
     }
 
-    fun load(type: String, videoId: String, parentMetaId: String? = null, season: Int? = null, episode: Int? = null, manualSelection: Boolean = false, forceAutoPlay: Boolean = false) {
+    fun load(type: String, videoId: String, parentMetaId: String? = null, season: Int? = null, episode: Int? = null, manualSelection: Boolean = false, forceAutoPlay: Boolean = false, contentTitle: String? = null) {
         PluginRepository.setLocalPluginSearchPaused(false)
         load(
             type = type,
@@ -163,10 +163,11 @@ object StreamsRepository {
             manualSelection = manualSelection,
             forceAutoPlay = forceAutoPlay,
             forceRefresh = false,
+            contentTitle = contentTitle,
         )
     }
 
-    fun reload(type: String, videoId: String, parentMetaId: String? = null, season: Int? = null, episode: Int? = null, manualSelection: Boolean = false, forceAutoPlay: Boolean = false) {
+    fun reload(type: String, videoId: String, parentMetaId: String? = null, season: Int? = null, episode: Int? = null, manualSelection: Boolean = false, forceAutoPlay: Boolean = false, contentTitle: String? = null) {
         PluginRepository.setLocalPluginSearchPaused(false)
         load(
             type = type,
@@ -177,10 +178,11 @@ object StreamsRepository {
             manualSelection = manualSelection,
             forceAutoPlay = forceAutoPlay,
             forceRefresh = true,
+            contentTitle = contentTitle,
         )
     }
 
-    private fun load(type: String, videoId: String, parentMetaId: String?, season: Int?, episode: Int?, manualSelection: Boolean, forceAutoPlay: Boolean, forceRefresh: Boolean) {
+    private fun load(type: String, videoId: String, parentMetaId: String?, season: Int?, episode: Int?, manualSelection: Boolean, forceAutoPlay: Boolean, forceRefresh: Boolean, contentTitle: String? = null) {
         val pluginUiState = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.initialize()
             PluginRepository.uiState.value
@@ -476,6 +478,14 @@ object StreamsRepository {
                 ).firstOrNull() ?: badgeGroup
             }
 
+            // Plugin/CloudStream streams are direct links. They participate in
+            // badge presentation but not in addon-only debrid preparation.
+            fun presentPluginGroup(group: AddonStreamGroup): AddonStreamGroup =
+                StreamBadgePresentation.apply(
+                    groups = listOf(group),
+                    rules = streamBadgeRules,
+                ).firstOrNull() ?: group
+
             fun publishAddonGroup(group: AddonStreamGroup) {
                 _uiState.update { current ->
                     val updated = StreamAutoPlaySelector.orderAddonStreams(
@@ -644,6 +654,7 @@ object StreamsRepository {
                             mediaType = type,
                             season = season,
                             episode = episode,
+                            contentTitle = contentTitle,
                         ).fold(
                             onSuccess = { results ->
                                 StreamLoadCompletion.PluginScraper(
@@ -703,10 +714,12 @@ object StreamsRepository {
                                         } else {
                                             null
                                         }
-                                        group.copy(
-                                            streams = mergedStreams,
-                                            isLoading = stillLoading,
-                                            error = finalError,
+                                        presentPluginGroup(
+                                            group.copy(
+                                                streams = mergedStreams,
+                                                isLoading = stillLoading,
+                                                error = finalError,
+                                            ),
                                         )
                                     }
                                 },

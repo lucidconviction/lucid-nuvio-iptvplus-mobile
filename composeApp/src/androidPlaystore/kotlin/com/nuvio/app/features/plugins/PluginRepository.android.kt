@@ -39,8 +39,17 @@ actual object PluginRepository {
 
     actual fun getEnabledScrapersForType(type: String): List<PluginScraper> = emptyList()
 
-    actual suspend fun testScraper(scraperId: String): Result<List<PluginRuntimeResult>> =
+    actual suspend fun testScraper(
+        scraperId: String,
+        contentTitle: String?,
+        tmdbId: String?,
+        useFirstResult: Boolean,
+    ): Result<List<PluginRuntimeResult>> =
         Result.failure(UnsupportedOperationException(getString(Res.string.plugins_error_unavailable_build)))
+
+    actual suspend fun hasExtensionSettings(scraperId: String): Boolean = false
+
+    actual fun openExtensionSettings(scraperId: String) = Unit
 
     actual suspend fun executeScraper(
         scraper: PluginScraper,
@@ -48,6 +57,7 @@ actual object PluginRepository {
         mediaType: String,
         season: Int?,
         episode: Int?,
+        contentTitle: String?,
     ): Result<List<PluginRuntimeResult>> =
         Result.failure(UnsupportedOperationException(getString(Res.string.plugins_error_unavailable_build)))
 }

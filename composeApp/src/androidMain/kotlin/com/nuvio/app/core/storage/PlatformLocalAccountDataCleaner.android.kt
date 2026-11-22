@@ -56,5 +56,10 @@ internal actual object PlatformLocalAccountDataCleaner {
                 .apply()
         }
         context.filesDir.resolve("nuvio_plugin_scrapers").deleteRecursively()
+        context.filesDir.listFiles()
+            ?.filter { file -> file.name == "cs_extensions" || file.name.startsWith("cs_extensions_p") }
+            ?.forEach { file -> file.deleteRecursively() }
+        context.codeCacheDir.resolve("cs_dex_cache").deleteRecursively()
+        context.cacheDir.resolve("cs_http_cache").deleteRecursively()
     }
 }

@@ -31,7 +31,18 @@ expect object PluginRepository {
 
     fun getEnabledScrapersForType(type: String): List<PluginScraper>
 
-    suspend fun testScraper(scraperId: String): Result<List<PluginRuntimeResult>>
+    suspend fun testScraper(
+        scraperId: String,
+        contentTitle: String? = null,
+        tmdbId: String? = null,
+        useFirstResult: Boolean = false,
+    ): Result<List<PluginRuntimeResult>>
+
+    /** Loads the package if necessary and reports whether it exposes a settings UI. */
+    suspend fun hasExtensionSettings(scraperId: String): Boolean
+
+    /** Opens a CloudStream extension's own settings Activity. No-op for JS plugins. */
+    fun openExtensionSettings(scraperId: String)
 
     suspend fun executeScraper(
         scraper: PluginScraper,
@@ -39,5 +50,6 @@ expect object PluginRepository {
         mediaType: String,
         season: Int?,
         episode: Int?,
+        contentTitle: String? = null,
     ): Result<List<PluginRuntimeResult>>
 }

@@ -24,7 +24,15 @@ import platform.posix.rewind
 internal object PluginStorage {
     private const val pluginsStateKey = "plugins_state"
     private const val scraperCodeDirectoryName = "nuvio_plugin_scrapers"
+    private const val consentKey = "cloudstream_consent_accepted"
     private val scraperCodeLock = SynchronizedObject()
+
+    fun hasAcceptedCloudStreamConsent(): Boolean =
+        NSUserDefaults.standardUserDefaults.boolForKey(consentKey)
+
+    fun setCloudStreamConsentAccepted() {
+        NSUserDefaults.standardUserDefaults.setBool(true, forKey = consentKey)
+    }
 
     fun loadState(profileId: Int): String? =
         NSUserDefaults.standardUserDefaults.stringForKey("${pluginsStateKey}_$profileId")

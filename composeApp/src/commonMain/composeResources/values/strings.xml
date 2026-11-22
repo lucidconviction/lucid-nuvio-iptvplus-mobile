@@ -852,7 +852,7 @@
     <string name="settings_content_discovery_recent_searches_description">Save recent searches and show them when the search bar is focused.</string>
     <string name="settings_content_discovery_addons_description">Install, remove, refresh, and sort your content sources.</string>
     <string name="settings_content_discovery_addons_description_appstore">Add and manage the addons you use with Nuvio.</string>
-    <string name="settings_content_discovery_plugins_description">Install JavaScript scraper repositories and test providers internally.</string>
+    <string name="settings_content_discovery_plugins_description">Install JavaScript or CloudStream extension repositories and test providers internally.</string>
     <string name="settings_content_discovery_homescreen_description">Adjust home layout, content visibility, and poster behavior</string>
     <string name="settings_content_discovery_meta_screen_description">Settings for the detail and episode screens.</string>
     <string name="settings_content_discovery_collections_description">Create custom catalog groupings with folders shown on Home.</string>
@@ -2257,6 +2257,8 @@
     <string name="player_error_unable_to_play_stream">Unable to play this stream.</string>
     <string name="plugins_badge_disabled">Plugins disabled</string>
     <string name="plugins_badge_enabled">Plugins enabled</string>
+    <string name="plugins_badge_cloudstream">CloudStream</string>
+    <string name="plugins_badge_javascript">JavaScript</string>
     <string name="plugins_badge_providers">%1$d providers</string>
     <string name="plugins_badge_refreshing">Refreshing</string>
     <string name="plugins_badge_repos">%1$d repos</string>
@@ -2266,6 +2268,15 @@
     <string name="plugins_button_testing">Testing…</string>
     <string name="plugins_cd_delete_repo">Delete plugin repository</string>
     <string name="plugins_cd_refresh_repo">Refresh plugin repository</string>
+    <string name="plugins_cd_provider_settings">Provider settings</string>
+    <string name="plugins_extension_no_settings">This extension does not expose a settings screen.</string>
+    <string name="plugins_cloudstream_unsupported">CloudStream extensions are not supported in this build.</string>
+    <string name="plugins_cloudstream_consent_title">Install CloudStream extensions?</string>
+    <string name="plugins_cloudstream_consent_message">CloudStream extensions are executable third-party code. They run with the same access as this app (files, network, accounts) and are not sandboxed. Only add repositories you trust. This app does not provide or endorse any extension or content source.</string>
+    <string name="plugins_cloudstream_consent_accept">Continue</string>
+    <string name="plugins_cloudstream_consent_cancel">Cancel</string>
+    <string name="plugins_add_repo_hint">Accepts Nuvio JavaScript manifests, CloudStream repositories (repo.json or plugins.json), and short codes. CloudStream extensions run as third-party code with the same access as this app; only add repositories you trust.</string>
+    <string name="plugins_add_repo_hint_js_only">Accepts Nuvio JavaScript manifests. CloudStream extensions are not supported in this build.</string>
     <string name="plugins_empty_providers">No providers available yet.</string>
     <string name="plugins_empty_repos_subtitle">Add a repository URL to install provider plugins for stream discovery.</string>
     <string name="plugins_empty_repos_title">No plugin repositories installed yet.</string>
@@ -2273,6 +2284,7 @@
     <string name="plugins_enable_globally_title">Enable plugin providers globally</string>
     <string name="plugins_error_already_installed">That plugin repository is already installed.</string>
     <string name="plugins_error_enter_repo_url">Enter a plugin repository URL.</string>
+    <string name="plugins_error_short_code_failed">Unable to resolve short code “%1$s”.</string>
     <string name="plugins_error_enter_valid_url">Enter a valid plugin URL.</string>
     <string name="plugins_error_install_failed">Unable to install plugin repository</string>
     <string name="plugins_error_provider_not_found">Provider not found</string>
@@ -2280,7 +2292,7 @@
     <string name="plugins_error_unavailable_build">Plugins are not available in this build.</string>
     <string name="plugins_group_by_repo_desc">In Streams, show one provider per repository instead of one per source.</string>
     <string name="plugins_group_by_repo_title">Group plugin providers by repository</string>
-    <string name="plugins_input_manifest_placeholder">Plugin manifest URL</string>
+    <string name="plugins_input_manifest_placeholder">Repository URL or short code</string>
     <string name="plugins_manifest_error_name_missing">Manifest name is missing.</string>
     <string name="plugins_manifest_error_no_providers">Manifest has no providers.</string>
     <string name="plugins_manifest_error_version_missing">Manifest version is missing.</string>
@@ -2302,7 +2314,16 @@
     <string name="plugins_section_providers">PROVIDERS</string>
     <string name="plugins_test_error_title">Error</string>
     <string name="plugins_test_failed">Provider test failed</string>
+    <string name="plugins_test_no_results">No streams returned. Try a title this provider carries.</string>
     <string name="plugins_test_results_count">Test results (%1$d)</string>
+    <string name="plugins_test_dialog_title">Test provider</string>
+    <string name="plugins_test_dialog_hint">Enter a title this provider carries. For TMDB-based providers, the TMDB ID is used instead.</string>
+    <string name="plugins_test_title_label">Search title</string>
+    <string name="plugins_test_tmdb_label">TMDB ID (optional)</string>
+    <string name="plugins_test_use_first_result">Use first search result</string>
+    <string name="plugins_test_use_first_result_desc">Bypass title matching; useful for custom providers.</string>
+    <string name="plugins_test_run">Run test</string>
+    <string name="plugins_test_cancel">Cancel</string>
     <string name="search_error_no_results_for_catalog">No search results returned for %1$s.</string>
     <string name="settings_playback_introdb_invalid_key">Invalid API Key or connection failed</string>
     <string name="streams_plugin_repository_fallback">Plugin repository</string>

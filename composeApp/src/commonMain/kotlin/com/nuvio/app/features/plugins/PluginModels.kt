@@ -20,6 +20,18 @@ data class PluginManifest(
     val scrapers: List<PluginManifestScraper> = emptyList(),
 )
 
+/**
+ * How a provider is executed.
+ *
+ * NUVIO_JS providers are downloaded as JavaScript and run in QuickJS.
+ * EXTERNAL_DEX providers are CloudStream `.cs3` packages run through an
+ * Android-only DexClassLoader host. Only full Android builds support DEX.
+ */
+enum class PluginRepositoryType {
+    NUVIO_JS,
+    EXTERNAL_DEX,
+}
+
 @Serializable
 data class PluginManifestScraper(
     val id: String,
@@ -49,6 +61,7 @@ data class PluginRepositoryItem(
     val lastUpdated: Long = 0L,
     val isRefreshing: Boolean = false,
     val errorMessage: String? = null,
+    val type: PluginRepositoryType = PluginRepositoryType.NUVIO_JS,
 )
 
 data class PluginScraper(
@@ -66,6 +79,8 @@ data class PluginScraper(
     val contentLanguage: List<String> = emptyList(),
     val formats: List<String>? = null,
     val code: String,
+    val type: PluginRepositoryType = PluginRepositoryType.NUVIO_JS,
+    val extensionHash: String? = null,
 ) {
     fun supportsType(type: String): Boolean {
         val normalizedType = normalizePluginType(type)
@@ -125,6 +140,7 @@ internal data class StoredPluginRepository(
     val version: String? = null,
     val scraperCount: Int = 0,
     val lastUpdated: Long = 0L,
+    val type: PluginRepositoryType = PluginRepositoryType.NUVIO_JS,
 )
 
 @Serializable
@@ -143,6 +159,8 @@ internal data class StoredPluginScraper(
     val contentLanguage: List<String> = emptyList(),
     val formats: List<String>? = null,
     val code: String? = null,
+    val type: PluginRepositoryType = PluginRepositoryType.NUVIO_JS,
+    val extensionHash: String? = null,
 )
 
 internal data class RestoredPluginScraper(
@@ -162,6 +180,7 @@ internal fun PluginsUiState.toStoredPluginsState(): StoredPluginsState =
                 version = repository.version,
                 scraperCount = repository.scraperCount,
                 lastUpdated = repository.lastUpdated,
+                type = repository.type,
             )
         },
         scrapers = scrapers.map(PluginScraper::toStoredPluginScraper),
@@ -183,11 +202,39 @@ internal fun PluginScraper.toStoredPluginScraper(): StoredPluginScraper =
         contentLanguage = contentLanguage,
         formats = formats,
         code = null,
+        type = type,
+        extensionHash = extensionHash,
     )
 
 internal fun StoredPluginScraper.restorePluginScraper(
     loadCachedCode: (String) -> String?,
 ): RestoredPluginScraper? {
+    if (type == PluginRepositoryType.EXTERNAL_DEX) {
+        // DEX packages live in a binary file store owned by the Android host.
+        // The common state only needs the scraper metadata.
+        return RestoredPluginScraper(
+            scraper = PluginScraper(
+                id = id,
+                repositoryUrl = repositoryUrl,
+                name = name,
+                description = description,
+                version = version,
+                filename = filename,
+                supportedTypes = supportedTypes,
+                enabled = enabled,
+                manifestEnabled = manifestEnabled,
+                hasSettings = hasSettings,
+                logo = logo,
+                contentLanguage = contentLanguage,
+                formats = formats,
+                code = "",
+                type = type,
+                extensionHash = extensionHash,
+            ),
+            requiresMigration = false,
+        )
+    }
+
     val cachedCode = loadCachedCode(id)
     val resolvedCode = cachedCode ?: code ?: return null
     return RestoredPluginScraper(
@@ -206,6 +253,8 @@ internal fun StoredPluginScraper.restorePluginScraper(
             contentLanguage = contentLanguage,
             formats = formats,
             code = resolvedCode,
+            type = type,
+            extensionHash = extensionHash,
         ),
         requiresMigration = code != null,
     )

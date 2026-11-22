@@ -3,4 +3,11 @@
 
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <application>
+        <activity
+            android:name="com.nuvio.app.features.plugins.external.ExtensionSettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Lucid.ExtensionSettings" />
+    </application>
+
 </manifest>

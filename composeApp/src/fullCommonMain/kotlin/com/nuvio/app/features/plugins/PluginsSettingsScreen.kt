@@ -14,11 +14,13 @@ import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,8 +45,10 @@ import com.nuvio.app.core.ui.NuvioSurfaceCard
 import com.nuvio.app.features.plugins.runtime.PluginRuntime
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.plugins_badge_cloudstream
 import nuvio.composeapp.generated.resources.plugins_badge_disabled
 import nuvio.composeapp.generated.resources.plugins_badge_enabled
+import nuvio.composeapp.generated.resources.plugins_badge_javascript
 import nuvio.composeapp.generated.resources.plugins_badge_providers
 import nuvio.composeapp.generated.resources.plugins_badge_refreshing
 import nuvio.composeapp.generated.resources.plugins_badge_repos
@@ -52,9 +56,17 @@ import nuvio.composeapp.generated.resources.plugins_button_install_repo
 import nuvio.composeapp.generated.resources.plugins_button_installing
 import nuvio.composeapp.generated.resources.plugins_button_test_provider
 import nuvio.composeapp.generated.resources.plugins_button_testing
+import nuvio.composeapp.generated.resources.plugins_cloudstream_consent_title
+import nuvio.composeapp.generated.resources.plugins_cloudstream_consent_message
+import nuvio.composeapp.generated.resources.plugins_cloudstream_consent_accept
+import nuvio.composeapp.generated.resources.plugins_cloudstream_consent_cancel
 import nuvio.composeapp.generated.resources.plugins_cd_delete_repo
+import nuvio.composeapp.generated.resources.plugins_cd_provider_settings
 import nuvio.composeapp.generated.resources.plugins_cd_refresh_repo
+import nuvio.composeapp.generated.resources.plugins_add_repo_hint
+import nuvio.composeapp.generated.resources.plugins_add_repo_hint_js_only
 import nuvio.composeapp.generated.resources.plugins_empty_providers
+import nuvio.composeapp.generated.resources.plugins_extension_no_settings
 import nuvio.composeapp.generated.resources.plugins_empty_repos_subtitle
 import nuvio.composeapp.generated.resources.plugins_empty_repos_title
 import nuvio.composeapp.generated.resources.plugins_enable_globally_desc
@@ -75,7 +87,16 @@ import nuvio.composeapp.generated.resources.plugins_section_overview
 import nuvio.composeapp.generated.resources.plugins_section_providers
 import nuvio.composeapp.generated.resources.plugins_test_error_title
 import nuvio.composeapp.generated.resources.plugins_test_failed
+import nuvio.composeapp.generated.resources.plugins_test_no_results
 import nuvio.composeapp.generated.resources.plugins_test_results_count
+import nuvio.composeapp.generated.resources.plugins_test_dialog_title
+import nuvio.composeapp.generated.resources.plugins_test_dialog_hint
+import nuvio.composeapp.generated.resources.plugins_test_title_label
+import nuvio.composeapp.generated.resources.plugins_test_tmdb_label
+import nuvio.composeapp.generated.resources.plugins_test_use_first_result
+import nuvio.composeapp.generated.resources.plugins_test_use_first_result_desc
+import nuvio.composeapp.generated.resources.plugins_test_run
+import nuvio.composeapp.generated.resources.plugins_test_cancel
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -92,9 +113,15 @@ fun PluginsSettingsPageContent(
     var repositoryUrl by rememberSaveable { mutableStateOf("") }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
     var isAdding by remember { mutableStateOf(false) }
+    var consentRepoUrl by remember { mutableStateOf<String?>(null) }
 
     var testingScraperId by remember { mutableStateOf<String?>(null) }
     val testResults = remember { mutableStateMapOf<String, List<PluginRuntimeResult>>() }
+
+    var testDialogScraper by remember { mutableStateOf<PluginScraper?>(null) }
+    var testQuery by rememberSaveable { mutableStateOf("") }
+    var testTmdbId by rememberSaveable { mutableStateOf("") }
+    var testUseFirstResult by rememberSaveable { mutableStateOf(true) }
 
     var configuringScraper by remember { mutableStateOf<PluginScraper?>(null) }
     var configuringLayout by remember { mutableStateOf<String?>(null) }
@@ -119,6 +146,54 @@ fun PluginsSettingsPageContent(
     val testErrorTitle = stringResource(Res.string.plugins_test_error_title)
     val installedTemplate = stringResource(Res.string.plugins_message_installed)
     val enterRepoUrlError = stringResource(Res.string.plugins_error_enter_repo_url)
+    val noExtensionSettingsMessage = stringResource(Res.string.plugins_extension_no_settings)
+    val addRepoHint = stringResource(
+        if (com.nuvio.app.features.plugins.external.externalExtensionHost.isSupported) {
+            Res.string.plugins_add_repo_hint
+        } else {
+            Res.string.plugins_add_repo_hint_js_only
+        },
+    )
+
+    fun installRepository(requested: String) {
+        isAdding = true
+        message = null
+        coroutineScope.launch {
+            when (val result = PluginRepository.addRepository(requested)) {
+                is AddPluginRepositoryResult.Success -> {
+                    repositoryUrl = ""
+                    message = installedTemplate.replace("%1\$s", result.repository.name)
+                }
+                is AddPluginRepositoryResult.Error -> {
+                    message = result.message
+                }
+            }
+            isAdding = false
+        }
+    }
+
+    fun runProviderTest(scraper: PluginScraper, title: String?, tmdbId: String?, useFirstResult: Boolean = false) {
+        testingScraperId = scraper.id
+        coroutineScope.launch {
+            PluginRepository.testScraper(
+                scraperId = scraper.id,
+                contentTitle = title,
+                tmdbId = tmdbId,
+                useFirstResult = useFirstResult,
+            ).onSuccess { results ->
+                testResults[scraper.id] = results
+            }.onFailure { error ->
+                testResults[scraper.id] = listOf(
+                    PluginRuntimeResult(
+                        title = testErrorTitle,
+                        name = error.message ?: testFailedDefault,
+                        url = "about:error",
+                    ),
+                )
+            }
+            testingScraperId = null
+        }
+    }
 
     Column(
         modifier = modifier,
@@ -206,6 +281,12 @@ fun PluginsSettingsPageContent(
                 },
                 placeholder = stringResource(Res.string.plugins_input_manifest_placeholder),
             )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = addRepoHint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(modifier = Modifier.height(16.dp))
             NuvioPrimaryButton(
                 text = if (isAdding) {
@@ -220,19 +301,10 @@ fun PluginsSettingsPageContent(
                         message = enterRepoUrlError
                         return@NuvioPrimaryButton
                     }
-                    isAdding = true
-                    message = null
-                    coroutineScope.launch {
-                        when (val result = PluginRepository.addRepository(requested)) {
-                            is AddPluginRepositoryResult.Success -> {
-                                repositoryUrl = ""
-                                message = installedTemplate.replace("%1\$s", result.repository.name)
-                            }
-                            is AddPluginRepositoryResult.Error -> {
-                                message = result.message
-                            }
-                        }
-                        isAdding = false
+                    if (CloudStreamConsent.isRequired(requested) && !CloudStreamConsent.isAccepted()) {
+                        consentRepoUrl = requested
+                    } else {
+                        installRepository(requested)
                     }
                 },
             )
@@ -315,6 +387,13 @@ fun PluginsSettingsPageContent(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         NuvioInfoBadge(text = stringResource(Res.string.plugins_badge_providers, repo.scraperCount))
+                        NuvioInfoBadge(
+                            text = if (repo.type == PluginRepositoryType.EXTERNAL_DEX) {
+                                stringResource(Res.string.plugins_badge_cloudstream)
+                            } else {
+                                stringResource(Res.string.plugins_badge_javascript)
+                            },
+                        )
                         if (repo.isRefreshing) {
                             NuvioInfoBadge(text = stringResource(Res.string.plugins_badge_refreshing))
                         }
@@ -346,6 +425,11 @@ fun PluginsSettingsPageContent(
                 val isTestingThisScraper = testingScraperId == scraper.id
                 val repositoryName = repositoryNameByUrl[scraper.repositoryUrl]
                     ?: scraper.repositoryUrl.fallbackRepositoryLabel(repoFallbackLabel)
+                val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
+                // DEX packages must be loaded to know whether they expose settings.
+                // Show the action for every CloudStream provider and resolve lazily
+                // on tap; querying every package up front would load the whole repo.
+                val showSettings = isCloudStream || scraper.hasSettings
 
                 NuvioSurfaceCard {
                     Row(
@@ -391,19 +475,29 @@ fun PluginsSettingsPageContent(
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (scraper.hasSettings) {
+                            if (showSettings) {
                                 IconButton(onClick = {
-                                    coroutineScope.launch {
-                                        val layout = PluginRuntime.getPluginSettingsLayout(scraper.code, scraper.id)
-                                        if (layout != null) {
-                                            configuringScraper = scraper
-                                            configuringLayout = layout
+                                    if (isCloudStream) {
+                                        coroutineScope.launch {
+                                            if (PluginRepository.hasExtensionSettings(scraper.id)) {
+                                                PluginRepository.openExtensionSettings(scraper.id)
+                                            } else {
+                                                message = noExtensionSettingsMessage
+                                            }
+                                        }
+                                    } else {
+                                        coroutineScope.launch {
+                                            val layout = PluginRuntime.getPluginSettingsLayout(scraper.code, scraper.id)
+                                            if (layout != null) {
+                                                configuringScraper = scraper
+                                                configuringLayout = layout
+                                            }
                                         }
                                     }
                                 }) {
                                     Icon(
                                         imageVector = Icons.Rounded.Settings,
-                                        contentDescription = "Provider settings",
+                                        contentDescription = stringResource(Res.string.plugins_cd_provider_settings),
                                         tint = MaterialTheme.colorScheme.primary,
                                     )
                                 }
@@ -422,6 +516,13 @@ fun PluginsSettingsPageContent(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         NuvioInfoBadge(text = scraper.supportedTypes.joinToString(" | "))
+                        NuvioInfoBadge(
+                            text = if (isCloudStream) {
+                                stringResource(Res.string.plugins_badge_cloudstream)
+                            } else {
+                                stringResource(Res.string.plugins_badge_javascript)
+                            },
+                        )
                         NuvioInfoBadge(text = stringResource(Res.string.plugins_provider_version, scraper.version))
                         if (!scraper.manifestEnabled) {
                             NuvioInfoBadge(text = stringResource(Res.string.plugins_provider_disabled_by_repo))
@@ -437,22 +538,12 @@ fun PluginsSettingsPageContent(
                         },
                         enabled = !isTestingThisScraper,
                         onClick = {
-                            testingScraperId = scraper.id
-                            coroutineScope.launch {
-                                PluginRepository.testScraper(scraper.id)
-                                    .onSuccess { results ->
-                                        testResults[scraper.id] = results
-                                    }
-                                    .onFailure { error ->
-                                        testResults[scraper.id] = listOf(
-                                            PluginRuntimeResult(
-                                                title = testErrorTitle,
-                                                name = error.message ?: testFailedDefault,
-                                                url = "about:error",
-                                            ),
-                                        )
-                                    }
-                                testingScraperId = null
+                            if (isCloudStream) {
+                                testDialogScraper = scraper
+                                testQuery = if (scraper.supportsType("movie")) "The Matrix" else "Game of Thrones"
+                                testTmdbId = if (scraper.supportsType("movie")) "603" else "1396"
+                            } else {
+                                runProviderTest(scraper, null, null)
                             }
                         },
                     )
@@ -497,6 +588,13 @@ fun PluginsSettingsPageContent(
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                         }
+                    } else if (scraperResults != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(Res.string.plugins_test_no_results),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -512,6 +610,100 @@ fun PluginsSettingsPageContent(
                 configuringScraper = null
                 configuringLayout = null
             }
+        )
+    }
+
+    testDialogScraper?.let { scraper ->
+        AlertDialog(
+            onDismissRequest = { testDialogScraper = null },
+            title = { Text(stringResource(Res.string.plugins_test_dialog_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(Res.string.plugins_test_dialog_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    NuvioInputField(
+                        value = testQuery,
+                        onValueChange = { testQuery = it },
+                        placeholder = stringResource(Res.string.plugins_test_title_label),
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    NuvioInputField(
+                        value = testTmdbId,
+                        onValueChange = { testTmdbId = it },
+                        placeholder = stringResource(Res.string.plugins_test_tmdb_label),
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(Res.string.plugins_test_use_first_result),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                text = stringResource(Res.string.plugins_test_use_first_result_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = testUseFirstResult,
+                            onCheckedChange = { testUseFirstResult = it },
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val selected = scraper
+                        testDialogScraper = null
+                        runProviderTest(selected, testQuery, testTmdbId, testUseFirstResult)
+                    },
+                ) {
+                    Text(stringResource(Res.string.plugins_test_run))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { testDialogScraper = null }) {
+                    Text(stringResource(Res.string.plugins_test_cancel))
+                }
+            },
+        )
+    }
+
+    consentRepoUrl?.let { requested ->
+        AlertDialog(
+            onDismissRequest = { consentRepoUrl = null },
+            title = { Text(stringResource(Res.string.plugins_cloudstream_consent_title)) },
+            text = {
+                Text(
+                    text = stringResource(Res.string.plugins_cloudstream_consent_message),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        CloudStreamConsent.accept()
+                        consentRepoUrl = null
+                        installRepository(requested)
+                    },
+                ) {
+                    Text(stringResource(Res.string.plugins_cloudstream_consent_accept))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { consentRepoUrl = null }) {
+                    Text(stringResource(Res.string.plugins_cloudstream_consent_cancel))
+                }
+            },
         )
     }
 }

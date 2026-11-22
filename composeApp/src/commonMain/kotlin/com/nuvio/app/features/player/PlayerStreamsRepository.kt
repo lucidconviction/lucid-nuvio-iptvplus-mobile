@@ -327,6 +327,13 @@ object PlayerStreamsRepository {
                 ).firstOrNull() ?: badgeGroup
             }
 
+            // Plugin/CloudStream streams are direct links. Badges only; no addon debrid prep.
+            fun presentPluginGroup(group: AddonStreamGroup): AddonStreamGroup =
+                StreamBadgePresentation.apply(
+                    groups = listOf(group),
+                    rules = streamBadgeRules,
+                ).firstOrNull() ?: group
+
             fun publishStreamGroup(group: AddonStreamGroup) {
                 stateFlow.update { current ->
                     val updated = StreamAutoPlaySelector.orderAddonStreams(
@@ -403,6 +410,7 @@ object PlayerStreamsRepository {
                             mediaType = type,
                             season = season,
                             episode = episode,
+                            contentTitle = MetaDetailsRepository.uiState.value.meta?.name,
                         ).fold(
                             onSuccess = { results ->
                                 StreamLoadCompletion.PluginScraper(
@@ -462,10 +470,12 @@ object PlayerStreamsRepository {
                                         } else {
                                             null
                                         }
-                                        group.copy(
-                                            streams = mergedStreams,
-                                            isLoading = stillLoading,
-                                            error = finalError,
+                                        presentPluginGroup(
+                                            group.copy(
+                                                streams = mergedStreams,
+                                                isLoading = stillLoading,
+                                                error = finalError,
+                                            ),
                                         )
                                     }
                                 },

@@ -3,6 +3,10 @@ package com.nuvio.app.features.plugins
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.network.SupabaseProvider
 import com.nuvio.app.features.addons.httpGetText
+import com.nuvio.app.features.addons.httpRequestRaw
+import com.nuvio.app.features.plugins.external.ExternalRepoParser
+import com.nuvio.app.features.plugins.external.cloudStreamContentTypes
+import com.nuvio.app.features.plugins.external.externalExtensionHost
 import com.nuvio.app.features.profiles.ProfileRepository
 import com.nuvio.app.features.tmdb.TmdbService
 import com.nuvio.app.features.plugins.runtime.PluginRuntime
@@ -12,16 +16,22 @@ import io.github.jan.supabase.postgrest.rpc
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -34,6 +44,7 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.plugins_error_enter_repo_url
 import nuvio.composeapp.generated.resources.plugins_error_enter_valid_url
 import nuvio.composeapp.generated.resources.plugins_error_provider_not_found
+import nuvio.composeapp.generated.resources.plugins_error_short_code_failed
 import nuvio.composeapp.generated.resources.plugins_repository_already_installed
 import nuvio.composeapp.generated.resources.plugins_repository_install_failed
 import nuvio.composeapp.generated.resources.plugins_repository_refresh_failed
@@ -176,31 +187,40 @@ actual object PluginRepository {
 
     actual suspend fun addRepository(rawUrl: String): AddPluginRepositoryResult {
         initialize()
-        val manifestUrl = try {
-            normalizeManifestUrl(rawUrl)
+        val inputUrl = try {
+            resolveRepositoryInput(rawUrl)
         } catch (error: IllegalArgumentException) {
             return AddPluginRepositoryResult.Error(error.message ?: getString(Res.string.plugins_error_enter_valid_url))
         }
 
-        if (_uiState.value.repositories.any { it.manifestUrl == manifestUrl }) {
+        if (_uiState.value.repositories.any { repository ->
+                repository.manifestUrl.equals(inputUrl, ignoreCase = true) ||
+                    runCatching { normalizeManifestUrl(inputUrl) }.getOrNull()
+                        ?.equals(repository.manifestUrl, ignoreCase = true) == true ||
+                    runCatching { normalizeManifestUrl(repository.manifestUrl) }.getOrNull()
+                        ?.equals(inputUrl, ignoreCase = true) == true
+            }
+        ) {
             return AddPluginRepositoryResult.Error(getString(Res.string.plugins_repository_already_installed))
         }
 
         return try {
             val previousById = _uiState.value.scrapers.associateBy { it.id }
             val (repo, scrapers) = fetchRepositoryData(
-                manifestUrl = manifestUrl,
+                inputUrl = inputUrl,
                 previousScrapers = previousById,
             )
             _uiState.update { state ->
                 state.copy(
                     repositories = state.repositories + repo,
-                    scrapers = state.scrapers.filterNot { it.repositoryUrl == manifestUrl } + scrapers,
+                    scrapers = state.scrapers.filterNot { it.repositoryUrl == repo.manifestUrl } + scrapers,
                 )
             }
             persist()
             pushToServer()
             AddPluginRepositoryResult.Success(repo)
+        } catch (e: CancellationException) {
+            throw e
         } catch (error: Throwable) {
             AddPluginRepositoryResult.Error(error.message ?: getString(Res.string.plugins_repository_install_failed))
         }
@@ -208,6 +228,16 @@ actual object PluginRepository {
 
     actual fun removeRepository(manifestUrl: String) {
         initialize()
+        val removedScrapers = _uiState.value.scrapers
+            .filter { it.repositoryUrl == manifestUrl && it.type == PluginRepositoryType.EXTERNAL_DEX }
+        if (removedScrapers.isNotEmpty()) {
+            // Unloading DEX packages can touch the disk; keep it off the UI thread.
+            scope.launch(Dispatchers.IO) {
+                removedScrapers.forEach { scraper ->
+                    externalExtensionHost.uninstall(scraper.id, currentProfileId)
+                }
+            }
+        }
         _uiState.update { state ->
             state.copy(
                 repositories = state.repositories.filterNot { it.manifestUrl == manifestUrl },
@@ -244,9 +274,13 @@ actual object PluginRepository {
         var refreshJob: Job? = null
         refreshJob = scope.launch {
             try {
-                val result = runCatching {
+                val result = try {
                     val previous = _uiState.value.scrapers.associateBy { it.id }
-                    fetchRepositoryData(manifestUrl, previous)
+                    Result.success(fetchRepositoryData(manifestUrl, previous))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (error: Throwable) {
+                    Result.failure(error)
                 }
 
                 _uiState.update { state ->
@@ -330,7 +364,12 @@ actual object PluginRepository {
         }
     }
 
-    actual suspend fun testScraper(scraperId: String): Result<List<PluginRuntimeResult>> {
+    actual suspend fun testScraper(
+        scraperId: String,
+        contentTitle: String?,
+        tmdbId: String?,
+        useFirstResult: Boolean,
+    ): Result<List<PluginRuntimeResult>> {
         initialize()
         val scraper = _uiState.value.scrapers.find { it.id == scraperId }
             ?: return Result.failure(IllegalArgumentException(getString(Res.string.plugins_error_provider_not_found)))
@@ -338,14 +377,49 @@ actual object PluginRepository {
         val mediaType = if (scraper.supportsType("movie")) "movie" else "tv"
         val season = if (mediaType == "tv") 1 else null
         val episode = if (mediaType == "tv") 1 else null
+        val sampleTitle = contentTitle?.trim()?.takeIf { it.isNotEmpty() }
+            ?: if (mediaType == "movie") "The Matrix" else "Game of Thrones"
+        val testTmdbId = tmdbId?.trim()?.takeIf { it.isNotEmpty() }
+            ?: if (mediaType == "movie") "603" else "1396"
         return executeScraperInternal(
             scraper = scraper,
-            tmdbId = "603",
+            tmdbId = testTmdbId,
             mediaType = mediaType,
             season = season,
             episode = episode,
             respectSearchPause = false,
+            contentTitle = sampleTitle,
+            useFirstResult = useFirstResult,
         )
+    }
+
+    actual suspend fun hasExtensionSettings(scraperId: String): Boolean {
+        initialize()
+        val scraper = _uiState.value.scrapers.find { it.id == scraperId } ?: return false
+        if (scraper.type != PluginRepositoryType.EXTERNAL_DEX) return scraper.hasSettings
+
+        val hasSettings = withContext(Dispatchers.IO) {
+            externalExtensionHost.hasSettings(scraperId, currentProfileId)
+        }
+        if (hasSettings && !scraper.hasSettings) {
+            _uiState.update { state ->
+                state.copy(
+                    scrapers = state.scrapers.map { item ->
+                        if (item.id == scraperId) item.copy(hasSettings = true) else item
+                    },
+                )
+            }
+            persist()
+        }
+        return hasSettings
+    }
+
+    actual fun openExtensionSettings(scraperId: String) {
+        initialize()
+        val scraper = _uiState.value.scrapers.find { it.id == scraperId } ?: return
+        if (scraper.type == PluginRepositoryType.EXTERNAL_DEX) {
+            externalExtensionHost.openSettings(scraperId, currentProfileId)
+        }
     }
 
     actual suspend fun executeScraper(
@@ -354,6 +428,7 @@ actual object PluginRepository {
         mediaType: String,
         season: Int?,
         episode: Int?,
+        contentTitle: String?,
     ): Result<List<PluginRuntimeResult>> = executeScraperInternal(
         scraper = scraper,
         tmdbId = tmdbId,
@@ -361,6 +436,7 @@ actual object PluginRepository {
         season = season,
         episode = episode,
         respectSearchPause = true,
+        contentTitle = contentTitle,
     )
 
     private suspend fun executeScraperInternal(
@@ -370,6 +446,8 @@ actual object PluginRepository {
         season: Int?,
         episode: Int?,
         respectSearchPause: Boolean,
+        contentTitle: String? = null,
+        useFirstResult: Boolean = false,
     ): Result<List<PluginRuntimeResult>> {
         val resolvedTmdbId = resolvePluginTmdbId(
             tmdbId = tmdbId,
@@ -377,15 +455,31 @@ actual object PluginRepository {
         )
 
         return runCatching {
-            PluginRuntime.executePlugin(
-                code = scraper.code,
-                tmdbId = resolvedTmdbId,
-                mediaType = normalizePluginType(mediaType),
-                season = season,
-                episode = episode,
-                scraperId = scraper.id,
-                respectSearchPause = respectSearchPause,
-            )
+            when (scraper.type) {
+                PluginRepositoryType.NUVIO_JS -> PluginRuntime.executePlugin(
+                    code = scraper.code,
+                    tmdbId = resolvedTmdbId,
+                    mediaType = normalizePluginType(mediaType),
+                    season = season,
+                    episode = episode,
+                    scraperId = scraper.id,
+                    respectSearchPause = respectSearchPause,
+                )
+
+                PluginRepositoryType.EXTERNAL_DEX -> withContext(Dispatchers.IO) {
+                    externalExtensionHost.execute(
+                        scraperId = scraper.id,
+                        profileId = currentProfileId,
+                        tmdbId = resolvedTmdbId,
+                        mediaType = normalizePluginType(mediaType),
+                        season = season,
+                        episode = episode,
+                        searchPaused = respectSearchPause,
+                        contentTitle = contentTitle,
+                        useFirstResult = useFirstResult,
+                    )
+                }
+            }
         }
     }
 
@@ -403,6 +497,34 @@ actual object PluginRepository {
     }
 
     private suspend fun fetchRepositoryData(
+        inputUrl: String,
+        previousScrapers: Map<String, PluginScraper>,
+    ): Pair<PluginRepositoryItem, List<PluginScraper>> {
+        // Explicit CloudStream URLs are tried first so we don't hammer an
+        // invalid `<url>/manifest.json` path.
+        if (externalExtensionHost.isSupported && looksLikeExplicitExternalRepo(inputUrl)) {
+            fetchExternalRepositoryData(inputUrl, previousScrapers)?.let { return it }
+        }
+
+        val manifestUrl = runCatching { normalizeManifestUrl(inputUrl) }.getOrNull()
+        if (manifestUrl != null) {
+            try {
+                return fetchNuvioRepositoryData(manifestUrl, previousScrapers)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                // Fall through to the CloudStream parser.
+            }
+        }
+
+        if (externalExtensionHost.isSupported) {
+            fetchExternalRepositoryData(inputUrl, previousScrapers)?.let { return it }
+        }
+
+        error("Failed to parse repository: unrecognized format")
+    }
+
+    private suspend fun fetchNuvioRepositoryData(
         manifestUrl: String,
         previousScrapers: Map<String, PluginScraper>,
     ): Pair<PluginRepositoryItem, List<PluginScraper>> {
@@ -467,9 +589,181 @@ actual object PluginRepository {
                 lastUpdated = currentEpochMillis(),
                 isRefreshing = false,
                 errorMessage = null,
+                type = PluginRepositoryType.NUVIO_JS,
             )
             repo to scrapers
         }
+    }
+
+    private suspend fun fetchExternalRepositoryData(
+        inputUrl: String,
+        previousScrapers: Map<String, PluginScraper>,
+    ): Pair<PluginRepositoryItem, List<PluginScraper>>? {
+        val parsed = ExternalRepoParser.tryParse(inputUrl) ?: return null
+        val repoUrl = normalizeRepositoryUrl(inputUrl)
+        val storageProfileId = currentProfileId
+
+        val scrapers = coroutineScope {
+            val semaphore = Semaphore(4)
+            parsed.plugins.map { entry ->
+                async {
+                    semaphore.withPermit {
+                        installExternalEntry(
+                            entry = entry,
+                            repoUrl = repoUrl,
+                            profileId = storageProfileId,
+                            previousScrapers = previousScrapers,
+                        )
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        if (scrapers.isEmpty()) {
+            error("Repository contained no installable extensions")
+        }
+
+        return PluginRepositoryItem(
+            manifestUrl = repoUrl,
+            name = parsed.name,
+            description = parsed.description,
+            version = null,
+            scraperCount = scrapers.size,
+            lastUpdated = currentEpochMillis(),
+            isRefreshing = false,
+            errorMessage = null,
+            type = PluginRepositoryType.EXTERNAL_DEX,
+        ) to scrapers
+    }
+
+    private suspend fun installExternalEntry(
+        entry: com.nuvio.app.features.plugins.external.ExternalPluginEntry,
+        repoUrl: String,
+        profileId: Int,
+        previousScrapers: Map<String, PluginScraper>,
+    ): PluginScraper? {
+        val scraperId = "${repoUrl.lowercase()}:${entry.internalName}"
+        val previous = previousScrapers[scraperId]
+        val alreadyInstalled = previous != null &&
+            previous.extensionHash.equals(entry.fileHash, ignoreCase = true) &&
+            previous.version == entry.version.toString() &&
+            externalExtensionHost.hasExtension(scraperId, profileId)
+
+        if (!alreadyInstalled) {
+            val installed = try {
+                externalExtensionHost.install(
+                    scraperId = scraperId,
+                    profileId = profileId,
+                    url = entry.url,
+                    fileHash = entry.fileHash,
+                    expectedSize = entry.fileSize,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                false
+            }
+            if (!installed) {
+                log.w { "Failed to install CloudStream extension ${entry.internalName}" }
+                return null
+            }
+        }
+
+        return PluginScraper(
+            id = scraperId,
+            repositoryUrl = repoUrl,
+            name = entry.name,
+            description = entry.description.orEmpty(),
+            version = entry.version.toString(),
+            filename = entry.url,
+            supportedTypes = cloudStreamContentTypes(entry.tvTypes),
+            enabled = previous?.enabled ?: (entry.status == 1),
+            manifestEnabled = entry.status == 1,
+            hasSettings = previous?.hasSettings ?: false,
+            logo = entry.iconUrl,
+            contentLanguage = emptyList(),
+            formats = null,
+            code = "",
+            type = PluginRepositoryType.EXTERNAL_DEX,
+            extensionHash = entry.fileHash,
+        )
+    }
+
+    private fun looksLikeExplicitExternalRepo(url: String): Boolean {
+        val lower = url.lowercase()
+        if (lower.startsWith("cloudstreamrepo://") || lower.startsWith("cloudstream://")) return true
+        if (lower.contains("cs.repo/?")) return true
+        val fileName = lower.substringBefore('?').substringAfterLast('/')
+        return fileName.endsWith(".json") && !fileName.endsWith("manifest.json")
+    }
+
+    private fun normalizeRepositoryUrl(rawUrl: String): String {
+        var value = rawUrl.trim()
+        require(value.isNotEmpty()) { runBlocking { getString(Res.string.plugins_error_enter_repo_url) } }
+
+        val prefixes = listOf("cloudstreamrepo://", "cloudstream://", "https://cs.repo/?", "http://cs.repo/?")
+        for (prefix in prefixes) {
+            if (value.startsWith(prefix, ignoreCase = true)) {
+                value = value.substring(prefix.length).trim()
+                if (!value.contains("://")) value = "https://$value"
+                break
+            }
+        }
+        if (!value.startsWith("http://") && !value.startsWith("https://")) {
+            value = "https://$value"
+        }
+        return value.substringBefore('#').trimEnd('/')
+    }
+
+    private suspend fun resolveRepositoryInput(rawUrl: String): String {
+        val trimmed = rawUrl.trim()
+        require(trimmed.isNotEmpty()) { getString(Res.string.plugins_error_enter_repo_url) }
+        if (isRepositoryShortCode(trimmed)) {
+            return resolveShortCode(trimmed)
+                ?: throw IllegalArgumentException(getString(Res.string.plugins_error_short_code_failed, trimmed))
+        }
+        return normalizeRepositoryUrl(trimmed)
+    }
+
+    /**
+     * Resolve `cutt.ly/<code>` to its target repository URL. Mirrors the
+     * short-code flow in ReSeq's PluginManager.
+     */
+    private suspend fun resolveShortCode(code: String): String? {
+        val headers = mapOf("User-Agent" to "NuvioTV/1.0")
+        val direct = runCatching {
+            httpRequestRaw(
+                method = "GET",
+                url = "https://cutt.ly/$code",
+                headers = headers,
+                body = "",
+                followRedirects = false,
+                maxResponseBodyBytes = 64 * 1024,
+            )
+        }.getOrNull()
+        val location = direct?.headers?.get("location")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (location != null) {
+            return normalizeRepositoryUrl(location)
+        }
+
+        val followed = runCatching {
+            httpRequestRaw(
+                method = "GET",
+                url = "https://cutt.ly/$code",
+                headers = headers,
+                body = "",
+                followRedirects = true,
+                maxResponseBodyBytes = 64 * 1024,
+            )
+        }.getOrNull() ?: return null
+        if (followed.status in 200..299 &&
+            !followed.url.equals("https://cutt.ly/$code", ignoreCase = true)
+        ) {
+            return normalizeRepositoryUrl(followed.url)
+        }
+        return null
     }
 
     private fun PluginManifestScraper.isSupportedOnCurrentPlatform(): Boolean {
@@ -533,7 +827,8 @@ actual object PluginRepository {
             state = _uiState.value,
         )
         val requiresCodeWrite = snapshot.state.scrapers.any { scraper ->
-            !PluginStorage.hasScraperCode(snapshot.profileId, scraper.id)
+            scraper.type == PluginRepositoryType.NUVIO_JS &&
+                !PluginStorage.hasScraperCode(snapshot.profileId, scraper.id)
         }
         if (requiresCodeWrite) {
             scope.launch { persist(snapshot) }
@@ -546,6 +841,7 @@ actual object PluginRepository {
         if (snapshot.generation != persistenceGeneration.value) return
         var cached = true
         snapshot.state.scrapers.forEach { scraper ->
+            if (scraper.type != PluginRepositoryType.NUVIO_JS) return@forEach
             val scraperCached = PluginStorage.saveScraperCode(
                 profileId = snapshot.profileId,
                 scraperId = scraper.id,
@@ -625,6 +921,7 @@ actual object PluginRepository {
                             lastUpdated = it.lastUpdated,
                             isRefreshing = false,
                             errorMessage = null,
+                            type = it.type,
                         )
                     }
                     ?: emptyList(),
@@ -664,4 +961,12 @@ actual object PluginRepository {
         val active = ProfileRepository.state.value.activeProfile
         return if (active != null && !active.id.isBlank() && active.usesPrimaryPlugins) 1 else profileId
     }
+}
+
+/** A short code is an alphanumeric token such as `cspr` or `0094`, not a URL or domain. */
+internal fun isRepositoryShortCode(input: String): Boolean {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return false
+    if (trimmed.contains("://") || trimmed.contains('/') || trimmed.contains('.')) return false
+    return trimmed.length in 2..64 && trimmed.all { it.isLetterOrDigit() || it == '-' || it == '_' }
 }

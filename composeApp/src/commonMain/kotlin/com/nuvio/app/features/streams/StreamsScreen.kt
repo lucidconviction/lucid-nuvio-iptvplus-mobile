@@ -192,6 +192,7 @@ fun StreamsScreen(
             episode = episodeNumber,
             manualSelection = manualSelection,
             forceAutoPlay = forceAutoPlay,
+            contentTitle = title,
         )
     }
 
@@ -228,6 +229,7 @@ fun StreamsScreen(
             episode = episodeNumber,
             manualSelection = manualSelection,
             forceAutoPlay = forceAutoPlay,
+            contentTitle = title,
         )
     }
 
