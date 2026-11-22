@@ -290,6 +290,7 @@ The action is available from both plugin surfaces: the full-screen Plugins page 
 
 Extensions are no longer reachable only through Settings:
 
+- **Plugins → repository → Manage extensions** opens a repository-scoped extension page listing every extension in that repository with its switch, browse, test and settings actions. The main Plugins page lists only enabled extensions, grouped under their repository.
 - **Home** shows a CloudStream provider row immediately below the hero. Tapping a provider opens its Latest feed.
 - **Search → Discover** lists each enabled CloudStream provider as a catalog under its supported Movie/TV type. Selecting one loads the provider's latest/home feed into the normal poster grid, with Load more using the provider's next page.
 - Plugin cards on Discover are registered in an in-memory item index. Tapping a card opens `PluginBrowseRoute` with the selected item already loaded, so its streams are one step away.

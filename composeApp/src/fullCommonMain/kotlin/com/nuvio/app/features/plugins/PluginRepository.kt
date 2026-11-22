@@ -676,6 +676,11 @@ actual object PluginRepository {
             }
         }
 
+        val settingsSource = previous?.takeIf { installed ->
+            installed.version == entry.version.toString() &&
+                installed.extensionHash.equals(entry.fileHash, ignoreCase = true)
+        }
+
         return PluginScraper(
             id = scraperId,
             repositoryUrl = repoUrl,
@@ -687,8 +692,8 @@ actual object PluginRepository {
             // New CloudStream extensions are opt-in. Refreshes preserve the user's choice.
             enabled = previous?.enabled ?: false,
             manifestEnabled = entry.status == 1,
-            hasSettings = previous?.hasSettings ?: false,
-            settingsChecked = previous?.settingsChecked ?: false,
+            hasSettings = settingsSource?.hasSettings ?: false,
+            settingsChecked = settingsSource?.settingsChecked ?: false,
             logo = entry.iconUrl,
             contentLanguage = emptyList(),
             formats = null,

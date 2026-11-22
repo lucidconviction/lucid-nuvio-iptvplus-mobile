@@ -40,14 +40,17 @@ import com.nuvio.app.core.ui.NuvioIconActionButton
 import com.nuvio.app.core.ui.NuvioInfoBadge
 import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioPrimaryButton
+import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.core.ui.NuvioSectionLabel
 import com.nuvio.app.core.ui.NuvioSurfaceCard
+import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.features.plugins.runtime.PluginRuntime
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.plugins_badge_cloudstream
 import nuvio.composeapp.generated.resources.plugins_badge_disabled
 import nuvio.composeapp.generated.resources.plugins_badge_enabled
+import nuvio.composeapp.generated.resources.plugins_badge_enabled_providers
 import nuvio.composeapp.generated.resources.plugins_badge_javascript
 import nuvio.composeapp.generated.resources.plugins_badge_providers
 import nuvio.composeapp.generated.resources.plugins_badge_refreshing
@@ -81,9 +84,13 @@ import nuvio.composeapp.generated.resources.plugins_message_cloudstream_installe
 import nuvio.composeapp.generated.resources.plugins_provider_disabled_by_repo
 import nuvio.composeapp.generated.resources.plugins_provider_no_description
 import nuvio.composeapp.generated.resources.plugins_provider_version
+import nuvio.composeapp.generated.resources.plugins_manage_extensions
 import nuvio.composeapp.generated.resources.plugins_repo_fallback_label
+import nuvio.composeapp.generated.resources.plugins_repo_no_enabled
+import nuvio.composeapp.generated.resources.plugins_repo_no_extensions
 import nuvio.composeapp.generated.resources.plugins_repo_version
 import nuvio.composeapp.generated.resources.plugins_section_add_repo
+import nuvio.composeapp.generated.resources.plugins_section_extensions
 import nuvio.composeapp.generated.resources.plugins_section_installed_repos
 import nuvio.composeapp.generated.resources.plugins_section_overview
 import nuvio.composeapp.generated.resources.plugins_section_providers
@@ -207,10 +214,93 @@ fun PluginsSettingsPageContent(
         }
     }
 
+    var repositoryPageUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    val repositoryPage = repositoryPageUrl?.let { url ->
+        sortedRepos.firstOrNull { it.manifestUrl == url }
+    }
+    LaunchedEffect(repositoryPageUrl, sortedRepos) {
+        if (repositoryPageUrl != null && repositoryPage == null) {
+            repositoryPageUrl = null
+        }
+    }
+    PlatformBackHandler(enabled = repositoryPageUrl != null) {
+        repositoryPageUrl = null
+    }
+
+    val renderProviderCard: @Composable (PluginScraper) -> Unit = { scraper ->
+        val repositoryName = repositoryNameByUrl[scraper.repositoryUrl]
+            ?: scraper.repositoryUrl.fallbackRepositoryLabel(repoFallbackLabel)
+        val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
+        PluginProviderCard(
+            scraper = scraper,
+            repositoryName = repositoryName,
+            results = testResults[scraper.id],
+            isTesting = testingScraperId == scraper.id,
+            onBrowse = onBrowseProvider?.let { browse -> { browse(scraper) } },
+            onSettings = {
+                if (isCloudStream) {
+                    coroutineScope.launch {
+                        if (PluginRepository.hasExtensionSettings(scraper.id)) {
+                            PluginRepository.openExtensionSettings(scraper.id)
+                        } else {
+                            message = noExtensionSettingsMessage
+                        }
+                    }
+                } else {
+                    coroutineScope.launch {
+                        val layout = PluginRuntime.getPluginSettingsLayout(scraper.code, scraper.id)
+                        if (layout != null) {
+                            configuringScraper = scraper
+                            configuringLayout = layout
+                        }
+                    }
+                }
+            },
+            onTest = {
+                if (isCloudStream) {
+                    testDialogScraper = scraper
+                    testQuery = if (scraper.supportsType("movie")) "The Matrix" else "Game of Thrones"
+                    testTmdbId = if (scraper.supportsType("movie")) "603" else "1396"
+                } else {
+                    runProviderTest(scraper, null, null)
+                }
+            },
+            onToggle = { enabled -> PluginRepository.toggleScraper(scraper.id, enabled) },
+        )
+    }
+
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        val page = repositoryPage
+        if (page != null) {
+            NuvioScreenHeader(
+                title = page.name,
+                includeStatusBarPadding = false,
+                onBack = { repositoryPageUrl = null },
+            )
+            RepositoryExtensionsSummary(
+                repository = page,
+                enabledCount = sortedScrapers.count { it.repositoryUrl == page.manifestUrl && it.enabled },
+                onRefresh = { PluginRepository.refreshRepository(page.manifestUrl, pushAfterRefresh = true) },
+                onDelete = {
+                    PluginRepository.removeRepository(page.manifestUrl)
+                    repositoryPageUrl = null
+                },
+            )
+            NuvioSectionLabel(stringResource(Res.string.plugins_section_extensions))
+            val repositoryScrapers = sortedScrapers.filter { it.repositoryUrl == page.manifestUrl }
+            if (repositoryScrapers.isEmpty()) {
+                Text(
+                    text = stringResource(Res.string.plugins_repo_no_extensions),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                repositoryScrapers.forEach { scraper -> renderProviderCard(scraper) }
+            }
+        } else {
         NuvioSectionLabel(stringResource(Res.string.plugins_section_overview))
         NuvioSurfaceCard {
             Row(
@@ -419,215 +509,35 @@ fun PluginsSettingsPageContent(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(8.dp))
+                NuvioPrimaryButton(
+                    text = stringResource(Res.string.plugins_manage_extensions),
+                    onClick = { repositoryPageUrl = repo.manifestUrl },
+                )
+                val enabledScrapers = sortedScrapers.filter { scraper ->
+                    scraper.repositoryUrl == repo.manifestUrl && scraper.enabled
+                }
+                if (enabledScrapers.isEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(Res.string.plugins_repo_no_enabled),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    enabledScrapers.forEach { scraper -> renderProviderCard(scraper) }
+                }
             }
         }
 
-        NuvioSectionLabel(stringResource(Res.string.plugins_section_providers))
-        if (sortedScrapers.isEmpty()) {
-            NuvioSurfaceCard {
-                Text(
-                    text = stringResource(Res.string.plugins_empty_providers),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        } else {
-            sortedScrapers.forEach { scraper ->
-                val scraperResults = testResults[scraper.id]
-                val isTestingThisScraper = testingScraperId == scraper.id
-                val repositoryName = repositoryNameByUrl[scraper.repositoryUrl]
-                    ?: scraper.repositoryUrl.fallbackRepositoryLabel(repoFallbackLabel)
-                val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
-                // DEX packages must be loaded to know whether they expose settings.
-                // The repository backfills settingsChecked after install/refresh, so a
-                // gear is only shown when a package actually has configurable settings.
-                val showSettings = if (isCloudStream) {
-                    scraper.settingsChecked && scraper.hasSettings
-                } else {
-                    scraper.hasSettings
-                }
-
-                NuvioSurfaceCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Extension,
-                                contentDescription = null,
-                                tint = if (scraper.enabled) Color(0xFF68B76A) else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = repositoryName,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = scraper.name,
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = scraper.description.ifBlank {
-                                        stringResource(Res.string.plugins_provider_no_description)
-                                    },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (showSettings) {
-                                IconButton(onClick = {
-                                    if (isCloudStream) {
-                                        coroutineScope.launch {
-                                            if (PluginRepository.hasExtensionSettings(scraper.id)) {
-                                                PluginRepository.openExtensionSettings(scraper.id)
-                                            } else {
-                                                message = noExtensionSettingsMessage
-                                            }
-                                        }
-                                    } else {
-                                        coroutineScope.launch {
-                                            val layout = PluginRuntime.getPluginSettingsLayout(scraper.code, scraper.id)
-                                            if (layout != null) {
-                                                configuringScraper = scraper
-                                                configuringLayout = layout
-                                            }
-                                        }
-                                    }
-                                }) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Settings,
-                                        contentDescription = stringResource(Res.string.plugins_cd_provider_settings),
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                            }
-                            Switch(
-                                checked = scraper.enabled,
-                                onCheckedChange = { PluginRepository.toggleScraper(scraper.id, it) },
-                                enabled = scraper.manifestEnabled,
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        NuvioInfoBadge(text = scraper.supportedTypes.joinToString(" | "))
-                        NuvioInfoBadge(
-                            text = if (isCloudStream) {
-                                stringResource(Res.string.plugins_badge_cloudstream)
-                            } else {
-                                stringResource(Res.string.plugins_badge_javascript)
-                            },
-                        )
-                        NuvioInfoBadge(text = stringResource(Res.string.plugins_provider_version, scraper.version))
-                        if (!scraper.manifestEnabled) {
-                            NuvioInfoBadge(text = stringResource(Res.string.plugins_provider_disabled_by_repo))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    val browseProvider = onBrowseProvider
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        if (isCloudStream && browseProvider != null) {
-                            NuvioPrimaryButton(
-                                text = stringResource(Res.string.plugins_browse_action),
-                                modifier = Modifier.weight(1f),
-                                onClick = { browseProvider(scraper) },
-                            )
-                        }
-                        NuvioPrimaryButton(
-                            text = if (isTestingThisScraper) {
-                                stringResource(Res.string.plugins_button_testing)
-                            } else {
-                                stringResource(Res.string.plugins_button_test_provider)
-                            },
-                            modifier = Modifier.weight(1f),
-                            enabled = !isTestingThisScraper,
-                            onClick = {
-                                if (isCloudStream) {
-                                    testDialogScraper = scraper
-                                    testQuery = if (scraper.supportsType("movie")) "The Matrix" else "Game of Thrones"
-                                    testTmdbId = if (scraper.supportsType("movie")) "603" else "1396"
-                                } else {
-                                    runProviderTest(scraper, null, null)
-                                }
-                            },
-                        )
-                    }
-
-                    if (!scraperResults.isNullOrEmpty()) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = stringResource(Res.string.plugins_test_results_count, scraperResults.size),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        scraperResults.take(8).forEach { result ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.Top,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Bolt,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = result.title,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = result.url,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                        }
-                    } else if (scraperResults != null) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = stringResource(Res.string.plugins_test_no_results),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
+        val orphanScrapers = sortedScrapers.filter { scraper ->
+            sortedRepos.none { it.manifestUrl == scraper.repositoryUrl }
+        }
+        if (orphanScrapers.isNotEmpty()) {
+            NuvioSectionLabel(stringResource(Res.string.plugins_section_providers))
+            orphanScrapers.forEach { scraper -> renderProviderCard(scraper) }
+        }
         }
     }
 
@@ -744,5 +654,257 @@ private fun String.fallbackRepositoryLabel(fallback: String): String {
     val host = withoutManifest.substringAfter("://", withoutManifest).substringBefore('/')
     return host.ifBlank {
         withoutManifest.substringAfterLast('/').ifBlank { fallback }
+    }
+}
+
+@Composable
+private fun RepositoryExtensionsSummary(
+    repository: PluginRepositoryItem,
+    enabledCount: Int,
+    onRefresh: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    NuvioSurfaceCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = repository.name,
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                repository.version?.let { version ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(Res.string.plugins_repo_version, version),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                repository.description?.takeIf { it.isNotBlank() }?.let { description ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Row {
+                NuvioIconActionButton(
+                    icon = Icons.Rounded.Refresh,
+                    contentDescription = stringResource(Res.string.plugins_cd_refresh_repo),
+                    tint = MaterialTheme.colorScheme.primary,
+                    onClick = onRefresh,
+                )
+                NuvioIconActionButton(
+                    icon = Icons.Rounded.Delete,
+                    contentDescription = stringResource(Res.string.plugins_cd_delete_repo),
+                    tint = MaterialTheme.colorScheme.error,
+                    onClick = onDelete,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(14.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            NuvioInfoBadge(text = stringResource(Res.string.plugins_badge_providers, repository.scraperCount))
+            NuvioInfoBadge(
+                text = if (repository.type == PluginRepositoryType.EXTERNAL_DEX) {
+                    stringResource(Res.string.plugins_badge_cloudstream)
+                } else {
+                    stringResource(Res.string.plugins_badge_javascript)
+                },
+            )
+            NuvioInfoBadge(text = stringResource(Res.string.plugins_badge_enabled_providers, enabledCount))
+        }
+        repository.errorMessage?.let { errorMessage ->
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PluginProviderCard(
+    scraper: PluginScraper,
+    repositoryName: String,
+    results: List<PluginRuntimeResult>?,
+    isTesting: Boolean,
+    onBrowse: (() -> Unit)?,
+    onSettings: () -> Unit,
+    onTest: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+) {
+    val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
+    val showSettings = if (isCloudStream) {
+        scraper.settingsChecked && scraper.hasSettings
+    } else {
+        scraper.hasSettings
+    }
+
+    NuvioSurfaceCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Extension,
+                    contentDescription = null,
+                    tint = if (scraper.enabled) Color(0xFF68B76A) else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = repositoryName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = scraper.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = scraper.description.ifBlank {
+                            stringResource(Res.string.plugins_provider_no_description)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (showSettings) {
+                    IconButton(onClick = onSettings) {
+                        Icon(
+                            imageVector = Icons.Rounded.Settings,
+                            contentDescription = stringResource(Res.string.plugins_cd_provider_settings),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                Switch(
+                    checked = scraper.enabled,
+                    onCheckedChange = onToggle,
+                    enabled = scraper.manifestEnabled,
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            NuvioInfoBadge(text = scraper.supportedTypes.joinToString(" | "))
+            NuvioInfoBadge(
+                text = if (isCloudStream) {
+                    stringResource(Res.string.plugins_badge_cloudstream)
+                } else {
+                    stringResource(Res.string.plugins_badge_javascript)
+                },
+            )
+            NuvioInfoBadge(text = stringResource(Res.string.plugins_provider_version, scraper.version))
+            if (!scraper.manifestEnabled) {
+                NuvioInfoBadge(text = stringResource(Res.string.plugins_provider_disabled_by_repo))
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (isCloudStream && onBrowse != null) {
+                NuvioPrimaryButton(
+                    text = stringResource(Res.string.plugins_browse_action),
+                    modifier = Modifier.weight(1f),
+                    onClick = onBrowse,
+                )
+            }
+            NuvioPrimaryButton(
+                text = if (isTesting) {
+                    stringResource(Res.string.plugins_button_testing)
+                } else {
+                    stringResource(Res.string.plugins_button_test_provider)
+                },
+                modifier = Modifier.weight(1f),
+                enabled = !isTesting,
+                onClick = onTest,
+            )
+        }
+
+        if (!results.isNullOrEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = stringResource(Res.string.plugins_test_results_count, results.size),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            results.take(8).forEach { result ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Bolt,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = result.title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = result.url,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+        } else if (results != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = stringResource(Res.string.plugins_test_no_results),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

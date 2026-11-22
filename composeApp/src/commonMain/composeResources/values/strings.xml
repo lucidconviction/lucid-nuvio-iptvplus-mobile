@@ -2317,6 +2317,8 @@
     <string name="plugins_section_enabled_extensions">ENABLED EXTENSIONS</string>
     <string name="plugins_manage_extensions">Manage extensions</string>
     <string name="plugins_repo_no_enabled">No extensions enabled yet. Open Manage extensions to choose.</string>
+    <string name="plugins_repo_no_extensions">This repository has no extensions.</string>
+    <string name="plugins_badge_enabled_providers">%1$d enabled</string>
     <string name="plugins_test_error_title">Error</string>
     <string name="plugins_browse_action">Browse</string>
     <string name="plugins_browse_provider_hint">Latest &amp; search</string>
