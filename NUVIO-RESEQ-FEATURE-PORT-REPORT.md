@@ -277,13 +277,14 @@ These are directly portable to the TV app and can be adapted to Robolectric for 
 Normally a CloudStream provider is only consulted for the movie or series the user already selected. That hides catalogue-only providers (for example clip sites) whose content never shares a title with TMDB entries. The mobile app adds an explicit browse path:
 
 1. Plugins → CloudStream provider → **Browse**.
-2. The screen calls `MainAPI.search(query, 1)` for every provider in the extension and shows provider-owned result cards.
-3. Tapping a result calls `MainAPI.load(url)`. A movie immediately calls `loadLinks`; a series lists its episodes and loads links for the selected episode.
-4. Tapping a stream creates a normal `PlayerLaunch` with request headers, subtitles and `StreamLinkCacheRepository` entry, then opens the existing player.
+2. The screen automatically loads the provider's own home feed (the tab named "Latest" when present, otherwise its first home tab) and shows those videos immediately.
+3. The search field remains available; searching switches to provider-owned search results, and **Latest** switches back.
+4. Tapping a result calls `MainAPI.load(url)`. A movie immediately calls `loadLinks`; a series lists its episodes and loads links for the selected episode.
+5. Tapping a stream creates a normal `PlayerLaunch` with request headers, subtitles and `StreamLinkCacheRepository` entry, then opens the existing player.
 
-This path does not change title-driven discovery and does not require TMDB metadata. Current limits: first search page only, no provider home rows/catalogues, no pagination, and no per-provider library.
+This path does not change title-driven discovery and does not require TMDB metadata. Current limits: provider home feeds are read from one tab (preferring "Latest") and paginated one page at a time; there is no tab picker or full catalogue browser, and search still uses the first result page only.
 
-The action is available from both plugin surfaces: the full-screen Plugins page and the tablet settings hub (the hub previously bypassed the route callback). A live emulator run against the real `RdNutz` repo verified search results, a resolved link (`1 links, 0 subtitles`), ExoPlayer reaching `READY`, and browse state surviving the player round-trip.
+The action is available from both plugin surfaces: the full-screen Plugins page and the tablet settings hub (the hub previously bypassed the route callback). A live emulator run against the real `RdNutz` repo verified provider search results, a resolved link (`1 links, 0 subtitles`), ExoPlayer reaching `READY`, and browse state surviving the player round-trip.
 
 ---
 
@@ -1094,12 +1095,14 @@ private fun ExtractorLink.toRuntimeResult(provider: String): PluginRuntimeResult
 - `PluginStateMigrationTest`: old `StoredPluginScraper` JSON without `type` loads as `NUVIO_JS`.
 - `PluginRepositoryDispatchTest`: mock host; `NUVIO_JS` calls `PluginRuntime`, `EXTERNAL_DEX` calls host; failures become `Result.failure` and don't crash the stream group.
 - `PluginBrowseModelsTest`: provider results map to stream cards with name fallback, quality/size/language subtitles, header filtering, and subtitle handoff.
+- `PluginBrowseStateStoreTest`: browse defaults to Latest and keeps latest feed/pagination state isolated per profile+provider key.
 
 **Instrumentation / manual:**
 
 - Install a CloudStream repo, enable a provider, see streams in the stream list alongside addons/JS.
+- Plugins → provider → Browse: the provider's latest/home feed loads without a query; scroll and use Load more.
 - Plugins → provider → Browse: search the provider's own site, open a result, load a movie link or a series episode, and play it.
-- Return from the player: the browse search/results/selected episode are still present.
+- Return from the player: the browse search/results/latest feed/selected episode are still present.
 - Open per-extension settings, change a value, kill/relaunch, confirm persistence.
 - Remove the repo: provider rows and `.cs3` file are gone.
 - Switch profiles: separate repos/providers/files.

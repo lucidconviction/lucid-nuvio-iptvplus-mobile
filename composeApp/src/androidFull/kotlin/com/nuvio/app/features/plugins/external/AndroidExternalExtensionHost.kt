@@ -114,6 +114,14 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         runner()?.search(scraperId, profileId, query).orEmpty()
     }
 
+    override suspend fun latest(
+        scraperId: String,
+        profileId: Int,
+        page: Int,
+    ): PluginLatestPage? = withContext(Dispatchers.IO) {
+        runner()?.latest(scraperId, profileId, page)
+    }
+
     override suspend fun loadDetail(
         scraperId: String,
         profileId: Int,

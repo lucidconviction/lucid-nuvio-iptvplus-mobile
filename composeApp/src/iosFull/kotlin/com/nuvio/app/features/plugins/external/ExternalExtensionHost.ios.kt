@@ -44,6 +44,12 @@ internal object UnsupportedExternalExtensionHost : ExternalExtensionHost {
         query: String,
     ): List<PluginBrowseItem> = emptyList()
 
+    override suspend fun latest(
+        scraperId: String,
+        profileId: Int,
+        page: Int,
+    ): PluginLatestPage? = null
+
     override suspend fun loadDetail(
         scraperId: String,
         profileId: Int,

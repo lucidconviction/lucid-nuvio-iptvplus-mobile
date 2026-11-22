@@ -1,6 +1,7 @@
 package com.nuvio.app.features.plugins.browse
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +48,10 @@ import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.plugins_browse_back
 import nuvio.composeapp.generated.resources.plugins_browse_detail_failed
 import nuvio.composeapp.generated.resources.plugins_browse_episodes
+import nuvio.composeapp.generated.resources.plugins_browse_latest
+import nuvio.composeapp.generated.resources.plugins_browse_latest_empty
+import nuvio.composeapp.generated.resources.plugins_browse_latest_failed
+import nuvio.composeapp.generated.resources.plugins_browse_load_more
 import nuvio.composeapp.generated.resources.plugins_browse_no_results
 import nuvio.composeapp.generated.resources.plugins_browse_no_streams
 import nuvio.composeapp.generated.resources.plugins_browse_search
@@ -67,13 +73,20 @@ internal fun PluginBrowseScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var loadingDetail by remember { mutableStateOf(false) }
     var loadingStreams by remember { mutableStateOf(false) }
+    var loadingLatest by remember { mutableStateOf(false) }
+    var latestMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val stateKey = remember(scraperId) {
         "${PluginBrowseRepository.currentProfileId()}:$scraperId"
     }
     val savedState = remember(stateKey) { PluginBrowseStateStore.get(stateKey) }
+    var mode by remember { mutableStateOf(savedState.mode) }
     var query by rememberSaveable { mutableStateOf(savedState.query) }
     var results by remember { mutableStateOf(savedState.results) }
+    var latestItems by remember { mutableStateOf(savedState.latestItems) }
+    var latestHasNext by remember { mutableStateOf(savedState.latestHasNext) }
+    var latestPage by remember { mutableStateOf(savedState.latestPage) }
+    var latestAttempted by remember { mutableStateOf(savedState.latestAttempted) }
     var detailItem by remember { mutableStateOf(savedState.detailItem) }
     var detail by remember { mutableStateOf(savedState.detail) }
     var selectedEpisode by remember { mutableStateOf(savedState.selectedEpisode) }
@@ -82,8 +95,13 @@ internal fun PluginBrowseScreen(
         PluginBrowseStateStore.put(
             key = stateKey,
             state = PluginBrowseStateStore.State(
+                mode = mode,
                 query = query,
                 results = results,
+                latestItems = latestItems,
+                latestHasNext = latestHasNext,
+                latestPage = latestPage,
+                latestAttempted = latestAttempted,
                 detailItem = detailItem,
                 detail = detail,
                 selectedEpisode = selectedEpisode,
@@ -96,6 +114,10 @@ internal fun PluginBrowseScreen(
     val noResultsText = stringResource(Res.string.plugins_browse_no_results)
     val searchFailedText = stringResource(Res.string.plugins_browse_search_failed)
     val streamsFailedText = stringResource(Res.string.plugins_browse_streams_failed)
+    val latestText = stringResource(Res.string.plugins_browse_latest)
+    val loadMoreText = stringResource(Res.string.plugins_browse_load_more)
+    val latestEmptyText = stringResource(Res.string.plugins_browse_latest_empty)
+    val latestFailedText = stringResource(Res.string.plugins_browse_latest_failed)
 
     fun loadStreams(
         currentDetail: PluginBrowseDetail,
@@ -148,6 +170,7 @@ internal fun PluginBrowseScreen(
     fun runSearch() {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return
+        mode = PluginBrowseMode.Search
         searching = true
         errorMessage = null
         detail = null
@@ -167,6 +190,49 @@ internal fun PluginBrowseScreen(
                 }
             searching = false
         }
+    }
+
+    fun loadLatest(reset: Boolean) {
+        if (loadingLatest) return
+        val page = if (reset || latestPage <= 0) 1 else latestPage + 1
+        loadingLatest = true
+        latestMessage = null
+        if (reset) {
+            latestItems = emptyList()
+            latestHasNext = false
+        }
+        scope.launch {
+            PluginBrowseRepository.latest(scraperId, page)
+                .onSuccess { feed ->
+                    latestAttempted = true
+                    if (feed == null) {
+                        if (reset) {
+                            latestItems = emptyList()
+                            latestMessage = latestEmptyText
+                        } else {
+                            latestHasNext = false
+                        }
+                    } else {
+                        latestItems = if (reset) {
+                            feed.items
+                        } else {
+                            (latestItems + feed.items).distinctBy { it.apiIndex to it.url }
+                        }
+                        latestHasNext = feed.hasNext
+                        latestPage = page
+                        if (latestItems.isEmpty()) latestMessage = latestEmptyText
+                    }
+                }
+                .onFailure { error ->
+                    latestAttempted = true
+                    latestMessage = error.message ?: latestFailedText
+                }
+            loadingLatest = false
+        }
+    }
+
+    LaunchedEffect(stateKey) {
+        if (!latestAttempted) loadLatest(reset = true)
     }
 
     NuvioScreen(modifier = Modifier.fillMaxWidth()) {
@@ -191,11 +257,29 @@ internal fun PluginBrowseScreen(
                     placeholder = stringResource(Res.string.plugins_browse_search_placeholder),
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-                NuvioPrimaryButton(
-                    text = stringResource(Res.string.plugins_browse_search),
-                    enabled = query.isNotBlank() && !searching,
-                    onClick = { runSearch() },
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    NuvioPrimaryButton(
+                        text = latestText,
+                        modifier = Modifier.weight(1f),
+                        enabled = !loadingLatest,
+                        onClick = {
+                            errorMessage = null
+                            mode = PluginBrowseMode.Latest
+                            if (!latestAttempted || latestItems.isEmpty()) {
+                                loadLatest(reset = true)
+                            }
+                        },
+                    )
+                    NuvioPrimaryButton(
+                        text = stringResource(Res.string.plugins_browse_search),
+                        modifier = Modifier.weight(1f),
+                        enabled = query.isNotBlank() && !searching,
+                        onClick = { runSearch() },
+                    )
+                }
                 errorMessage?.let { error ->
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -203,6 +287,16 @@ internal fun PluginBrowseScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                     )
+                }
+                if (mode == PluginBrowseMode.Latest) {
+                    latestMessage?.let { message ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -299,11 +393,48 @@ internal fun PluginBrowseScreen(
                 }
             }
         } else {
-            if (loadingDetail || searching) {
+            if (loadingDetail) {
                 item { NuvioLoadingIndicator() }
             }
-            items(results) { item ->
-                ResultCard(item = item, onClick = { openDetail(item) })
+            when (mode) {
+                PluginBrowseMode.Latest -> {
+                    if (loadingLatest && latestItems.isEmpty()) {
+                        item { NuvioLoadingIndicator() }
+                    } else if (latestItems.isEmpty()) {
+                        item {
+                            Text(
+                                text = latestMessage ?: latestEmptyText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else {
+                        items(latestItems) { item ->
+                            ResultCard(item = item, onClick = { openDetail(item) })
+                        }
+                        if (loadingLatest && latestItems.isNotEmpty()) {
+                            item { NuvioLoadingIndicator() }
+                        }
+                        if (latestHasNext || loadingLatest) {
+                            item {
+                                NuvioPrimaryButton(
+                                    text = loadMoreText,
+                                    enabled = !loadingLatest,
+                                    onClick = { loadLatest(reset = false) },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                PluginBrowseMode.Search -> {
+                    if (searching) {
+                        item { NuvioLoadingIndicator() }
+                    }
+                    items(results) { item ->
+                        ResultCard(item = item, onClick = { openDetail(item) })
+                    }
+                }
             }
         }
     }

@@ -38,6 +38,12 @@ internal data class PluginBrowseDetail(
     val episodes: List<PluginBrowseEpisode>,
 )
 
+/** One page of a provider's own home/latest feed. */
+internal data class PluginLatestPage(
+    val items: List<PluginBrowseItem>,
+    val hasNext: Boolean,
+)
+
 /** Converts a provider result into the app's stream card model for the browse screen. */
 internal fun PluginRuntimeResult.toBrowseStreamItem(
     providerName: String,

@@ -52,6 +52,13 @@ internal interface ExternalExtensionHost {
         query: String,
     ): List<PluginBrowseItem>
 
+    /** Provider home/latest feed, one page at a time. */
+    suspend fun latest(
+        scraperId: String,
+        profileId: Int,
+        page: Int,
+    ): PluginLatestPage?
+
     /** Load a selected search result's metadata and episode list. */
     suspend fun loadDetail(
         scraperId: String,

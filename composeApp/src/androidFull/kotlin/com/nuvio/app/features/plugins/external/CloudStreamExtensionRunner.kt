@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.LiveStreamLoadResponse
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.MovieLoadResponse
 import com.lagradost.cloudstream3.MovieSearchResponse
 import com.lagradost.cloudstream3.SearchResponse
@@ -31,6 +32,7 @@ import java.util.Collections
 private const val TAG = "CloudStreamRunner"
 private const val EXECUTION_TIMEOUT_MS = 120_000L
 private const val LOAD_LINKS_TIMEOUT_MS = 60_000L
+private const val HOME_TIMEOUT_MS = 90_000L
 private const val MIN_TITLE_SIMILARITY = 0.5
 
 /**
@@ -109,17 +111,7 @@ internal class CloudStreamExtensionRunner(
                 async {
                     try {
                         api.search(query, 1)?.items.orEmpty()
-                            .map { result ->
-                                PluginBrowseItem(
-                                    apiIndex = index,
-                                    apiName = api.name,
-                                    name = result.name,
-                                    url = result.url,
-                                    posterUrl = result.posterUrl,
-                                    type = result.browseType(),
-                                    year = result.browseYear(),
-                                )
-                            }
+                            .map { result -> result.toBrowseItem(index, api.name) }
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -135,6 +127,70 @@ internal class CloudStreamExtensionRunner(
             }.awaitAll().flatten().distinctBy { it.apiIndex to it.url }
         }
     }
+
+    /**
+     * Provider home/latest feed. Uses the first (or explicitly "latest") tab
+     * exposed by the extension; returns null when the provider has no feed.
+     */
+    suspend fun latest(
+        scraperId: String,
+        profileId: Int,
+        page: Int,
+    ): PluginLatestPage? {
+        val apis = loader.loadExtension(scraperId, profileId)
+        if (apis.isEmpty()) return null
+        val homes = coroutineScope {
+            apis.mapIndexed { index, api ->
+                async {
+                    try {
+                        if (!api.hasMainPage) return@async null
+                        val tabs = api.mainPage.orEmpty()
+                        val tab = tabs.firstOrNull { it.name.contains("latest", ignoreCase = true) }
+                            ?: tabs.firstOrNull()
+                            ?: return@async null
+                        val request = MainPageRequest(tab.name, tab.data, tab.horizontalImages)
+                        val response = withTimeoutOrNull(HOME_TIMEOUT_MS) {
+                            api.getMainPage(page, request)
+                        } ?: run {
+                            Log.d(TAG, "${api.name}: latest page $page timed out")
+                            return@async null
+                        }
+                        val items = response.items
+                            .flatMap { list -> list.list.map { it.toBrowseItem(index, api.name) } }
+                            .distinctBy { it.apiIndex to it.url }
+                        Log.d(TAG, "${api.name}: latest page $page -> ${items.size} items, next=${response.hasNext}")
+                        items to response.hasNext
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.d(TAG, "${api.name}: latest page $page failed: ${e.javaClass.simpleName}: ${e.message}")
+                        null
+                    } catch (e: LinkageError) {
+                        Log.d(TAG, "${api.name}: latest page linkage error")
+                        null
+                    } catch (e: NotImplementedError) {
+                        null
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+        if (homes.isEmpty()) return null
+        return PluginLatestPage(
+            items = homes.flatMap { it.first }.distinctBy { it.apiIndex to it.url },
+            hasNext = homes.any { it.second },
+        )
+    }
+
+    private fun SearchResponse.toBrowseItem(apiIndex: Int, apiName: String): PluginBrowseItem =
+        PluginBrowseItem(
+            apiIndex = apiIndex,
+            apiName = apiName,
+            name = name,
+            url = url,
+            posterUrl = posterUrl,
+            type = browseType(),
+            year = browseYear(),
+        )
 
     /** Browse-mode metadata: a movie gets a data string; a series gets episodes. */
     suspend fun loadDetail(

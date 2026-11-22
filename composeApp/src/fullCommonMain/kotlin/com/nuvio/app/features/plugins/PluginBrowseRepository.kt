@@ -2,6 +2,7 @@ package com.nuvio.app.features.plugins
 
 import com.nuvio.app.features.plugins.external.PluginBrowseDetail
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import com.nuvio.app.features.plugins.external.PluginLatestPage
 import com.nuvio.app.features.plugins.external.externalExtensionHost
 import com.nuvio.app.features.profiles.ProfileRepository
 
@@ -36,6 +37,17 @@ internal object PluginBrowseRepository {
             profileId = currentProfileId(),
             apiIndex = item.apiIndex,
             url = item.url,
+        )
+    }
+
+    suspend fun latest(
+        scraperId: String,
+        page: Int,
+    ): Result<PluginLatestPage?> = runCatching {
+        externalExtensionHost.latest(
+            scraperId = scraperId,
+            profileId = currentProfileId(),
+            page = page,
         )
     }
 
