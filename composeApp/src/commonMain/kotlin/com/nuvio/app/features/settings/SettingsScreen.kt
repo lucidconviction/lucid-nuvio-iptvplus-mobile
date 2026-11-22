@@ -64,6 +64,7 @@ import com.nuvio.app.features.addons.enabledAddons
 import com.nuvio.app.features.addons.firstEnabledManifestError
 import com.nuvio.app.features.addons.hasPendingEnabledManifests
 import com.nuvio.app.features.addons.isWaitingForFirstEnabledManifest
+import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.debrid.DebridSettings
 import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.home.HomeCatalogSettingsItem
@@ -153,6 +154,7 @@ fun SettingsScreen(
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
     onWatchPartyClick: () -> Unit = {},
+    onPluginBrowse: ((PluginScraper) -> Unit)? = null,
 ) {
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
@@ -423,6 +425,7 @@ fun SettingsScreen(
                         onTestUpdateBannerClick = onTestUpdateBannerClick,
                         onCollectionsClick = onCollectionsClick,
                         onWatchPartyClick = onWatchPartyClick,
+                        onPluginBrowse = onPluginBrowse,
                     )
                 } else {
                     MobileSettingsScreen(
@@ -473,6 +476,7 @@ fun SettingsScreen(
                         onTestUpdateBannerClick = onTestUpdateBannerClick,
                         onCollectionsClick = onCollectionsClick,
                         onWatchPartyClick = onWatchPartyClick,
+                        onPluginBrowse = onPluginBrowse,
                     )
                 }
             }
@@ -529,6 +533,7 @@ private fun MobileSettingsScreen(
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
     onWatchPartyClick: () -> Unit = {},
+    onPluginBrowse: ((PluginScraper) -> Unit)? = null,
 ) {
     val saveableStateHolder = rememberSaveableStateHolder()
     saveableStateHolder.SaveableStateProvider(page.name) {
@@ -740,7 +745,11 @@ private fun MobileSettingsScreen(
                     isTablet = false,
                     onBack = onNavigateBack,
                 )
-                SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) pluginsSettingsContent() else addonsSettingsContent()
+                SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) {
+                    pluginsSettingsContent(onBrowseProvider = onPluginBrowse)
+                } else {
+                    addonsSettingsContent()
+                }
                 SettingsPage.Homescreen -> homescreenSettingsContent(
                     isTablet = false,
                     heroEnabled = homescreenHeroEnabled,
@@ -872,6 +881,7 @@ private fun TabletSettingsScreen(
     onTestUpdateBannerClick: (() -> Unit)? = null,
     onCollectionsClick: () -> Unit = {},
     onWatchPartyClick: () -> Unit = {},
+    onPluginBrowse: ((PluginScraper) -> Unit)? = null,
 ) {
     var selectedCategory by rememberSaveable { mutableStateOf(SettingsCategory.Look.name) }
     val activeCategory = settingsCategoryForName(selectedCategory)
@@ -1142,7 +1152,11 @@ private fun TabletSettingsScreen(
                         isTablet = true,
                         onBack = onNavigateBack,
                     )
-                    SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) pluginsSettingsContent() else addonsSettingsContent()
+                    SettingsPage.Plugins -> if (AppFeaturePolicy.pluginsEnabled) {
+                        pluginsSettingsContent(onBrowseProvider = onPluginBrowse)
+                    } else {
+                        addonsSettingsContent()
+                    }
                     SettingsPage.Homescreen -> homescreenSettingsContent(
                         isTablet = true,
                         heroEnabled = homescreenHeroEnabled,

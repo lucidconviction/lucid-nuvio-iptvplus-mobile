@@ -18,6 +18,7 @@ import com.nuvio.app.features.addons.isWaitingForFirstEnabledManifest
 import com.nuvio.app.features.collection.CollectionRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.home.HomeCatalogSettingsRepository
 import com.nuvio.app.features.home.buildAddonCatalogRefreshSignature
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepository
@@ -164,6 +165,7 @@ fun AddonsSettingsScreen(
 @Composable
 fun PluginsSettingsScreen(
     onBack: () -> Unit,
+    onBrowseProvider: ((PluginScraper) -> Unit)? = null,
 ) {
     if (!AppFeaturePolicy.pluginsEnabled) {
         AddonsSettingsScreen(onBack = onBack)
@@ -183,7 +185,7 @@ fun PluginsSettingsScreen(
                 onBack = onBack,
             )
         }
-        pluginsSettingsContent()
+        pluginsSettingsContent(onBrowseProvider = onBrowseProvider)
     }
 }
 

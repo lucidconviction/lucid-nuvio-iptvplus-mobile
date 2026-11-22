@@ -3,6 +3,8 @@ package com.nuvio.app.features.plugins.external
 import android.content.Context
 import android.util.Log
 import com.nuvio.app.features.plugins.PluginRuntimeResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Android-full implementation of the CloudStream host. Initialized from
@@ -102,6 +104,34 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
             return
         }
         CloudStreamRuntime.openSettings(context, scraperId, profileId)
+    }
+
+    override suspend fun search(
+        scraperId: String,
+        profileId: Int,
+        query: String,
+    ): List<PluginBrowseItem> = withContext(Dispatchers.IO) {
+        runner()?.search(scraperId, profileId, query).orEmpty()
+    }
+
+    override suspend fun loadDetail(
+        scraperId: String,
+        profileId: Int,
+        apiIndex: Int,
+        url: String,
+    ): PluginBrowseDetail? = withContext(Dispatchers.IO) {
+        runner()?.loadDetail(scraperId, profileId, apiIndex, url)
+    }
+
+    override suspend fun loadStreams(
+        scraperId: String,
+        profileId: Int,
+        apiIndex: Int,
+        data: String,
+        season: Int?,
+        episode: Int?,
+    ): List<PluginRuntimeResult> = withContext(Dispatchers.IO) {
+        runner()?.loadStreams(scraperId, profileId, apiIndex, data, season, episode).orEmpty()
     }
 
     /** Called from [ExtensionSettingsActivity] off the main thread. */

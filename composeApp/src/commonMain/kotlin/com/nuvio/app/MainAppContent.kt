@@ -1980,6 +1980,14 @@ internal fun MainAppContent(
                                         navController.navigate(PluginsSettingsRoute(pluginsSettingsTitle))
                                     }
                                 },
+                                onPluginBrowseClick = { scraper ->
+                                    navController.navigate(
+                                        PluginBrowseRoute(
+                                            scraperId = scraper.id,
+                                            scraperName = scraper.name,
+                                        ),
+                                    )
+                                },
                                 onAccountSettingsClick = { navController.navigate(AccountSettingsRoute(accountSettingsTitle)) },
                                 onSupportersContributorsSettingsClick = {
                                     if (AppFeaturePolicy.supportersContributorsPageEnabled) {
@@ -2312,8 +2320,24 @@ internal fun MainAppContent(
                 if (AppFeaturePolicy.pluginsEnabled) {
                     entry<PluginsSettingsRoute> { route ->
                         SettingsDestination(route, navController) { onBack ->
-                            PluginsSettingsScreen(onBack = onBack)
+                            PluginsSettingsScreen(
+                                onBack = onBack,
+                                onBrowseProvider = { scraper ->
+                                    navController.navigate(
+                                        PluginBrowseRoute(
+                                            scraperId = scraper.id,
+                                            scraperName = scraper.name,
+                                        ),
+                                    )
+                                },
+                            )
                         }
+                    }
+                    entry<PluginBrowseRoute> { route ->
+                        com.nuvio.app.features.plugins.browse.PluginBrowseDestination(
+                            route = route,
+                            navController = navController,
+                        )
                     }
                 }
                 entry<PartyRoute> { route ->

@@ -272,6 +272,19 @@ Instrumentation (`app/src/androidTestFull/.../cloudstream/`): catalogue stream, 
 
 These are directly portable to the TV app and can be adapted to Robolectric for mobile.
 
+### 3.14 Provider browse/search (mobile addition)
+
+Normally a CloudStream provider is only consulted for the movie or series the user already selected. That hides catalogue-only providers (for example clip sites) whose content never shares a title with TMDB entries. The mobile app adds an explicit browse path:
+
+1. Plugins → CloudStream provider → **Browse**.
+2. The screen calls `MainAPI.search(query, 1)` for every provider in the extension and shows provider-owned result cards.
+3. Tapping a result calls `MainAPI.load(url)`. A movie immediately calls `loadLinks`; a series lists its episodes and loads links for the selected episode.
+4. Tapping a stream creates a normal `PlayerLaunch` with request headers, subtitles and `StreamLinkCacheRepository` entry, then opens the existing player.
+
+This path does not change title-driven discovery and does not require TMDB metadata. Current limits: first search page only, no provider home rows/catalogues, no pagination, and no per-provider library.
+
+The action is available from both plugin surfaces: the full-screen Plugins page and the tablet settings hub (the hub previously bypassed the route callback). A live emulator run against the real `RdNutz` repo verified search results, a resolved link (`1 links, 0 subtitles`), ExoPlayer reaching `READY`, and browse state surviving the player round-trip.
+
 ---
 
 ## 4. Your two apps compared
@@ -1080,10 +1093,13 @@ private fun ExtractorLink.toRuntimeResult(provider: String): PluginRuntimeResult
 - `ExtensionPackageTest`: hash, raw DEX, ZIP, corrupt, 10 MB cap, old install preserved (port ReSeq).
 - `PluginStateMigrationTest`: old `StoredPluginScraper` JSON without `type` loads as `NUVIO_JS`.
 - `PluginRepositoryDispatchTest`: mock host; `NUVIO_JS` calls `PluginRuntime`, `EXTERNAL_DEX` calls host; failures become `Result.failure` and don't crash the stream group.
+- `PluginBrowseModelsTest`: provider results map to stream cards with name fallback, quality/size/language subtitles, header filtering, and subtitle handoff.
 
 **Instrumentation / manual:**
 
 - Install a CloudStream repo, enable a provider, see streams in the stream list alongside addons/JS.
+- Plugins → provider → Browse: search the provider's own site, open a result, load a movie link or a series episode, and play it.
+- Return from the player: the browse search/results/selected episode are still present.
 - Open per-extension settings, change a value, kill/relaunch, confirm persistence.
 - Remove the repo: provider rows and `.cs3` file are gone.
 - Switch profiles: separate repos/providers/files.

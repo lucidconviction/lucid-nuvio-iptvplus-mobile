@@ -47,6 +47,7 @@ import com.nuvio.app.features.livetv.ui.quickchannels.QuickChannelsSheet
 import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.library.LibrarySortOption
 import com.nuvio.app.features.profiles.NuvioProfile
+import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.search.SearchScreen
 import com.nuvio.app.features.settings.SettingsScreen
 import com.nuvio.app.features.watchprogress.ContinueWatchingItem
@@ -116,6 +117,7 @@ internal data class AppTabActions(
     val onContinueWatchingSettingsClick: () -> Unit = {},
     val onAddonsSettingsClick: () -> Unit = {},
     val onPluginsSettingsClick: () -> Unit = {},
+    val onPluginBrowseClick: ((PluginScraper) -> Unit)? = null,
     val onAccountSettingsClick: () -> Unit = {},
     val onSupportersContributorsSettingsClick: () -> Unit = {},
     val onLicensesAttributionsSettingsClick: () -> Unit = {},
@@ -269,6 +271,7 @@ internal fun AppTabHost(
                     onTestUpdateBannerClick = actions.onTestUpdateBannerClick,
                     onCollectionsClick = actions.onCollectionsSettingsClick,
                     onWatchPartyClick = actions.onWatchPartySettingsClick,
+                    onPluginBrowse = actions.onPluginBrowseClick,
                 )
             }
         }

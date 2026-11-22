@@ -63,6 +63,14 @@ internal fun SettingsRootDestination(
         },
         onCheckForUpdatesClick = onCheckForUpdates,
         onTestUpdateBannerClick = onTestUpdateBanner,
+        onPluginBrowse = { scraper ->
+            navController.navigate(
+                com.nuvio.app.navigation.PluginBrowseRoute(
+                    scraperId = scraper.id,
+                    scraperName = scraper.name,
+                ),
+            )
+        },
     )
 }
 

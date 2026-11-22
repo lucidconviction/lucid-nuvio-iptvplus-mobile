@@ -52,6 +52,7 @@ import nuvio.composeapp.generated.resources.plugins_badge_javascript
 import nuvio.composeapp.generated.resources.plugins_badge_providers
 import nuvio.composeapp.generated.resources.plugins_badge_refreshing
 import nuvio.composeapp.generated.resources.plugins_badge_repos
+import nuvio.composeapp.generated.resources.plugins_browse_action
 import nuvio.composeapp.generated.resources.plugins_button_install_repo
 import nuvio.composeapp.generated.resources.plugins_button_installing
 import nuvio.composeapp.generated.resources.plugins_button_test_provider
@@ -102,6 +103,7 @@ import org.jetbrains.compose.resources.stringResource
 @Composable
 fun PluginsSettingsPageContent(
     modifier: Modifier = Modifier,
+    onBrowseProvider: ((PluginScraper) -> Unit)? = null,
 ) {
     LaunchedEffect(Unit) {
         PluginRepository.initialize()
@@ -530,23 +532,37 @@ fun PluginsSettingsPageContent(
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    NuvioPrimaryButton(
-                        text = if (isTestingThisScraper) {
-                            stringResource(Res.string.plugins_button_testing)
-                        } else {
-                            stringResource(Res.string.plugins_button_test_provider)
-                        },
-                        enabled = !isTestingThisScraper,
-                        onClick = {
-                            if (isCloudStream) {
-                                testDialogScraper = scraper
-                                testQuery = if (scraper.supportsType("movie")) "The Matrix" else "Game of Thrones"
-                                testTmdbId = if (scraper.supportsType("movie")) "603" else "1396"
+                    val browseProvider = onBrowseProvider
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (isCloudStream && browseProvider != null) {
+                            NuvioPrimaryButton(
+                                text = stringResource(Res.string.plugins_browse_action),
+                                modifier = Modifier.weight(1f),
+                                onClick = { browseProvider(scraper) },
+                            )
+                        }
+                        NuvioPrimaryButton(
+                            text = if (isTestingThisScraper) {
+                                stringResource(Res.string.plugins_button_testing)
                             } else {
-                                runProviderTest(scraper, null, null)
-                            }
-                        },
-                    )
+                                stringResource(Res.string.plugins_button_test_provider)
+                            },
+                            modifier = Modifier.weight(1f),
+                            enabled = !isTestingThisScraper,
+                            onClick = {
+                                if (isCloudStream) {
+                                    testDialogScraper = scraper
+                                    testQuery = if (scraper.supportsType("movie")) "The Matrix" else "Game of Thrones"
+                                    testTmdbId = if (scraper.supportsType("movie")) "603" else "1396"
+                                } else {
+                                    runProviderTest(scraper, null, null)
+                                }
+                            },
+                        )
+                    }
 
                     if (!scraperResults.isNullOrEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))

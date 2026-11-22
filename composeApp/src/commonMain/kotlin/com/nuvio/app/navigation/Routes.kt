@@ -104,6 +104,13 @@ data class AddonsSettingsRoute(override val title: String = "") : SettingsDestin
 data class PluginsSettingsRoute(override val title: String = "") : SettingsDestinationRoute
 
 @Serializable
+data class PluginBrowseRoute(
+    val scraperId: String,
+    val scraperName: String,
+    override val title: String = scraperName,
+) : SettingsDestinationRoute
+
+@Serializable
 data class AccountSettingsRoute(override val title: String = "") : SettingsDestinationRoute
 
 @Serializable

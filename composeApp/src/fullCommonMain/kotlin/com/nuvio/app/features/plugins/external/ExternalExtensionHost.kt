@@ -44,6 +44,31 @@ internal interface ExternalExtensionHost {
     suspend fun hasSettings(scraperId: String, profileId: Int): Boolean
 
     fun openSettings(scraperId: String, profileId: Int)
+
+    /** Provider search for the browse screen (no TMDB title matching). */
+    suspend fun search(
+        scraperId: String,
+        profileId: Int,
+        query: String,
+    ): List<PluginBrowseItem>
+
+    /** Load a selected search result's metadata and episode list. */
+    suspend fun loadDetail(
+        scraperId: String,
+        profileId: Int,
+        apiIndex: Int,
+        url: String,
+    ): PluginBrowseDetail?
+
+    /** Resolve streams for a movie data string or a selected episode. */
+    suspend fun loadStreams(
+        scraperId: String,
+        profileId: Int,
+        apiIndex: Int,
+        data: String,
+        season: Int?,
+        episode: Int?,
+    ): List<PluginRuntimeResult>
 }
 
 /** Supplied by a platform source directory (androidFull / iosFull). */

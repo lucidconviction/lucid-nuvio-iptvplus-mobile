@@ -37,6 +37,28 @@ internal object UnsupportedExternalExtensionHost : ExternalExtensionHost {
     override suspend fun hasSettings(scraperId: String, profileId: Int): Boolean = false
 
     override fun openSettings(scraperId: String, profileId: Int) = Unit
+
+    override suspend fun search(
+        scraperId: String,
+        profileId: Int,
+        query: String,
+    ): List<PluginBrowseItem> = emptyList()
+
+    override suspend fun loadDetail(
+        scraperId: String,
+        profileId: Int,
+        apiIndex: Int,
+        url: String,
+    ): PluginBrowseDetail? = null
+
+    override suspend fun loadStreams(
+        scraperId: String,
+        profileId: Int,
+        apiIndex: Int,
+        data: String,
+        season: Int?,
+        episode: Int?,
+    ): List<PluginRuntimeResult> = emptyList()
 }
 
 internal val platformExternalExtensionHost: ExternalExtensionHost = UnsupportedExternalExtensionHost

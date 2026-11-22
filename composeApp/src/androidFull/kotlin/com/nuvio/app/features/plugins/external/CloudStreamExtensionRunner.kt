@@ -96,6 +96,149 @@ internal class CloudStreamExtensionRunner(
         return executeSearchBased(api, tmdbId, mediaType, season, episode, contentTitle, useFirstResult)
     }
 
+    /** Browse-mode search: returns the provider's own results, with no TMDB matching. */
+    suspend fun search(
+        scraperId: String,
+        profileId: Int,
+        query: String,
+    ): List<PluginBrowseItem> {
+        val apis = loader.loadExtension(scraperId, profileId)
+        if (apis.isEmpty()) return emptyList()
+        return coroutineScope {
+            apis.mapIndexed { index, api ->
+                async {
+                    try {
+                        api.search(query, 1)?.items.orEmpty()
+                            .map { result ->
+                                PluginBrowseItem(
+                                    apiIndex = index,
+                                    apiName = api.name,
+                                    name = result.name,
+                                    url = result.url,
+                                    posterUrl = result.posterUrl,
+                                    type = result.browseType(),
+                                    year = result.browseYear(),
+                                )
+                            }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.d(TAG, "${api.name}: browse search failed: ${e.javaClass.simpleName}")
+                        emptyList()
+                    } catch (e: LinkageError) {
+                        Log.d(TAG, "${api.name}: browse search linkage error")
+                        emptyList()
+                    } catch (e: NotImplementedError) {
+                        emptyList()
+                    }
+                }
+            }.awaitAll().flatten().distinctBy { it.apiIndex to it.url }
+        }
+    }
+
+    /** Browse-mode metadata: a movie gets a data string; a series gets episodes. */
+    suspend fun loadDetail(
+        scraperId: String,
+        profileId: Int,
+        apiIndex: Int,
+        url: String,
+    ): PluginBrowseDetail? {
+        val api = loader.loadExtension(scraperId, profileId).getOrNull(apiIndex) ?: return null
+        val response = try {
+            api.load(url)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.d(TAG, "${api.name}: browse load failed: ${e.javaClass.simpleName}")
+            null
+        } catch (e: LinkageError) {
+            null
+        } ?: return null
+
+        return when (response) {
+            is MovieLoadResponse -> PluginBrowseDetail(
+                apiIndex = apiIndex,
+                name = response.name,
+                posterUrl = response.posterUrl,
+                description = response.plot,
+                isSeries = false,
+                movieData = response.dataUrl,
+                episodes = emptyList(),
+            )
+
+            is LiveStreamLoadResponse -> PluginBrowseDetail(
+                apiIndex = apiIndex,
+                name = response.name,
+                posterUrl = response.posterUrl,
+                description = null,
+                isSeries = false,
+                movieData = response.dataUrl,
+                episodes = emptyList(),
+            )
+
+            is TvSeriesLoadResponse -> PluginBrowseDetail(
+                apiIndex = apiIndex,
+                name = response.name,
+                posterUrl = response.posterUrl,
+                description = response.plot,
+                isSeries = true,
+                movieData = null,
+                episodes = response.episodes.map { episode ->
+                    PluginBrowseEpisode(
+                        season = episode.season,
+                        episode = episode.episode,
+                        name = episode.name.orEmpty(),
+                        data = episode.data,
+                    )
+                },
+            )
+
+            is AnimeLoadResponse -> PluginBrowseDetail(
+                apiIndex = apiIndex,
+                name = response.name,
+                posterUrl = response.posterUrl,
+                description = response.plot,
+                isSeries = true,
+                movieData = null,
+                episodes = response.episodes.values.flatten().map { episode ->
+                    PluginBrowseEpisode(
+                        season = episode.season,
+                        episode = episode.episode,
+                        name = episode.name.orEmpty(),
+                        data = episode.data,
+                    )
+                },
+            )
+
+            else -> null
+        }
+    }
+
+    /** Resolve links for a browse movie data string or selected episode. */
+    suspend fun loadStreams(
+        scraperId: String,
+        profileId: Int,
+        apiIndex: Int,
+        data: String,
+        season: Int?,
+        episode: Int?,
+    ): List<PluginRuntimeResult> {
+        val api = loader.loadExtension(scraperId, profileId).getOrNull(apiIndex) ?: return emptyList()
+        return loadLinks(api, data)
+    }
+
+    private fun SearchResponse.browseType(): String = when (type?.name) {
+        "TvSeries", "Anime", "OVA", "Cartoon", "AsianDrama" -> "tv"
+        else -> "movie"
+    }
+
+    private fun SearchResponse.browseYear(): Int? = when (this) {
+        is MovieSearchResponse -> year
+        is TvSeriesSearchResponse -> year
+        is AnimeSearchResponse -> year
+        else -> null
+    }
+
     private suspend fun executeTmdbProvider(
         api: MainAPI,
         tmdbId: String,
