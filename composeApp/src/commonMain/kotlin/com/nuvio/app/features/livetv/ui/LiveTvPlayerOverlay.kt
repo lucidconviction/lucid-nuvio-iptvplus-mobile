@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -86,6 +87,7 @@ import com.nuvio.app.features.livetv.model.EpgProgram
 import com.nuvio.app.features.livetv.model.LiveChannel
 import com.nuvio.app.features.livetv.model.LiveTvClock
 import com.nuvio.app.features.livetv.player.LiveTvPlayback
+import com.nuvio.app.features.livetv.sports.SportsRepository
 import com.nuvio.app.features.livetv.ui.quickchannels.QuickChannel
 import com.nuvio.app.features.livetv.ui.quickchannels.QuickChannelList
 import com.nuvio.app.features.livetv.ui.quickchannels.rememberQuickChannelMatchState
@@ -144,6 +146,7 @@ internal fun LiveTvPlayerOverlay(
     val sections = if (playlistId == null) allSections else allSections.filter { it.group.sourceId == null || it.group.sourceId == playlistId }
 
     var panelOpen by rememberSaveable { mutableStateOf(false) }
+    var backupsView by rememberSaveable { mutableStateOf(false) }
     var groupId by rememberSaveable { mutableStateOf<String?>(null) }
     var showGuide by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var quickChannels by rememberSaveable { mutableStateOf(false) }
@@ -160,6 +163,22 @@ internal fun LiveTvPlayerOverlay(
         ?: sections.firstOrNull()
 
     fun nowTitle(c: LiveChannel): String? = programs[c.key]?.firstOrNull { it.startMs <= now && it.stopMs > now }?.title
+
+    val displayChannels by LiveTvRepository.displayChannels.collectAsStateWithLifecycle()
+    val sportsMatches by SportsRepository.matches.collectAsStateWithLifecycle()
+    val backups = remember(currentKey, displayChannels, sportsMatches, now / 60_000L) {
+        val key = currentKey ?: return@remember PlayerBackups.NONE
+        val game = runCatching { SportsRepository.liveGameOn(key) }.getOrNull()
+        val gameRows = game?.channels.orEmpty()
+            .filter { it.channel.key != key }
+            .mapNotNull { match -> displayChannels.firstOrNull { it.key == match.channel.key } }
+            .distinctBy { it.key }
+        val taken = gameRows.mapTo(HashSet()) { it.key }
+        val playing = displayChannels.firstOrNull { it.key == key }
+        val copies = playing?.let { LiveTvPlayback.copiesOf(it) }.orEmpty()
+            .filter { it.key !in taken }
+        PlayerBackups(game?.event?.title, gameRows, copies)
+    }
 
     // Swipe up / down in the middle of the video: next / previous channel in the group.
     val swipeSection by rememberUpdatedState(section)
@@ -184,7 +203,7 @@ internal fun LiveTvPlayerOverlay(
     LaunchedEffect(banner) {
         if (banner != null) { delay(3_500); banner = null }
     }
-    LaunchedEffect(enabled) { if (!enabled) panelOpen = false }
+    LaunchedEffect(enabled) { if (!enabled) { panelOpen = false; backupsView = false } }
     PlatformBackHandler(enabled = panelOpen) { panelOpen = false }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -219,18 +238,38 @@ internal fun LiveTvPlayerOverlay(
                 .safeDrawingPadding()
                 .padding(end = NuvioTokens.Space.s16),
         ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(NuvioTokens.Radius.full))
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(NuvioTokens.Radius.full))
-                    .clickable { panelOpen = true; onPanelOpened() }
-                    .padding(horizontal = NuvioTokens.Space.s14, vertical = NuvioTokens.Space.s10),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
             ) {
-                Icon(Icons.Filled.LiveTv, contentDescription = null, tint = Color.White, modifier = Modifier.size(NuvioTokens.Icon.md))
-                Text(stringResource(Res.string.livetv_player_channels), style = MaterialTheme.typography.labelLarge, color = Color.White)
+                if (!backups.isEmpty) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(NuvioTokens.Radius.full))
+                            .background(Color.Black.copy(alpha = 0.55f))
+                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(NuvioTokens.Radius.full))
+                            .clickable { backupsView = true; panelOpen = true; onPanelOpened() }
+                            .padding(horizontal = NuvioTokens.Space.s14, vertical = NuvioTokens.Space.s10),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                    ) {
+                        Icon(Icons.Filled.SwapHoriz, contentDescription = null, tint = Color.White, modifier = Modifier.size(NuvioTokens.Icon.md))
+                        Text("Backups", style = MaterialTheme.typography.labelLarge, color = Color.White)
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(NuvioTokens.Radius.full))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(NuvioTokens.Radius.full))
+                        .clickable { backupsView = false; panelOpen = true; onPanelOpened() }
+                        .padding(horizontal = NuvioTokens.Space.s14, vertical = NuvioTokens.Space.s10),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                ) {
+                    Icon(Icons.Filled.LiveTv, contentDescription = null, tint = Color.White, modifier = Modifier.size(NuvioTokens.Icon.md))
+                    Text(stringResource(Res.string.livetv_player_channels), style = MaterialTheme.typography.labelLarge, color = Color.White)
+                }
             }
         }
 
@@ -269,6 +308,16 @@ internal fun LiveTvPlayerOverlay(
                     .safeDrawingPadding()
                     .padding(top = NuvioTokens.Space.s8),
             ) {
+                if (backupsView) {
+                    BackupsPanel(
+                        backups = backups,
+                        currentKey = currentKey,
+                        onClose = { panelOpen = false },
+                    ) { channel ->
+                        onSwitch(channel, nowTitle(channel))
+                        panelOpen = false
+                    }
+                } else {
                 // Groups, then the Channels / Guide switch.
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     LazyRow(
@@ -362,6 +411,157 @@ internal fun LiveTvPlayerOverlay(
                         }
                     }
                 }
+                }
+            }
+        }
+    }
+}
+
+private data class PlayerBackups(
+    val gameTitle: String?,
+    val gameChannels: List<LiveChannel>,
+    val copies: List<LiveChannel>,
+) {
+    val isEmpty: Boolean get() = gameChannels.isEmpty() && copies.isEmpty()
+    companion object { val NONE = PlayerBackups(null, emptyList(), emptyList()) }
+}
+
+@Composable
+private fun BackupsPanel(
+    backups: PlayerBackups,
+    currentKey: String?,
+    onClose: () -> Unit,
+    onPick: (LiveChannel) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = NuvioTokens.Space.s14, end = NuvioTokens.Space.s8, bottom = NuvioTokens.Space.s6),
+    ) {
+        Text(
+            "Backups",
+            style = MaterialTheme.typography.titleMedium,
+            color = tokens.colors.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f),
+        )
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(tokens.colors.surface)
+                .clickable(onClick = onClose),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = stringResource(Res.string.action_close),
+                tint = tokens.colors.textPrimary,
+                modifier = Modifier.size(NuvioTokens.Icon.sm),
+            )
+        }
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = NuvioTokens.Space.s10,
+            end = NuvioTokens.Space.s10,
+            bottom = NuvioTokens.Space.s12,
+        ),
+        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+    ) {
+        if (backups.gameChannels.isNotEmpty()) {
+            item(key = "h:game") {
+                BackupsHeading("Also showing " + (backups.gameTitle ?: "this game"))
+            }
+            items(backups.gameChannels, key = { "g:" + it.key }) { channel ->
+                BackupRow(
+                    channel = channel,
+                    subtitle = listOf(channel.sourceName, channel.group)
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                        .joinToString(" · "),
+                    playing = channel.key == currentKey,
+                    onClick = { onPick(channel) },
+                )
+            }
+        }
+        if (backups.copies.isNotEmpty()) {
+            item(key = "h:copies") {
+                BackupsHeading("Same channel, other streams")
+            }
+            items(backups.copies, key = { "c:" + it.key }) { channel ->
+                BackupRow(
+                    channel = channel,
+                    subtitle = listOf(channel.sourceName, channel.group)
+                        .filter { it.isNotBlank() }
+                        .distinct()
+                        .joinToString(" · "),
+                    playing = channel.key == currentKey,
+                    onClick = { onPick(channel) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackupsHeading(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.nuvio.colors.textMuted,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(
+            start = NuvioTokens.Space.s4,
+            top = NuvioTokens.Space.s8,
+            bottom = NuvioTokens.Space.s2,
+        ),
+    )
+}
+
+@Composable
+private fun BackupRow(
+    channel: LiveChannel,
+    subtitle: String,
+    playing: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val shape = RoundedCornerShape(NuvioTokens.Radius.lg)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (playing) tokens.colors.accent.copy(alpha = 0.22f) else tokens.colors.surface)
+            .border(if (playing) 1.5.dp else 0.dp, if (playing) tokens.colors.accent else Color.Transparent, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = NuvioTokens.Space.s8, vertical = NuvioTokens.Space.s8),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
+    ) {
+        ChannelLogo(channel, width = 52.dp, height = 36.dp)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s2)) {
+            Text(
+                channel.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.colors.textPrimary,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

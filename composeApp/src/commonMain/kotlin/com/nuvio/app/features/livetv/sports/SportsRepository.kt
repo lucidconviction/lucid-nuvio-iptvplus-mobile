@@ -45,6 +45,11 @@ import kotlin.concurrent.Volatile
  * and follows (under the TV's keys, so they sync through the Drive backup), the guide database
  * answers the channel search, and the saved feeds live in Live TV's files.
  */
+internal data class SportsWatchGame(
+    val event: SportsEvent,
+    val channels: List<ChannelMatch>,
+)
+
 @OptIn(FlowPreview::class)
 internal object SportsRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -249,6 +254,23 @@ internal object SportsRepository {
         val copies = left.filter { SportsMatcher.copyKey(it.channel) == copyKey }
         val others = left.filter { (it.sure || it.score >= 150) && it !in copies }
         return (copies + others).firstOrNull()?.channel
+    }
+
+    /**
+     * The game [channelKey] is showing now (live, or starting within 15 minutes) and every
+     * channel sure to be showing it, for the player's Backups list. Null when the channel isn't
+     * showing a game.
+     */
+    fun liveGameOn(channelKey: String): SportsWatchGame? {
+        val now = LiveTvClock.nowMs()
+        val evs = events.value.associateBy { it.id }
+        for ((id, list) in matches.value) {
+            val ev = evs[id] ?: continue
+            val on = ev.state == GameState.LIVE || (ev.state == GameState.PRE && ev.startMs - now < 15 * MINUTE)
+            if (!on || list.none { it.channel.key == channelKey && (it.sure || it.score >= 150) }) continue
+            return SportsWatchGame(ev, list.filter { it.sure || it.score >= 150 })
+        }
+        return null
     }
 
     private val _loading = MutableStateFlow(false)

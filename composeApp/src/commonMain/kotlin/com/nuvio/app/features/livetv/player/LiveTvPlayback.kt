@@ -299,6 +299,24 @@ internal object LiveTvPlayback {
         return LiveFallback(next, req, switchedFrom = channel)
     }
 
+    /**
+     * Every other stream of [channel] (same channel name, other playlists first), for the
+     * player's Backups list. Not tied to the "Backup channel" setting: picked by hand.
+     */
+    fun copiesOf(channel: LiveChannel): List<LiveChannel> {
+        val index = indexNow()
+        val name = backupName(channel.name)
+        if (name.length < 2) return emptyList()
+        val hidden = LiveTvPreferences.currentUserState()
+        return index[name].orEmpty().asSequence()
+            .filter { it.key != channel.key }
+            .filter { it.key !in hidden.hiddenChannels && it.groupId !in hidden.hiddenGroups }
+            .filter { c -> val a = stationNote(channel.name); val b = stationNote(c.name); a == null || b == null || a == b }
+            .sortedBy { if (it.sourceId != channel.sourceId) 0 else 1 }
+            .take(30)
+            .toList()
+    }
+
     private fun backupFor(failed: LiveChannel): LiveChannel? {
         if (!LiveTvPreferences.currentSettings().autoBackupChannel) return null
         val index = indexNow()
