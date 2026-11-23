@@ -179,6 +179,12 @@ import com.nuvio.app.features.livetv.ui.ChannelPreviewSettings
 import com.nuvio.app.features.livetv.ui.ChannelPreviewSource
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRuntimeResult
+import com.nuvio.app.features.plugins.PluginScraper
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import com.nuvio.app.features.plugins.external.toBrowseStreamItem
+import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
 import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
 import com.nuvio.app.features.player.MiniPlayerHost
@@ -1402,6 +1408,117 @@ internal fun MainAppContent(
         fun openLiveTvAddonItemInPip(item: MetaPreview) =
             openLiveTvAddonItemInternal(item, allowPreview = false, forceAnotherWindow = true)
 
+        fun openLiveTvPluginItem(scraper: PluginScraper, item: PluginBrowseItem) {
+            coroutineScope.launch {
+                NuvioToastController.show("Finding best source…")
+                val results: List<PluginRuntimeResult> = withTimeoutOrNull(70_000L) {
+                    runCatching {
+                        PluginRepository.browseStreams(
+                            scraperId = scraper.id,
+                            apiIndex = item.apiIndex,
+                            url = item.url,
+                            season = null,
+                            episode = null,
+                            timeoutMs = 22_000L,
+                        )
+                    }.getOrNull()
+                }.orEmpty()
+                fun qualityRank(quality: String?): Int {
+                    val value = quality.orEmpty().lowercase()
+                    return when {
+                        "2160" in value || "4k" in value -> 5
+                        "1440" in value -> 4
+                        "1080" in value || "fhd" in value -> 3
+                        "720" in value || "hd" in value -> 2
+                        "480" in value || "sd" in value -> 1
+                        else -> 0
+                    }
+                }
+                val providerName = "CloudStream · ${scraper.name}"
+                val candidates = if (results.isEmpty() && isDirectPluginMediaUrl(item.url)) {
+                    listOf(
+                        PluginRuntimeResult(
+                            title = item.name,
+                            name = "Direct",
+                            url = item.url,
+                            type = when {
+                                item.url.contains(".m3u8", ignoreCase = true) -> "hls"
+                                item.url.contains(".mpd", ignoreCase = true) -> "dash"
+                                else -> null
+                            },
+                        ),
+                    )
+                } else {
+                    results
+                }
+                val ranked = candidates
+                    .filter { it.url.isNotBlank() }
+                    .sortedWith(
+                        compareByDescending<PluginRuntimeResult> { qualityRank(it.quality) }
+                            .thenByDescending { it.seeders ?: 0 },
+                    )
+                val stream = ranked.firstNotNullOfOrNull { result ->
+                    val candidate = result.toBrowseStreamItem(
+                        providerName = providerName,
+                        providerId = "plugin:${scraper.id}",
+                    )
+                    candidate.takeIf { it.playableDirectUrl != null }
+                }
+                val directUrl = stream?.playableDirectUrl
+                if (stream == null || directUrl == null) {
+                    NuvioToastController.show(getString(Res.string.plugins_browse_stream_unavailable))
+                    return@launch
+                }
+                val contentId = "pluginlive:${scraper.id}:${item.apiIndex}:${item.url.hashCode()}"
+                val requestHeaders = sanitizePlaybackHeaders(stream.behaviorHints.proxyHeaders?.request)
+                val responseHeaders = sanitizePlaybackResponseHeaders(stream.behaviorHints.proxyHeaders?.response)
+                StreamLinkCacheRepository.save(
+                    contentKey = StreamLinkCacheRepository.contentKey(
+                        type = "movie",
+                        videoId = contentId,
+                        parentMetaId = contentId,
+                        season = null,
+                        episode = null,
+                    ),
+                    url = directUrl,
+                    streamName = stream.streamLabel,
+                    addonName = providerName,
+                    addonId = "plugin:${scraper.id}",
+                    requestHeaders = requestHeaders,
+                    responseHeaders = responseHeaders,
+                    filename = stream.behaviorHints.filename,
+                    videoSize = stream.behaviorHints.videoSize,
+                    bingeGroup = stream.behaviorHints.bingeGroup,
+                    streamType = stream.streamType,
+                )
+                val launch = PlayerLaunch(
+                    profileId = ProfileRepository.activeProfileId,
+                    title = item.name,
+                    sourceUrl = directUrl,
+                    sourceHeaders = requestHeaders,
+                    sourceResponseHeaders = responseHeaders,
+                    externalSubtitles = stream.externalSubtitles,
+                    streamType = stream.streamType,
+                    poster = item.posterUrl,
+                    background = item.posterUrl,
+                    streamTitle = stream.streamLabel,
+                    streamSubtitle = stream.streamSubtitle,
+                    providerName = providerName,
+                    providerAddonId = "plugin:${scraper.id}",
+                    contentType = "movie",
+                    videoId = contentId,
+                    parentMetaId = contentId,
+                    parentMetaType = "movie",
+                    bingeGroup = stream.behaviorHints.bingeGroup,
+                    stream = stream,
+                )
+                val launchId = PlayerLaunchStore.put(launch)
+                navController.navigate(PlayerRoute(launchId = launchId, title = launch.title)) {
+                    launchSingleTop = true
+                }
+            }
+        }
+
         val sportsActions = SportsActions(
             onPlay = ::openLiveChannel,
             onPlayCatchup = ::openLiveCatchup,
@@ -2065,6 +2182,7 @@ internal fun MainAppContent(
                                         ),
                                     )
                                 },
+                                onLiveTvPluginItem = ::openLiveTvPluginItem,
                                 onWebPlayMedia = ::openWebMedia,
                                 onLiveTvSettingsClick = {
                                     if (useNativeNavigation && !isTabletLayout) {
@@ -2883,3 +3001,14 @@ private fun AppRoute?.drawsUnderVerticalBar(selectedTab: AppScreenTab): Boolean 
         is TabsRoute -> selectedTab == AppScreenTab.Home || selectedTab == AppScreenTab.Library
         else -> false
     }
+
+private fun isDirectPluginMediaUrl(url: String): Boolean {
+    if (!url.startsWith("http://", ignoreCase = true) &&
+        !url.startsWith("https://", ignoreCase = true)
+    ) {
+        return false
+    }
+    val path = url.substringBefore('?').substringBefore('#').lowercase()
+    return listOf(".m3u8", ".mpd", ".mp4", ".mkv", ".ts", ".flv", ".webm", ".mp3")
+        .any { path.endsWith(it) }
+}

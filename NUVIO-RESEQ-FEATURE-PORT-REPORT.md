@@ -276,13 +276,19 @@ These are directly portable to the TV app and can be adapted to Robolectric for 
 
 Normally a CloudStream provider is only consulted for the movie or series the user already selected. That hides catalogue-only providers (for example clip sites) whose content never shares a title with TMDB entries. The mobile app adds an explicit browse path:
 
-1. Plugins → CloudStream provider → **Browse**.
-2. The screen automatically loads the provider's own home feed (the tab named "Latest" when present, otherwise its first home tab) and shows those videos immediately.
-3. The search field remains available; searching switches to provider-owned search results, and **Latest** switches back.
-4. Tapping a result calls `MainAPI.load(url)`. A movie immediately calls `loadLinks`; a series lists its episodes and loads links for the selected episode.
-5. Tapping a stream creates a normal `PlayerLaunch` with request headers, subtitles and `StreamLinkCacheRepository` entry, then opens the existing player.
+1. Open an enabled CloudStream provider from Plugins, Home, Discover or Live TV.
+2. The screen opens with a full-bleed, auto-advancing top-10 carousel built from the extension's current feed. Each slide uses that title's artwork behind a dark scrim, a rank chip, provider label, title and type/year; tapping a slide opens its detail page. The carousel scrolls away with the grid, and a floating back button stays above it. When the feed is still empty it falls back to a provider-artwork hero with the extension name, description, types, version and category count.
+3. Below the hero, the screen automatically loads the provider's own home feed (the tab named "Latest" when present, otherwise its first home tab) as a poster grid matching the native Nuvio catalog layout. It shows titles and type/year labels and loads the next page automatically near the end of the grid.
+4. Provider home tabs are exposed as horizontally scrolling category chips beneath the search field. Selecting one reloads that tab at page 1; the default **Latest** chip keeps the provider's preferred feed. The stream of titles is not labelled with a count.
+5. The search field remains available; searching switches to provider-owned search results and hides the category chips.
+6. Tapping a poster opens a native-style detail page: hero artwork, title, type/year badges, provider branding, Play action, sources, expandable synopsis and (for series) season/episode dropdowns. Backdrops come from the provider's `backgroundPosterUrl`; when the provider has no separate backdrop, a generated gradient artwork with the title watermark is used instead of reusing the poster thumbnail.
+7. For a movie, sources sit directly below the Play action. For a series, the season/episode dropdowns come first, then sources, so episode choice stays above the stream list. The first episode is pre-selected and choosing another reloads the sources. Seasons are collapsible dropdowns, with the first season expanded initially.
+8. The detail page also carries the metadata the extension provides: genres, runtime, content rating, status/coming-soon, cast (with photos), trailers, provider recommendations, and episode thumbnails, descriptions and runtimes. Cast and recommendations are horizontally scrolling rails. Cast taps resolve the actor name through TMDB search and open the native person page with their other credits. Trailers use the in-app YouTube engine when trailer playback is set to In-App; otherwise they open through the system handler. Non-YouTube trailer links keep the system-handler fallback.
+9. Tapping a source creates a normal `PlayerLaunch` with request headers, subtitles and `StreamLinkCacheRepository` entry, then opens the existing player.
 
-This path does not change title-driven discovery and does not require TMDB metadata. Current limits: provider home feeds are read from one tab (preferring "Latest") and paginated one page at a time; there is no tab picker or full catalogue browser, and search still uses the first result page only.
+Not portable from the native page: library/tracking membership, watched progress, Trakt comments and reviews, and next-episode autoplay all depend on TMDB/Trakt IDs and the native metadata graph. CloudStream items only expose provider URLs, so those actions are intentionally absent rather than writing incorrect IDs into Nuvio's databases.
+
+This path does not change title-driven discovery and does not require TMDB metadata. Current limits: category chips come from the provider's home tabs, not from arbitrary sub-sections inside a tab; each tab is paginated one page at a time, and search still uses the first result page only.
 
 The action is available from both plugin surfaces: the full-screen Plugins page and the tablet settings hub (the hub previously bypassed the route callback). A live emulator run against the real `RdNutz` repo verified provider search results, a resolved link (`1 links, 0 subtitles`), ExoPlayer reaching `READY`, and browse state surviving the player round-trip.
 
@@ -290,20 +296,33 @@ The action is available from both plugin surfaces: the full-screen Plugins page 
 
 Extensions are no longer reachable only through Settings:
 
-- **Plugins → repository → Manage extensions** opens a repository-scoped extension page listing every extension in that repository with its enable switch, Show on Home, Show in Live TV and settings actions. Browse/Test are intentionally omitted there; they remain on the enabled rows of the main Plugins page.
+- **Plugins → repository → Manage extensions** opens a repository-scoped extension page listing every extension in that repository with its enable switch, a collapsible **Catalog visibility** dropdown (Show on Home, Show in Live TV, Show in Sports, Show in Lucid TV) and its settings action. Browse/Test are intentionally omitted there; they remain on the enabled rows of the main Plugins page.
 - The main Plugins page uses compact, stacked repository groups: one-line headers with counts, expand/collapse (collapsed by default) and Manage. Expanded groups list their enabled extensions inline.
-- **Home** shows a CloudStream row directly below Continue Watching, using equal-size tiles. It shows up to 15 providers selected with Show on Home, plus a View all tile.
-- **View all** opens a themed grid of equal-size extension tiles with a spring pop-in as tiles enter the viewport; tapping a tile opens that provider's Latest feed.
-- **Live TV → Add-ons** shows a CloudStream Live group for extensions with Show in Live TV enabled. Selecting one opens its live/latest catalog. No EPG programme data is synthesized (CloudStream has no standard EPG API).
-- **Sports** event pages query extensions with Show in Sports enabled, alongside sports add-ons. Matching extension events open the plugin stream page; guide data remains extension-generated.
+- **Home** shows a CloudStream row directly below Continue Watching, using equal-size 190×112 tiles. Each tile uses the extension artwork full-bleed with a dark bottom scrim, provider name and a “Latest & search” hint; extensions without artwork get a full-bleed typographic cover using the extension name in a high-contrast accent color. It shows up to 15 providers selected with Show on Home, plus a View all tile.
+- **View all** opens a themed grid of equal-size extension tiles with full-bleed artwork, a bottom scrim, title and supported types, plus a spring pop-in as tiles enter the viewport; tapping a tile opens that provider's Latest feed.
+- **Live TV → Add-ons** shows a CloudStream Live group for extensions with Show in Live TV enabled. Cards use the same artwork, title, subtitle and animated expand arrow as add-on cards. Each extension expands inline, exposes its home tabs as collapsible layers, and expanding a layer lists its channels. Tapping a channel shows a “Finding best source…” notice, resolves the provider links with a bounded timeout (partial links are kept if the provider is slow), ranks them by quality then seeders, chooses the best playable direct source and opens the player directly; no source-selection sheet is shown in Live TV. If the provider URL itself is a direct HLS/DASH/MP4 link, that URL is used as a fallback. No EPG programme data is synthesized (CloudStream has no standard EPG API).
+- **Sports** event pages query every enabled extension with Show in Sports, alongside sports add-ons. Each provider is searched by event title and team names; if search yields nothing, its latest feed and sports-looking layers are scanned. The lookup refreshes when the enabled-extension set changes. Matching extension events open the plugin stream page; guide data remains extension-generated.
+- **Lucid TV** source picker offers CloudStream catalog rotation, series marathon and live relay sources for every extension with Show in Lucid TV enabled. Playback resolves streams through the plugin host (see §3.16).
 - The Add Repository section includes **Browse repository index**, which loads the MegaRepo (3737) CloudStream repository database and lets the user add any child repository individually.
 - **Search → Discover** lists each enabled CloudStream provider as a catalog under its supported Movie/TV type. Selecting one loads the provider's latest/home feed into the normal poster grid, with Load more using the provider's next page.
 - Plugin cards on Discover are registered in an in-memory item index. Tapping a card opens `PluginBrowseRoute` with the selected item already loaded, so its streams are one step away.
 - New CloudStream repositories install all providers **disabled**. The user chooses which extensions to enable; repository refreshes preserve that choice.
-- Provider cards only show the settings gear when the extension actually registers a settings UI. Opening a repository page probes its unchecked extensions, persists the result, and releases probe-loaded packages; repository install/refresh does the same for that repo. If a plugin's load() fails before registering its settings callback, a DEX scan for `setOpenSettings`/`SettingsFragment` still exposes the gear (verified with CNC's SKTechProvider).
+- Provider cards only show the settings gear when the extension actually registers a settings UI. Opening a repository page probes its unchecked extensions, persists the result, and releases probe-loaded packages; repository install/refresh does the same for that repo. If a plugin's load() fails before registering its settings callback, a DEX scan for `setOpenSettings`/`SettingsFragment` still exposes the gear, and opening settings reloads the package with the current foreground Activity because some extensions (CNC's SKTechProvider) cast the load context to `AppCompatActivity` and cache their settings fragment during `load()`. Verified on-device for PlayZTV and SKTech.
 - Disabled providers, the global plugin switch, and Play Store/App Store builds are respected.
 
-Current limits: global text search still queries addons only (extension search is available inside a provider's Browse page), and Home shows provider shortcuts rather than separate latest-video rows per extension.
+### 3.16 Lucid TV sources (mobile addition)
+
+Lucid TV virtual channels can now draw from a CloudStream extension:
+
+- Enable **Show in Lucid TV** on an extension from its repository page.
+- In the Lucid TV channel editor, choose one of three CloudStream sources and pick an enabled extension: **CloudStream extension** (catalog rotation), **CloudStream series** (episode marathon) or **CloudStream live relay** (24/7 playlist-style loop).
+- Catalog rotation builds its pool from the extension's latest feed (up to four pages, capped by the channel's max-item setting). Each item keeps its provider URL and API index.
+- Series marathons walk the extension's series feed, load each series' episode list through `PluginRepository.browseEpisodes`, and expand the episodes into scheduled items with season/episode numbers, episode posters and runtimes.
+- Live relay reuses the same provider pool but maps it to the `PLAYLIST_LOOP` kind, so it behaves like a 24/7 relay channel built from the extension's live layers.
+- Tuning resolves the selected item through `PluginRepository.browseStreams`, maps the returned links into normal `StreamItem`s, and uses the existing player path. Source headers, quality metadata and subtitles are preserved.
+- Codec support is backward compatible: channels without the new plugin fields decode as ordinary add-on sources.
+
+Current limits: the Lucid TV source uses the extension's latest feed rather than a hand-picked catalogue, and there is no per-item channel editing UI yet. Global text search still queries addons only (extension search is available inside a provider's Browse page), and Home shows provider shortcuts rather than separate latest-video rows per extension.
 
 ---
 

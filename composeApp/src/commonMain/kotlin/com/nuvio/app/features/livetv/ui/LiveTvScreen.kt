@@ -147,6 +147,8 @@ import com.nuvio.app.features.addons.liveTvAddons
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginRepositoryType
 import com.nuvio.app.features.plugins.PluginScraper
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
 import com.nuvio.app.features.catalog.CatalogUiState
 import com.nuvio.app.features.catalog.fetchCatalogPage
 import com.nuvio.app.features.home.MetaPreview
@@ -169,8 +171,12 @@ import nuvio.composeapp.generated.resources.livetv_header_search
 import nuvio.composeapp.generated.resources.livetv_header_settings
 import nuvio.composeapp.generated.resources.livetv_header_quick_channels
 import nuvio.composeapp.generated.resources.livetv_header_addons
+import nuvio.composeapp.generated.resources.livetv_cloudstream_channels
 import nuvio.composeapp.generated.resources.livetv_cloudstream_group
+import nuvio.composeapp.generated.resources.livetv_cloudstream_layers_failed
+import nuvio.composeapp.generated.resources.livetv_cloudstream_layers_loading
 import nuvio.composeapp.generated.resources.livetv_cloudstream_live_catalog
+import nuvio.composeapp.generated.resources.livetv_cloudstream_no_layers
 import nuvio.composeapp.generated.resources.livetv_quick_channels_section
 import nuvio.composeapp.generated.resources.livetv_quick_channels_open
 import nuvio.composeapp.generated.resources.livetv_no_matching_channels
@@ -206,7 +212,7 @@ private data class CombinedSection(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun LiveTvScreen(
+internal fun LiveTvScreen(
     modifier: Modifier = Modifier,
     scrollToTopRequests: Flow<Unit> = emptyFlow(),
     onPlayChannel: (LiveChannel, nowTitle: String?) -> Unit,
@@ -242,6 +248,8 @@ fun LiveTvScreen(
     onMakeVirtualChannel: (com.nuvio.app.features.addons.ManagedAddon, com.nuvio.app.features.addons.AddonCatalog) -> Unit = { _, _ -> },
     /** Opens a CloudStream extension enabled for Live TV. */
     onOpenPluginProvider: (PluginScraper) -> Unit = {},
+    /** Opens one item from an inline CloudStream live layer. */
+    onOpenPluginItem: (PluginScraper, PluginBrowseItem) -> Unit = { _, _ -> },
 ) {
     val tokens = MaterialTheme.nuvio
     // Restore the open groups and the scroll position when coming back from the player.
@@ -587,6 +595,7 @@ fun LiveTvScreen(
                                 onMakeChannel = onMakeVirtualChannel,
                                 onlyManifestUrl = onlyAddonManifest,
                                 onOpenPluginProvider = onOpenPluginProvider,
+                                onOpenPluginItem = onOpenPluginItem,
                             )
                         }
                     } else {
@@ -1079,6 +1088,7 @@ private fun AddonsCatalogInlineSection(
     onMakeChannel: (com.nuvio.app.features.addons.ManagedAddon, com.nuvio.app.features.addons.AddonCatalog) -> Unit,
     onlyManifestUrl: String? = null,
     onOpenPluginProvider: (PluginScraper) -> Unit = {},
+    onOpenPluginItem: (PluginScraper, PluginBrowseItem) -> Unit = { _, _ -> },
 ) {
     val tokens = MaterialTheme.nuvio.colors
     // Lazy-load addons only when this section enters the composition (user scrolls here).
@@ -1126,10 +1136,10 @@ private fun AddonsCatalogInlineSection(
                     ),
                 )
                 livePluginProviders.forEach { provider ->
-                    CloudStreamLiveProviderCard(
+                    CloudStreamLiveProviderSection(
                         provider = provider,
                         tokens = tokens,
-                        onClick = { onOpenPluginProvider(provider) },
+                        onOpenItem = { item -> onOpenPluginItem(provider, item) },
                     )
                 }
                 if (addons.isNotEmpty()) {
@@ -1183,11 +1193,298 @@ private fun AddonsCatalogInlineSection(
 }
 
 @Composable
-private fun CloudStreamLiveProviderCard(
+private fun CloudStreamLiveProviderSection(
     provider: PluginScraper,
+    tokens: NuvioColorTokens,
+    onOpenItem: (PluginBrowseItem) -> Unit,
+) {
+    var expanded by remember(provider.id) { mutableStateOf(false) }
+    var loading by remember(provider.id) { mutableStateOf(false) }
+    var attempted by remember(provider.id) { mutableStateOf(false) }
+    var errorMessage by remember(provider.id) { mutableStateOf<String?>(null) }
+    var categories by remember(provider.id) { mutableStateOf<List<PluginBrowseCategory>>(emptyList()) }
+    var fallbackItems by remember(provider.id) { mutableStateOf<List<PluginBrowseItem>>(emptyList()) }
+
+    LaunchedEffect(expanded, provider.id) {
+        if (!expanded || attempted) return@LaunchedEffect
+        loading = true
+        errorMessage = null
+        runCatching { PluginRepository.browseLatest(provider.id, page = 1) }
+            .onSuccess { page ->
+                categories = page?.categories.orEmpty()
+                fallbackItems = page?.items.orEmpty()
+                attempted = true
+            }
+            .onFailure { error ->
+                errorMessage = error.message ?: "Could not load layers."
+            }
+        loading = false
+    }
+
+    CloudStreamLiveProviderCard(
+        provider = provider,
+        tokens = tokens,
+        expanded = expanded,
+        layerCount = categories.size,
+        onClick = { expanded = !expanded },
+    )
+    if (expanded) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = NuvioTokens.Space.s40,
+                    end = NuvioTokens.Space.s8,
+                    top = NuvioTokens.Space.s4,
+                    bottom = NuvioTokens.Space.s8,
+                ),
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+        ) {
+            when {
+                loading -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+                    ) {
+                        NuvioLoadingIndicator(size = NuvioTokens.Space.s16)
+                        Text(
+                            text = stringResource(Res.string.livetv_cloudstream_layers_loading),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = tokens.textMuted,
+                        )
+                    }
+                }
+                errorMessage != null -> {
+                    Text(
+                        text = errorMessage.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.danger,
+                    )
+                }
+                categories.isEmpty() -> {
+                    if (fallbackItems.isEmpty()) {
+                        Text(
+                            text = stringResource(Res.string.livetv_cloudstream_no_layers),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = tokens.textMuted,
+                        )
+                    } else {
+                        fallbackItems.take(80).forEach { item ->
+                            CloudStreamChannelRow(
+                                item = item,
+                                tokens = tokens,
+                                onClick = { onOpenItem(item) },
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    categories.forEach { category ->
+                        CloudStreamLayerRow(
+                            provider = provider,
+                            category = category,
+                            tokens = tokens,
+                            onOpenItem = onOpenItem,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CloudStreamLayerRow(
+    provider: PluginScraper,
+    category: PluginBrowseCategory,
+    tokens: NuvioColorTokens,
+    onOpenItem: (PluginBrowseItem) -> Unit,
+) {
+    var expanded by remember(provider.id, category.key) { mutableStateOf(false) }
+    var loading by remember(provider.id, category.key) { mutableStateOf(false) }
+    var attempted by remember(provider.id, category.key) { mutableStateOf(false) }
+    var errorMessage by remember(provider.id, category.key) { mutableStateOf<String?>(null) }
+    var items by remember(provider.id, category.key) { mutableStateOf<List<PluginBrowseItem>>(emptyList()) }
+
+    LaunchedEffect(expanded, provider.id, category.key) {
+        if (!expanded || attempted) return@LaunchedEffect
+        loading = true
+        errorMessage = null
+        runCatching { PluginRepository.browseLatest(provider.id, page = 1, category = category) }
+            .onSuccess { page ->
+                items = page?.items.orEmpty()
+                attempted = true
+            }
+            .onFailure { error ->
+                errorMessage = error.message ?: "Could not load this layer."
+            }
+        loading = false
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
+                .background(tokens.surface)
+                .clickable { expanded = !expanded }
+                .padding(horizontal = NuvioTokens.Space.s10, vertical = NuvioTokens.Space.s10),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+        ) {
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                tint = tokens.textMuted,
+                modifier = Modifier.size(NuvioTokens.Icon.sm),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = category.label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.textPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (attempted) {
+                    Text(
+                        text = stringResource(Res.string.livetv_cloudstream_channels, items.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.textMuted,
+                    )
+                }
+            }
+        }
+        when {
+            !expanded -> Unit
+            loading -> {
+                Row(
+                    modifier = Modifier.padding(start = NuvioTokens.Space.s20),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+                ) {
+                    NuvioLoadingIndicator(size = NuvioTokens.Space.s14)
+                    Text(
+                        text = stringResource(Res.string.livetv_cloudstream_layers_loading),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.textMuted,
+                    )
+                }
+            }
+            errorMessage != null -> {
+                Text(
+                    text = errorMessage.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.danger,
+                    modifier = Modifier.padding(start = NuvioTokens.Space.s20),
+                )
+            }
+            items.isEmpty() -> {
+                Text(
+                    text = stringResource(Res.string.livetv_cloudstream_no_layers),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.textMuted,
+                    modifier = Modifier.padding(start = NuvioTokens.Space.s20),
+                )
+            }
+            else -> {
+                Column(
+                    modifier = Modifier.padding(start = NuvioTokens.Space.s10),
+                    verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                ) {
+                    items.take(80).forEach { item ->
+                        CloudStreamChannelRow(
+                            item = item,
+                            tokens = tokens,
+                            onClick = { onOpenItem(item) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CloudStreamChannelRow(
+    item: PluginBrowseItem,
     tokens: NuvioColorTokens,
     onClick: () -> Unit,
 ) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
+            .background(tokens.surfaceCard)
+            .clickable(onClick = onClick)
+            .padding(horizontal = NuvioTokens.Space.s8, vertical = NuvioTokens.Space.s6),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(64.dp)
+                .height(40.dp)
+                .clip(RoundedCornerShape(NuvioTokens.Radius.md))
+                .background(tokens.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!item.posterUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = item.posterUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.LiveTv,
+                    contentDescription = null,
+                    tint = tokens.textMuted,
+                    modifier = Modifier.size(NuvioTokens.Icon.sm),
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val detail = listOfNotNull(
+                item.year?.takeIf { it > 0 }?.toString(),
+                item.type.takeIf { it.isNotBlank() },
+            ).joinToString("  ·  ")
+            if (detail.isNotBlank()) {
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.textMuted,
+                    maxLines = 1,
+                )
+            }
+        }
+        Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = null,
+            tint = tokens.accent,
+            modifier = Modifier.size(NuvioTokens.Icon.sm),
+        )
+    }
+}
+
+@Composable
+private fun CloudStreamLiveProviderCard(
+    provider: PluginScraper,
+    tokens: NuvioColorTokens,
+    expanded: Boolean,
+    layerCount: Int,
+    onClick: () -> Unit,
+) {
+    val arrow by animateFloatAsState(if (expanded) 180f else 0f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1198,19 +1495,30 @@ private fun CloudStreamLiveProviderCard(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
-                .background(tokens.accent.copy(alpha = 0.16f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Filled.LiveTv,
+        if (!provider.logo.isNullOrBlank()) {
+            AsyncImage(
+                model = provider.logo,
                 contentDescription = null,
-                tint = tokens.accent,
-                modifier = Modifier.size(22.dp),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(NuvioTokens.Radius.lg)),
             )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
+                    .background(tokens.accent.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Extension,
+                    contentDescription = null,
+                    tint = tokens.accent,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -1222,16 +1530,21 @@ private fun CloudStreamLiveProviderCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = stringResource(Res.string.livetv_cloudstream_live_catalog),
+                text = if (layerCount > 0) {
+                    "$layerCount layer${if (layerCount > 1) "s" else ""}"
+                } else {
+                    stringResource(Res.string.livetv_cloudstream_live_catalog)
+                },
                 style = MaterialTheme.typography.labelMedium,
                 color = tokens.textMuted,
                 maxLines = 1,
             )
         }
         Icon(
-            Icons.Filled.ChevronRight,
+            imageVector = Icons.Filled.ExpandMore,
             contentDescription = null,
-            tint = tokens.textMuted,
+            tint = if (expanded) tokens.accent else tokens.textMuted,
+            modifier = Modifier.rotate(arrow),
         )
     }
 }

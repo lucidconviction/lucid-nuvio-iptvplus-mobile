@@ -73,6 +73,11 @@ internal object CloudStreamRuntime {
             }.onFailure { Log.w(TAG, "NiceHttp base client init failed: ${it.message}") }
 
             AcraApplication.context = hostApplication
+            com.nuvio.app.AppActivityTracker.current?.let { activity ->
+                currentActivity = WeakReference<Activity?>(activity)
+                CommonActivity.activity = activity
+                AcraApplication.setActivity(activity)
+            }
             hostApplication.registerActivityLifecycleCallbacks(
                 object : Application.ActivityLifecycleCallbacks {
                     override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) = Unit
@@ -104,7 +109,7 @@ internal object CloudStreamRuntime {
 
     fun openSettings(context: Context, scraperId: String, profileId: Int) {
         ensureInitialized(context)
-        val activity = currentActivity.get()
+        val activity = currentActivity.get() ?: com.nuvio.app.AppActivityTracker.current
         if (activity == null) {
             Log.w(TAG, "No foreground Activity for extension settings")
             return

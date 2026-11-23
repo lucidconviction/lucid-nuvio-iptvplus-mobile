@@ -48,6 +48,7 @@ import com.nuvio.app.features.library.LibrarySection
 import com.nuvio.app.features.library.LibrarySortOption
 import com.nuvio.app.features.profiles.NuvioProfile
 import com.nuvio.app.features.plugins.PluginScraper
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
 import com.nuvio.app.features.search.SearchScreen
 import com.nuvio.app.features.settings.SettingsScreen
 import com.nuvio.app.features.watchprogress.ContinueWatchingItem
@@ -148,6 +149,7 @@ internal data class AppTabActions(
     val onLiveTvAddonItemToMultiView: (MetaPreview) -> Unit = {},
     val onLiveTvOpenAddonSettings: () -> Unit = {},
     val onOpenPluginProvider: ((PluginScraper) -> Unit)? = null,
+    val onLiveTvPluginItem: ((PluginScraper, PluginBrowseItem) -> Unit)? = null,
     val onWebPlayMedia: (WebMediaSource) -> Unit = {},
     val onWebBrowserActiveChange: (Boolean) -> Unit = {},
 )
@@ -252,6 +254,7 @@ internal fun AppTabHost(
                     onAddonItemToMultiView = actions.onLiveTvAddonItemToMultiView,
                     onOpenAddonSettings = actions.onLiveTvOpenAddonSettings,
                     onOpenPluginProvider = actions.onOpenPluginProvider ?: {},
+                    onOpenPluginItem = actions.onLiveTvPluginItem ?: { _, _ -> },
                 )
             }
 

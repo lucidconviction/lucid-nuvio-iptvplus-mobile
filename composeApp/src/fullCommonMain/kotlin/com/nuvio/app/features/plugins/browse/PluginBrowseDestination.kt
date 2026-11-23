@@ -2,6 +2,7 @@ package com.nuvio.app.features.plugins.browse
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import com.nuvio.app.SettingsDestination
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.player.PlayerLaunch
@@ -11,12 +12,16 @@ import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
 import com.nuvio.app.features.plugins.external.toBrowseStreamItem
 import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.tmdb.TmdbMetadataService
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
 import com.nuvio.app.navigation.NuvioNavigator
+import com.nuvio.app.navigation.PersonDetailRoute
 import com.nuvio.app.navigation.PlayerRoute
 import com.nuvio.app.navigation.PluginBrowseRoute
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.plugins_browse_person_not_found
 import nuvio.composeapp.generated.resources.plugins_browse_stream_unavailable
+import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -26,6 +31,8 @@ internal actual fun PluginBrowseDestination(
 ) {
     SettingsDestination(route, navController) { onBack ->
         val streamUnavailableText = stringResource(Res.string.plugins_browse_stream_unavailable)
+        val personNotFoundText = stringResource(Res.string.plugins_browse_person_not_found)
+        val scope = rememberCoroutineScope()
         val initialItem = remember(route.initialUrl, route.initialApiIndex) {
             val url = route.initialUrl
             if (url.isNullOrBlank()) {
@@ -47,6 +54,22 @@ internal actual fun PluginBrowseDestination(
             scraperName = route.scraperName,
             initialItem = initialItem,
             onBack = onBack,
+            onOpenPerson = { actor ->
+                scope.launch {
+                    val personId = TmdbMetadataService.searchPerson(actor.name)
+                    if (personId == null) {
+                        NuvioToastController.show(personNotFoundText)
+                    } else {
+                        navController.navigate(
+                            PersonDetailRoute(
+                                personId = personId,
+                                personName = actor.name,
+                                personPhoto = actor.imageUrl,
+                            ),
+                        )
+                    }
+                }
+            },
             onPlay = { item, detail, episode, result ->
                 val providerName = "CloudStream · ${route.scraperName}"
                 val stream = result.toBrowseStreamItem(

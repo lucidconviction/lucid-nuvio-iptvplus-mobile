@@ -57,6 +57,7 @@ internal interface ExternalExtensionHost {
         scraperId: String,
         profileId: Int,
         page: Int,
+        category: PluginBrowseCategory? = null,
     ): PluginLatestPage?
 
     /** Load a selected search result's metadata and episode list. */
@@ -75,6 +76,7 @@ internal interface ExternalExtensionHost {
         data: String,
         season: Int?,
         episode: Int?,
+        timeoutMs: Long? = null,
     ): List<PluginRuntimeResult>
 
     /** Whether the extension package is currently held in the loader cache. */

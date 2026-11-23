@@ -13,6 +13,7 @@ import com.nuvio.app.features.livetv.model.EpgProgram
 import com.nuvio.app.features.livetv.model.LiveChannel
 import com.nuvio.app.features.livetv.model.LiveTvClock
 import com.nuvio.app.features.livetv.player.VirtualChannelPlayback
+import com.nuvio.app.features.plugins.PluginRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -467,6 +468,13 @@ internal object VirtualChannelRepository {
             is VirtualSource.AddonCatalog -> {
                 fetchCatalogPool(source, spec)
             }
+            is VirtualSource.PluginCatalog -> {
+                if (spec.kind == VirtualChannelKind.SERIES_MARATHON) {
+                    fetchPluginSeriesPool(source, spec)
+                } else {
+                    fetchPluginPool(source, spec)
+                }
+            }
             is VirtualSource.AddonItem -> {
                 when (spec.kind) {
                     VirtualChannelKind.SERIES_MARATHON -> {
@@ -544,6 +552,92 @@ internal object VirtualChannelRepository {
         }
         val filtered = filterItems(items, spec)
         orderItems(filtered.distinctBy { it.id }, spec).take(spec.pool.maxItems.coerceIn(1, 10_000))
+    }
+
+    private suspend fun fetchPluginPool(
+        source: VirtualSource.PluginCatalog,
+        spec: VirtualChannelSpec,
+    ): List<VirtualItem> {
+        runCatching { PluginRepository.initialize() }
+        val cap = spec.pool.maxItems.coerceIn(1, 10_000)
+        val out = ArrayList<VirtualItem>()
+        var page = 1
+        while (out.size < cap && page <= 4) {
+            val feed = runCatching {
+                PluginRepository.browseLatest(source.scraperId, page)
+            }.getOrNull() ?: break
+            if (feed.items.isEmpty()) break
+            feed.items.forEach { item ->
+                out += VirtualItem(
+                    id = "plugin:${source.scraperId}:${item.apiIndex}:${item.url}",
+                    streamId = item.url,
+                    type = item.type,
+                    title = item.name,
+                    poster = item.posterUrl,
+                    year = item.year,
+                    pluginScraperId = source.scraperId,
+                    pluginApiIndex = item.apiIndex,
+                    pluginUrl = item.url,
+                )
+            }
+            if (!feed.hasNext) break
+            page++
+        }
+        return out
+    }
+
+    private suspend fun fetchPluginSeriesPool(
+        source: VirtualSource.PluginCatalog,
+        spec: VirtualChannelSpec,
+    ): List<VirtualItem> {
+        runCatching { PluginRepository.initialize() }
+        val cap = spec.pool.maxItems.coerceIn(1, 10_000)
+        val out = ArrayList<VirtualItem>()
+        var page = 1
+        while (out.size < cap && page <= 3) {
+            val feed = runCatching {
+                PluginRepository.browseLatest(source.scraperId, page)
+            }.getOrNull() ?: break
+            if (feed.items.isEmpty()) break
+            for (item in feed.items) {
+                if (out.size >= cap) break
+                if (!item.type.equals("series", ignoreCase = true) &&
+                    !item.type.equals("tv", ignoreCase = true)
+                ) {
+                    continue
+                }
+                val episodes = runCatching {
+                    PluginRepository.browseEpisodes(
+                        scraperId = source.scraperId,
+                        apiIndex = item.apiIndex,
+                        url = item.url,
+                    )
+                }.getOrDefault(emptyList())
+                if (episodes.isEmpty()) continue
+                episodes.forEach { episode ->
+                    if (out.size >= cap) return@forEach
+                    out += VirtualItem(
+                        id = "plugin:${source.scraperId}:${item.apiIndex}:${item.url}:${episode.season}:${episode.episode}",
+                        streamId = episode.data,
+                        type = "series",
+                        title = item.name,
+                        poster = episode.posterUrl ?: item.posterUrl,
+                        year = item.year,
+                        runtimeMs = episode.runtimeMinutes?.toLong()?.times(60_000L),
+                        season = episode.season,
+                        episode = episode.episode,
+                        episodeTitle = episode.name.takeIf { it.isNotBlank() },
+                        parentId = item.url,
+                        pluginScraperId = source.scraperId,
+                        pluginApiIndex = item.apiIndex,
+                        pluginUrl = item.url,
+                    )
+                }
+            }
+            if (!feed.hasNext) break
+            page++
+        }
+        return out
     }
 
     private suspend fun fetchCatalogPool(source: VirtualSource.AddonCatalog, spec: VirtualChannelSpec): List<VirtualItem> {

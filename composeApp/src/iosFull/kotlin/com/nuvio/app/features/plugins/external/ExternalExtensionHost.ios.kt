@@ -48,6 +48,7 @@ internal object UnsupportedExternalExtensionHost : ExternalExtensionHost {
         scraperId: String,
         profileId: Int,
         page: Int,
+        category: PluginBrowseCategory?,
     ): PluginLatestPage? = null
 
     override suspend fun loadDetail(
@@ -64,6 +65,7 @@ internal object UnsupportedExternalExtensionHost : ExternalExtensionHost {
         data: String,
         season: Int?,
         episode: Int?,
+        timeoutMs: Long?,
     ): List<PluginRuntimeResult> = emptyList()
 
     override fun isExtensionLoaded(scraperId: String, profileId: Int): Boolean = false

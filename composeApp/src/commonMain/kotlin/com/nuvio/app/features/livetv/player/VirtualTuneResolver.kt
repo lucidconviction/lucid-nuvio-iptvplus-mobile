@@ -16,6 +16,8 @@ import com.nuvio.app.features.livetv.virtual.VirtualChannels
 import com.nuvio.app.features.livetv.virtual.VirtualSourceOrder
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.player.PlayerLaunch
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.streams.toStreamItem
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
 import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
 import com.nuvio.app.features.servers.ServerPlayback
@@ -362,25 +364,28 @@ internal object VirtualTuneResolver {
 
         awaitAddons()
         val started = epochMs()
+        val pluginScraperId = tune.item.pluginScraperId
         // StreamsRepository exposes one global request state. Serialize Lucid TV lookups so a
         // prefetch of the next episode cannot cancel the item the viewer is tuning, and a
         // cancellation cannot leave another item's winner under the wrong key.
-        val candidates = streamRequestMutex.withLock {
-            cachedCandidates(tune) ?: run {
-                var fetched = withTimeoutOrNull(budgetMs.coerceAtMost(10_000L)) {
-                    StreamsRepository.resolveStreamCandidates(
-                        type = tune.item.type,
-                        videoId = tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
-                        parentMetaId = tune.item.parentId ?: tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
+        val candidates = if (pluginScraperId != null) {
+            val scraper = PluginRepository.uiState.value.scrapers.firstOrNull { it.id == pluginScraperId }
+            val fetched = withTimeoutOrNull(budgetMs.coerceAtMost(15_000L)) {
+                runCatching {
+                    PluginRepository.browseStreams(
+                        scraperId = pluginScraperId,
+                        apiIndex = tune.item.pluginApiIndex,
+                        url = tune.item.pluginUrl.orEmpty(),
                         season = tune.season,
                         episode = tune.episode,
-                        timeoutMs = budgetMs.coerceAtMost(15_000L),
                     )
-                }.orEmpty()
-
-                // A stale/empty source state (for example add-ons were still loading) gets one retry.
-                if (fetched.isEmpty() && epochMs() - started < budgetMs / 2) {
-                    fetched = withTimeoutOrNull((budgetMs - (epochMs() - started)).coerceAtLeast(2_000L)) {
+                }.getOrDefault(emptyList())
+            }.orEmpty()
+            if (scraper != null) fetched.map { it.toStreamItem(scraper) } else emptyList()
+        } else {
+            streamRequestMutex.withLock {
+                cachedCandidates(tune) ?: run {
+                    var fetched = withTimeoutOrNull(budgetMs.coerceAtMost(10_000L)) {
                         StreamsRepository.resolveStreamCandidates(
                             type = tune.item.type,
                             videoId = tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
@@ -388,12 +393,26 @@ internal object VirtualTuneResolver {
                             season = tune.season,
                             episode = tune.episode,
                             timeoutMs = budgetMs.coerceAtMost(15_000L),
-                            forceRefresh = true,
                         )
                     }.orEmpty()
+
+                    // A stale/empty source state (for example add-ons were still loading) gets one retry.
+                    if (fetched.isEmpty() && epochMs() - started < budgetMs / 2) {
+                        fetched = withTimeoutOrNull((budgetMs - (epochMs() - started)).coerceAtLeast(2_000L)) {
+                            StreamsRepository.resolveStreamCandidates(
+                                type = tune.item.type,
+                                videoId = tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
+                                parentMetaId = tune.item.parentId ?: tune.item.streamId?.takeIf { it.isNotBlank() } ?: tune.item.id,
+                                season = tune.season,
+                                episode = tune.episode,
+                                timeoutMs = budgetMs.coerceAtMost(15_000L),
+                                forceRefresh = true,
+                            )
+                        }.orEmpty()
+                    }
+                    rememberCandidates(tune, fetched)
+                    fetched
                 }
-                rememberCandidates(tune, fetched)
-                fetched
             }
         }
 

@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Log
 import com.lagradost.cloudstream3.APIHolder
 import com.lagradost.cloudstream3.AcraApplication
+import com.lagradost.cloudstream3.CommonActivity
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
@@ -267,6 +268,20 @@ class CloudStreamExtensionLoader(
 
     @Synchronized
     fun settingsCallback(scraperId: String, profileId: Int): ((Context) -> Unit)? {
+        loadExtension(scraperId, profileId)
+        val cached = (loaded[key(profileId, scraperId)]?.plugin as? Plugin)?.openSettings
+        if (cached != null) return cached
+
+        // Some extensions (SKTech, for example) cast load()'s context to an Activity and
+        // register their settings fragment inside that call. If the first load happened
+        // without a foreground Activity, reload now that one exists. Evicting first keeps
+        // the provider registry from accumulating duplicates.
+        val activity = com.nuvio.app.AppActivityTracker.current
+            ?: (AcraApplication.getActivity() as? Activity)
+            ?: return null
+        AcraApplication.setActivity(activity)
+        CommonActivity.activity = activity
+        evictCache(scraperId, profileId)
         loadExtension(scraperId, profileId)
         return (loaded[key(profileId, scraperId)]?.plugin as? Plugin)?.openSettings
     }

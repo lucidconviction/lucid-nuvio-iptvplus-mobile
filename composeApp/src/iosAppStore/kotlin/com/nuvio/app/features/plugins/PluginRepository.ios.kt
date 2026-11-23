@@ -39,6 +39,8 @@ actual object PluginRepository {
 
     actual fun setScraperShowInSports(scraperId: String, showInSports: Boolean) = Unit
 
+    actual fun setScraperShowInLucidTv(scraperId: String, showInLucidTv: Boolean) = Unit
+
     actual fun setPluginsEnabled(enabled: Boolean) = Unit
 
     actual fun setGroupStreamsByRepository(enabled: Boolean) = Unit
@@ -77,7 +79,23 @@ actual object PluginRepository {
     internal actual suspend fun browseLatest(
         scraperId: String,
         page: Int,
+        category: com.nuvio.app.features.plugins.external.PluginBrowseCategory?,
     ): PluginLatestPage? = null
+
+    internal actual suspend fun browseEpisodes(
+        scraperId: String,
+        apiIndex: Int,
+        url: String,
+    ): List<com.nuvio.app.features.plugins.external.PluginBrowseEpisode> = emptyList()
+
+    internal actual suspend fun browseStreams(
+        scraperId: String,
+        apiIndex: Int,
+        url: String,
+        season: Int?,
+        episode: Int?,
+        timeoutMs: Long?,
+    ): List<PluginRuntimeResult> = emptyList()
 
     actual suspend fun detectCloudStreamSettings(repositoryUrl: String?) = Unit
 }

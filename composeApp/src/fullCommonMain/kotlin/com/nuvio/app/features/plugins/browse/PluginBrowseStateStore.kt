@@ -1,6 +1,7 @@
 package com.nuvio.app.features.plugins.browse
 
 import com.nuvio.app.features.plugins.PluginRuntimeResult
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
 import com.nuvio.app.features.plugins.external.PluginBrowseDetail
 import com.nuvio.app.features.plugins.external.PluginBrowseEpisode
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
@@ -21,6 +22,8 @@ internal object PluginBrowseStateStore {
         val latestHasNext: Boolean = false,
         val latestPage: Int = 0,
         val latestAttempted: Boolean = false,
+        val latestCategories: List<PluginBrowseCategory> = emptyList(),
+        val selectedCategoryKey: String? = null,
         val detailItem: PluginBrowseItem? = null,
         val detail: PluginBrowseDetail? = null,
         val selectedEpisode: PluginBrowseEpisode? = null,

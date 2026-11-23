@@ -64,6 +64,12 @@ sealed interface VirtualSource {
         val itemType: String,
     ) : VirtualSource
 
+    /** Latest/search items from a CloudStream extension enabled for Lucid TV. */
+    data class PluginCatalog(
+        val scraperId: String,
+        val scraperName: String,
+    ) : VirtualSource
+
     data class ManualItems(val items: List<VirtualItem>) : VirtualSource
 
     /** The channels of one playlist (optionally one group) as relay segments. */
@@ -105,6 +111,10 @@ data class VirtualItem(
     /** Relay channels: the real stream URL and its headers. */
     val streamUrl: String? = null,
     val headers: Map<String, String> = emptyMap(),
+    /** CloudStream items resolve through the plugin host instead of Stremio add-ons. */
+    val pluginScraperId: String? = null,
+    val pluginApiIndex: Int = 0,
+    val pluginUrl: String? = null,
 )
 
 data class VirtualPoolRules(

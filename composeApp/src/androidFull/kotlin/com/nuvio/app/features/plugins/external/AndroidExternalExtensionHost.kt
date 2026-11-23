@@ -121,8 +121,9 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         scraperId: String,
         profileId: Int,
         page: Int,
+        category: PluginBrowseCategory?,
     ): PluginLatestPage? = withContext(Dispatchers.IO) {
-        runner()?.latest(scraperId, profileId, page)
+        runner()?.latest(scraperId, profileId, page, category)
     }
 
     override suspend fun loadDetail(
@@ -141,8 +142,9 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         data: String,
         season: Int?,
         episode: Int?,
+        timeoutMs: Long?,
     ): List<PluginRuntimeResult> = withContext(Dispatchers.IO) {
-        runner()?.loadStreams(scraperId, profileId, apiIndex, data, season, episode).orEmpty()
+        runner()?.loadStreams(scraperId, profileId, apiIndex, data, season, episode, timeoutMs).orEmpty()
     }
 
     override fun isExtensionLoaded(scraperId: String, profileId: Int): Boolean =

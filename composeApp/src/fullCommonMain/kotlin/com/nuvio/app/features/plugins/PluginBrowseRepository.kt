@@ -1,5 +1,6 @@
 package com.nuvio.app.features.plugins
 
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
 import com.nuvio.app.features.plugins.external.PluginBrowseDetail
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
 import com.nuvio.app.features.plugins.external.PluginLatestPage
@@ -43,11 +44,13 @@ internal object PluginBrowseRepository {
     suspend fun latest(
         scraperId: String,
         page: Int,
+        category: PluginBrowseCategory? = null,
     ): Result<PluginLatestPage?> = runCatching {
         externalExtensionHost.latest(
             scraperId = scraperId,
             profileId = currentProfileId(),
             page = page,
+            category = category,
         )
     }
 

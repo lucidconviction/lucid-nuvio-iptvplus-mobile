@@ -26,6 +26,19 @@ internal data class PluginBrowseEpisode(
     val episode: Int?,
     val name: String,
     val data: String,
+    val posterUrl: String? = null,
+    val description: String? = null,
+    val runtimeMinutes: Int? = null,
+)
+
+internal data class PluginBrowseActor(
+    val name: String,
+    val imageUrl: String? = null,
+    val role: String? = null,
+)
+
+internal data class PluginBrowseTrailer(
+    val url: String,
 )
 
 internal data class PluginBrowseDetail(
@@ -36,12 +49,34 @@ internal data class PluginBrowseDetail(
     val isSeries: Boolean,
     val movieData: String?,
     val episodes: List<PluginBrowseEpisode>,
+    val backgroundUrl: String? = null,
+    val logoUrl: String? = null,
+    val tags: List<String> = emptyList(),
+    val rating: Int? = null,
+    val durationMinutes: Int? = null,
+    val contentRating: String? = null,
+    val actors: List<PluginBrowseActor> = emptyList(),
+    val trailers: List<PluginBrowseTrailer> = emptyList(),
+    val recommendations: List<PluginBrowseItem> = emptyList(),
+    val comingSoon: Boolean = false,
+    val status: String? = null,
 )
+
+/** One provider home tab exposed as a category on the browse screen. */
+internal data class PluginBrowseCategory(
+    val apiIndex: Int,
+    val apiName: String,
+    val tabName: String,
+    val label: String,
+) {
+    val key: String get() = "$apiIndex|$tabName"
+}
 
 /** One page of a provider's own home/latest feed. */
 internal data class PluginLatestPage(
     val items: List<PluginBrowseItem>,
     val hasNext: Boolean,
+    val categories: List<PluginBrowseCategory> = emptyList(),
 )
 
 /** Converts a provider result into the app's stream card model for the browse screen. */

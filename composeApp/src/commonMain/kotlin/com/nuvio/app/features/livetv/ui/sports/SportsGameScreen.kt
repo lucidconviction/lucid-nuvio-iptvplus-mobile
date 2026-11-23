@@ -75,6 +75,8 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.features.addons.AddonRepository
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.livetv.data.LiveTvRepository
 import com.nuvio.app.features.livetv.model.EpgProgram
@@ -186,7 +188,27 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
     val checkedStreams = streamHealth.checked.contains(ev.id)
     val addonUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val readyAddonCount = addonUiState.addons.count { it.enabled && it.manifest != null }
-    val addonLookup by produceState<SportsAddonLookup?>(null, ev.id, readyAddonCount) {
+    val pluginUiState by PluginRepository.uiState.collectAsStateWithLifecycle()
+    val sportsPluginSignature = remember(pluginUiState.pluginsEnabled, pluginUiState.scrapers) {
+        if (!pluginUiState.pluginsEnabled) {
+            ""
+        } else {
+            pluginUiState.scrapers
+                .filter { scraper ->
+                    scraper.enabled &&
+                        scraper.manifestEnabled &&
+                        scraper.showInSports &&
+                        scraper.type == PluginRepositoryType.EXTERNAL_DEX
+                }
+                .joinToString("|") { "${it.id}:${it.version}" }
+        }
+    }
+    val addonLookup by produceState<SportsAddonLookup?>(
+        null,
+        ev.id,
+        readyAddonCount,
+        sportsPluginSignature,
+    ) {
         value = SportsAddonLookup(SportsAddonSearch.matches(ev))
     }
     val addonMatches = addonLookup?.matches.orEmpty()

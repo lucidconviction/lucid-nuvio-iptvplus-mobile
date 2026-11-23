@@ -130,6 +130,11 @@ object VirtualChannelCodec {
                 put("itemId", source.itemId)
                 put("itemType", source.itemType)
             }
+            is VirtualSource.PluginCatalog -> {
+                put("type", "plugin_catalog")
+                put("scraperId", source.scraperId)
+                put("scraperName", source.scraperName)
+            }
             is VirtualSource.ManualItems -> {
                 put("type", "manual")
                 put("items", buildJsonArray { source.items.forEach { add(encodeItem(it)) } })
@@ -177,6 +182,11 @@ object VirtualChannelCodec {
             itemType = o.optString("itemType").ifBlank { "series" },
         ).takeIf { it.manifestUrl.isNotBlank() && it.itemId.isNotBlank() }
 
+        "plugin_catalog" -> VirtualSource.PluginCatalog(
+            scraperId = o.optString("scraperId"),
+            scraperName = o.optString("scraperName"),
+        ).takeIf { it.scraperId.isNotBlank() }
+
         "manual" -> VirtualSource.ManualItems(
             o.optJSONArray("items")?.mapNotNull { (it as? JsonObject)?.let(::decodeItem) } ?: emptyList(),
         ).takeIf { it.items.isNotEmpty() }
@@ -220,6 +230,9 @@ object VirtualChannelCodec {
         put("parentId", item.parentId ?: "")
         put("streamUrl", item.streamUrl ?: "")
         put("headers", buildJsonObject { item.headers.forEach { (k, v) -> put(k, v) } })
+        put("pluginScraperId", item.pluginScraperId ?: "")
+        put("pluginApiIndex", item.pluginApiIndex)
+        put("pluginUrl", item.pluginUrl ?: "")
     }
 
     fun decodeItem(o: JsonObject): VirtualItem = VirtualItem(
@@ -243,6 +256,9 @@ object VirtualChannelCodec {
             ?.filter { it.value is JsonPrimitive }
             ?.associate { it.key to (it.value as JsonPrimitive).content }
             .orEmpty(),
+        pluginScraperId = o.optString("pluginScraperId").ifBlank { null },
+        pluginApiIndex = o.optInt("pluginApiIndex", 0),
+        pluginUrl = o.optString("pluginUrl").ifBlank { null },
     )
 
     // ------------------------------------------------------------------ pools

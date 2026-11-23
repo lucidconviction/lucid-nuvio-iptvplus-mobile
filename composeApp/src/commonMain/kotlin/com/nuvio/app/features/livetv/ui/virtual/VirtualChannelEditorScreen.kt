@@ -68,6 +68,8 @@ import com.nuvio.app.features.livetv.virtual.VirtualPlayout
 import com.nuvio.app.features.livetv.virtual.VirtualPlayoutMode
 import com.nuvio.app.features.livetv.virtual.VirtualPoolRules
 import com.nuvio.app.features.livetv.virtual.VirtualSource
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_cancel
 import nuvio.composeapp.generated.resources.lucid_tv_catalog_empty
@@ -88,6 +90,7 @@ import nuvio.composeapp.generated.resources.lucid_tv_max_items
 import nuvio.composeapp.generated.resources.lucid_tv_name
 import nuvio.composeapp.generated.resources.lucid_tv_number
 import nuvio.composeapp.generated.resources.lucid_tv_playout
+import nuvio.composeapp.generated.resources.lucid_tv_plugin_empty
 import nuvio.composeapp.generated.resources.lucid_tv_pool_count
 import nuvio.composeapp.generated.resources.lucid_tv_pool_empty
 import nuvio.composeapp.generated.resources.lucid_tv_pool_loading
@@ -102,10 +105,17 @@ import nuvio.composeapp.generated.resources.lucid_tv_slot_minutes
 import nuvio.composeapp.generated.resources.lucid_tv_source
 import nuvio.composeapp.generated.resources.lucid_tv_source_catalog
 import nuvio.composeapp.generated.resources.lucid_tv_source_catalog_description
+import nuvio.composeapp.generated.resources.lucid_tv_source_plugin
+import nuvio.composeapp.generated.resources.lucid_tv_source_plugin_description
+import nuvio.composeapp.generated.resources.lucid_tv_source_plugin_relay
+import nuvio.composeapp.generated.resources.lucid_tv_source_plugin_relay_description
+import nuvio.composeapp.generated.resources.lucid_tv_source_plugin_series
+import nuvio.composeapp.generated.resources.lucid_tv_source_plugin_series_description
 import nuvio.composeapp.generated.resources.lucid_tv_source_playlist
 import nuvio.composeapp.generated.resources.lucid_tv_source_playlist_description
 import nuvio.composeapp.generated.resources.lucid_tv_source_series
 import nuvio.composeapp.generated.resources.lucid_tv_source_series_description
+import nuvio.composeapp.generated.resources.plugins_badge_cloudstream
 import org.jetbrains.compose.resources.stringResource
 
 /**
@@ -454,6 +464,35 @@ fun VirtualChannelEditorScreen(
                 if (name.isBlank()) name = "$title 24/7"
                 picker = null
             },
+            onPluginCatalog = { plugin ->
+                source = plugin
+                kind = VirtualChannelKind.ADDON_ROTATE
+                playout = playout.copy(mode = VirtualPlayoutMode.ROTATE, slotMinutes = 90)
+                join = join.copy(maxStartPercent = -1)
+                if (name.isBlank()) name = "${plugin.scraperName}: Latest"
+                picker = null
+            },
+            onPluginSeries = { plugin ->
+                source = plugin
+                kind = VirtualChannelKind.SERIES_MARATHON
+                playout = playout.copy(
+                    mode = VirtualPlayoutMode.LOOP,
+                    slotMinutes = 45,
+                    seriesSlotMinutes = 45,
+                    order = VirtualOrder.AIR,
+                )
+                join = join.copy(maxStartPercent = -1)
+                if (name.isBlank()) name = "${plugin.scraperName}: Series"
+                picker = null
+            },
+            onPluginRelay = { plugin ->
+                source = plugin
+                kind = VirtualChannelKind.PLAYLIST_LOOP
+                playout = playout.copy(mode = VirtualPlayoutMode.LOOP, slotMinutes = 60)
+                join = join.copy(maxStartPercent = 0)
+                if (name.isBlank()) name = "${plugin.scraperName}: Live"
+                picker = null
+            },
         )
     }
 
@@ -479,7 +518,7 @@ fun VirtualChannelEditorScreen(
     }
 }
 
-private enum class PickerMode { SOURCE, CATALOG, SERIES, PLAYLIST }
+private enum class PickerMode { SOURCE, CATALOG, SERIES, PLUGIN, PLUGIN_SERIES, PLUGIN_RELAY, PLAYLIST }
 
 @Composable
 private fun EditorSection(title: String, content: @Composable () -> Unit) {
@@ -504,6 +543,7 @@ private fun sourceSummary(source: VirtualSource?): String = when (source) {
         (source.genre?.let { " · $it" } ?: "") +
         (source.search?.let { " · search: $it" } ?: "")
     is VirtualSource.AddonItem -> "Series · ${source.itemId}"
+    is VirtualSource.PluginCatalog -> "${source.scraperName} · Latest"
     is VirtualSource.ManualItems -> "Your list · ${source.items.size} items"
     is VirtualSource.PlaylistGroup -> "Playlist group"
     is VirtualSource.Rules -> "Smart channel"
@@ -515,10 +555,20 @@ private fun SourcePicker(
     onDismiss: () -> Unit,
     onCatalog: (VirtualSource.AddonCatalog, MetaPreview?) -> Unit,
     onPlaylistGroup: (sourceId: String, groupId: String?, title: String) -> Unit,
+    onPluginCatalog: (VirtualSource.PluginCatalog) -> Unit,
+    onPluginSeries: (VirtualSource.PluginCatalog) -> Unit,
+    onPluginRelay: (VirtualSource.PluginCatalog) -> Unit,
 ) {
     var step by remember(mode) { mutableStateOf(mode) }
     val addonState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    val pluginState by PluginRepository.uiState.collectAsStateWithLifecycle()
     val addons = addonState.addons.filter { it.enabled && it.manifest != null }
+    val plugins = pluginState.scrapers.filter { scraper ->
+        scraper.enabled &&
+            scraper.manifestEnabled &&
+            scraper.showInLucidTv &&
+            scraper.type == PluginRepositoryType.EXTERNAL_DEX
+    }
     var selectedAddon by remember { mutableStateOf<ManagedAddon?>(null) }
     var selectedCatalog by remember { mutableStateOf<AddonCatalog?>(null) }
     var selectedGenre by remember { mutableStateOf<String?>(null) }
@@ -529,6 +579,8 @@ private fun SourcePicker(
     var loading by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
     val listState by LiveTvViewState.list.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) { runCatching { PluginRepository.initialize() } }
 
     if (step == PickerMode.CATALOG || step == PickerMode.SERIES) {
         val catalog = selectedCatalog
@@ -581,6 +633,8 @@ private fun SourcePicker(
         title = when (step) {
             PickerMode.SOURCE -> stringResource(Res.string.lucid_tv_source)
             PickerMode.CATALOG, PickerMode.SERIES -> selectedAddon?.displayTitle ?: stringResource(Res.string.lucid_tv_select_catalog)
+            PickerMode.PLUGIN, PickerMode.PLUGIN_SERIES, PickerMode.PLUGIN_RELAY ->
+                stringResource(Res.string.plugins_badge_cloudstream)
             PickerMode.PLAYLIST -> stringResource(Res.string.lucid_tv_select_group)
         },
     ) {
@@ -590,6 +644,20 @@ private fun SourcePicker(
                     title = stringResource(Res.string.lucid_tv_source_catalog),
                     description = stringResource(Res.string.lucid_tv_source_catalog_description),
                 ) { step = PickerMode.CATALOG }
+                if (plugins.isNotEmpty()) {
+                    SourceOption(
+                        title = stringResource(Res.string.lucid_tv_source_plugin),
+                        description = stringResource(Res.string.lucid_tv_source_plugin_description),
+                    ) { step = PickerMode.PLUGIN }
+                    SourceOption(
+                        title = stringResource(Res.string.lucid_tv_source_plugin_series),
+                        description = stringResource(Res.string.lucid_tv_source_plugin_series_description),
+                    ) { step = PickerMode.PLUGIN_SERIES }
+                    SourceOption(
+                        title = stringResource(Res.string.lucid_tv_source_plugin_relay),
+                        description = stringResource(Res.string.lucid_tv_source_plugin_relay_description),
+                    ) { step = PickerMode.PLUGIN_RELAY }
+                }
                 SourceOption(
                     title = stringResource(Res.string.lucid_tv_source_series),
                     description = stringResource(Res.string.lucid_tv_source_series_description),
@@ -598,6 +666,28 @@ private fun SourcePicker(
                     title = stringResource(Res.string.lucid_tv_source_playlist),
                     description = stringResource(Res.string.lucid_tv_source_playlist_description),
                 ) { step = PickerMode.PLAYLIST }
+            }
+            PickerMode.PLUGIN, PickerMode.PLUGIN_SERIES, PickerMode.PLUGIN_RELAY -> {
+                PickerList(
+                    emptyText = stringResource(Res.string.lucid_tv_plugin_empty),
+                    rows = plugins.map { plugin ->
+                        PickerRow(
+                            title = plugin.name,
+                            subtitle = plugin.description,
+                            poster = plugin.logo,
+                        ) {
+                            val source = VirtualSource.PluginCatalog(
+                                scraperId = plugin.id,
+                                scraperName = plugin.name,
+                            )
+                            when (step) {
+                                PickerMode.PLUGIN_SERIES -> onPluginSeries(source)
+                                PickerMode.PLUGIN_RELAY -> onPluginRelay(source)
+                                else -> onPluginCatalog(source)
+                            }
+                        }
+                    },
+                )
             }
             PickerMode.CATALOG, PickerMode.SERIES -> {
                 val addon = selectedAddon

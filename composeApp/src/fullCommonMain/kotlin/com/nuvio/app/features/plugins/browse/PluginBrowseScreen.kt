@@ -1,73 +1,165 @@
 package com.nuvio.app.features.plugins.browse
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.core.build.TrailerPlaybackMode
+import com.nuvio.app.core.ui.Chip
+import com.nuvio.app.core.ui.NuvioBackButton
+import com.nuvio.app.core.ui.NuvioCardDepthSurface
+import com.nuvio.app.core.ui.NuvioInfoBadge
 import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
 import com.nuvio.app.core.ui.NuvioPrimaryButton
-import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioScreenHeader
-import com.nuvio.app.core.ui.NuvioSurfaceCard
+import com.nuvio.app.core.ui.NuvioTokens
+import com.nuvio.app.core.ui.SkeletonPoster
+import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.nuvioCardDepth
+import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.features.details.components.ExpandableDescription
+import com.nuvio.app.features.details.components.TrailerPlayerPopup
+import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.plugins.PluginBrowseRepository
+import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginRuntimeResult
+import com.nuvio.app.features.plugins.PluginScraper
+import com.nuvio.app.features.plugins.external.PluginBrowseActor
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
 import com.nuvio.app.features.plugins.external.PluginBrowseDetail
+import com.nuvio.app.features.plugins.external.PluginBrowseTrailer
+import com.nuvio.app.features.trailer.TrailerPlaybackResolver
+import com.nuvio.app.features.trailer.TrailerPlaybackSource
 import com.nuvio.app.features.plugins.external.PluginBrowseEpisode
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
-import nuvio.composeapp.generated.resources.plugins_browse_back
+import nuvio.composeapp.generated.resources.action_play
+import nuvio.composeapp.generated.resources.action_retry
 import nuvio.composeapp.generated.resources.plugins_browse_detail_failed
 import nuvio.composeapp.generated.resources.plugins_browse_episodes
+import nuvio.composeapp.generated.resources.plugins_browse_coming_soon
+import nuvio.composeapp.generated.resources.plugins_browse_trailer_number
+import nuvio.composeapp.generated.resources.plugins_browse_minutes
+import nuvio.composeapp.generated.resources.plugins_browse_rating
+import nuvio.composeapp.generated.resources.plugins_browse_status
+import nuvio.composeapp.generated.resources.plugins_browse_runtime
+import nuvio.composeapp.generated.resources.plugins_browse_genres
+import nuvio.composeapp.generated.resources.plugins_browse_more_like_this
+import nuvio.composeapp.generated.resources.plugins_browse_trailers
+import nuvio.composeapp.generated.resources.plugins_browse_cast
+import nuvio.composeapp.generated.resources.plugins_browse_details
+import nuvio.composeapp.generated.resources.plugins_browse_content_rating
+import nuvio.composeapp.generated.resources.plugins_browse_episodes_count
+import nuvio.composeapp.generated.resources.plugins_browse_extension_label
 import nuvio.composeapp.generated.resources.plugins_browse_latest
 import nuvio.composeapp.generated.resources.plugins_browse_latest_empty
 import nuvio.composeapp.generated.resources.plugins_browse_latest_failed
-import nuvio.composeapp.generated.resources.plugins_browse_load_more
+import nuvio.composeapp.generated.resources.plugins_browse_live
+import nuvio.composeapp.generated.resources.plugins_browse_movie
 import nuvio.composeapp.generated.resources.plugins_browse_no_results
 import nuvio.composeapp.generated.resources.plugins_browse_no_streams
+import nuvio.composeapp.generated.resources.plugins_browse_provider_hint
+import nuvio.composeapp.generated.resources.plugins_browse_results_for
+import nuvio.composeapp.generated.resources.plugins_browse_categories_count
 import nuvio.composeapp.generated.resources.plugins_browse_search
 import nuvio.composeapp.generated.resources.plugins_browse_search_failed
 import nuvio.composeapp.generated.resources.plugins_browse_search_placeholder
-import nuvio.composeapp.generated.resources.plugins_browse_select_episode
+import nuvio.composeapp.generated.resources.plugins_browse_season
+import nuvio.composeapp.generated.resources.plugins_browse_series
+import nuvio.composeapp.generated.resources.plugins_browse_sources
 import nuvio.composeapp.generated.resources.plugins_browse_streams
 import nuvio.composeapp.generated.resources.plugins_browse_streams_failed
+import nuvio.composeapp.generated.resources.plugins_browse_trailer_unavailable
+import nuvio.composeapp.generated.resources.plugins_provider_version
 import org.jetbrains.compose.resources.stringResource
 
+/**
+ * CloudStream's own catalog, presented like a native Nuvio catalog: a poster grid with
+ * provider search, then a hero-led detail page with episodes and sources.
+ */
 @Composable
 internal fun PluginBrowseScreen(
     scraperId: String,
     scraperName: String,
     initialItem: PluginBrowseItem? = null,
     onBack: () -> Unit,
+    onOpenPerson: (PluginBrowseActor) -> Unit = {},
     onPlay: (PluginBrowseItem, PluginBrowseDetail, PluginBrowseEpisode?, PluginRuntimeResult) -> Unit,
 ) {
     var searching by remember { mutableStateOf(false) }
@@ -77,6 +169,9 @@ internal fun PluginBrowseScreen(
     var loadingLatest by remember { mutableStateOf(false) }
     var latestMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val gridState = rememberLazyGridState()
+    val detailListState = rememberLazyListState()
     val stateKey = remember(scraperId) {
         "${PluginBrowseRepository.currentProfileId()}:$scraperId"
     }
@@ -88,6 +183,8 @@ internal fun PluginBrowseScreen(
     var latestHasNext by remember { mutableStateOf(savedState.latestHasNext) }
     var latestPage by remember { mutableStateOf(savedState.latestPage) }
     var latestAttempted by remember { mutableStateOf(savedState.latestAttempted) }
+    var latestCategories by remember { mutableStateOf(savedState.latestCategories) }
+    var selectedCategoryKey by remember { mutableStateOf(savedState.selectedCategoryKey) }
     var detailItem by remember { mutableStateOf(savedState.detailItem) }
     var detail by remember { mutableStateOf(savedState.detail) }
     var selectedEpisode by remember { mutableStateOf(savedState.selectedEpisode) }
@@ -103,6 +200,8 @@ internal fun PluginBrowseScreen(
                 latestHasNext = latestHasNext,
                 latestPage = latestPage,
                 latestAttempted = latestAttempted,
+                latestCategories = latestCategories,
+                selectedCategoryKey = selectedCategoryKey,
                 detailItem = detailItem,
                 detail = detail,
                 selectedEpisode = selectedEpisode,
@@ -110,15 +209,19 @@ internal fun PluginBrowseScreen(
             ),
         )
     }
+
+    val pluginState by PluginRepository.uiState.collectAsStateWithLifecycle()
+    val provider = remember(pluginState.scrapers, scraperId) {
+        pluginState.scrapers.firstOrNull { it.id == scraperId }
+    }
     val noStreamsText = stringResource(Res.string.plugins_browse_no_streams)
     val detailFailedText = stringResource(Res.string.plugins_browse_detail_failed)
     val noResultsText = stringResource(Res.string.plugins_browse_no_results)
     val searchFailedText = stringResource(Res.string.plugins_browse_search_failed)
     val streamsFailedText = stringResource(Res.string.plugins_browse_streams_failed)
-    val latestText = stringResource(Res.string.plugins_browse_latest)
-    val loadMoreText = stringResource(Res.string.plugins_browse_load_more)
     val latestEmptyText = stringResource(Res.string.plugins_browse_latest_empty)
     val latestFailedText = stringResource(Res.string.plugins_browse_latest_failed)
+    val selectedCategory = latestCategories.firstOrNull { it.key == selectedCategoryKey }
 
     fun loadStreams(
         currentDetail: PluginBrowseDetail,
@@ -144,6 +247,14 @@ internal fun PluginBrowseScreen(
         }
     }
 
+    fun closeDetail() {
+        detail = null
+        detailItem = null
+        selectedEpisode = null
+        streams = emptyList()
+        errorMessage = null
+    }
+
     fun openDetail(item: PluginBrowseItem) {
         detailItem = item
         detail = null
@@ -151,13 +262,23 @@ internal fun PluginBrowseScreen(
         selectedEpisode = null
         streams = emptyList()
         errorMessage = null
+        scope.launch { detailListState.scrollToItem(0) }
         scope.launch {
             PluginBrowseRepository.loadDetail(scraperId, item)
                 .onSuccess { loaded ->
                     detail = loaded
                     if (loaded == null) {
                         errorMessage = detailFailedText
-                    } else if (!loaded.isSeries) {
+                    } else if (loaded.isSeries) {
+                        // Pre-select the first episode so the hero Play button is immediately useful.
+                        val first = loaded.episodes.firstOrNull()
+                        if (first == null) {
+                            errorMessage = noStreamsText
+                        } else {
+                            selectedEpisode = first
+                            loadStreams(loaded, first, first.data)
+                        }
+                    } else {
                         loadStreams(loaded, null, loaded.movieData.orEmpty())
                     }
                 }
@@ -170,7 +291,11 @@ internal fun PluginBrowseScreen(
 
     fun runSearch() {
         val trimmed = query.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty()) {
+            mode = PluginBrowseMode.Latest
+            errorMessage = null
+            return
+        }
         mode = PluginBrowseMode.Search
         searching = true
         errorMessage = null
@@ -178,6 +303,7 @@ internal fun PluginBrowseScreen(
         detailItem = null
         streams = emptyList()
         results = emptyList()
+        focusManager.clearFocus()
         scope.launch {
             PluginBrowseRepository.search(scraperId, trimmed)
                 .onSuccess { found ->
@@ -193,7 +319,7 @@ internal fun PluginBrowseScreen(
         }
     }
 
-    fun loadLatest(reset: Boolean) {
+    fun loadLatest(reset: Boolean, category: PluginBrowseCategory? = selectedCategory) {
         if (loadingLatest) return
         val page = if (reset || latestPage <= 0) 1 else latestPage + 1
         loadingLatest = true
@@ -203,7 +329,7 @@ internal fun PluginBrowseScreen(
             latestHasNext = false
         }
         scope.launch {
-            PluginBrowseRepository.latest(scraperId, page)
+            PluginBrowseRepository.latest(scraperId, page, category)
                 .onSuccess { feed ->
                     latestAttempted = true
                     if (feed == null) {
@@ -214,6 +340,9 @@ internal fun PluginBrowseScreen(
                             latestHasNext = false
                         }
                     } else {
+                        if (feed.categories.isNotEmpty()) {
+                            latestCategories = feed.categories
+                        }
                         latestItems = if (reset) {
                             feed.items
                         } else {
@@ -232,6 +361,17 @@ internal fun PluginBrowseScreen(
         }
     }
 
+    fun selectCategory(category: PluginBrowseCategory?) {
+        if (loadingLatest) return
+        if (selectedCategoryKey == category?.key && latestAttempted) return
+        selectedCategoryKey = category?.key
+        latestAttempted = false
+        latestPage = 0
+        latestHasNext = false
+        latestMessage = null
+        loadLatest(reset = true, category = category)
+    }
+
     LaunchedEffect(stateKey, initialItem?.url) {
         if (initialItem != null) {
             if (detailItem?.url != initialItem.url) {
@@ -242,205 +382,524 @@ internal fun PluginBrowseScreen(
         }
     }
 
-    NuvioScreen(modifier = Modifier.fillMaxWidth()) {
-        stickyHeader {
-            NuvioScreenHeader(
-                title = scraperName,
-                onBack = {
-                    PluginBrowseStateStore.clear(stateKey)
-                    onBack()
-                },
-            )
+    LaunchedEffect(gridState, mode, latestHasNext, loadingLatest, latestItems.size, selectedCategory?.key) {
+        if (mode != PluginBrowseMode.Latest || !latestHasNext || loadingLatest) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow {
+            gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
         }
-
-        item {
-            NuvioSurfaceCard {
-                NuvioInputField(
-                    value = query,
-                    onValueChange = {
-                        query = it
-                        errorMessage = null
-                    },
-                    placeholder = stringResource(Res.string.plugins_browse_search_placeholder),
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    NuvioPrimaryButton(
-                        text = latestText,
-                        modifier = Modifier.weight(1f),
-                        enabled = !loadingLatest,
-                        onClick = {
-                            errorMessage = null
-                            mode = PluginBrowseMode.Latest
-                            if (!latestAttempted || latestItems.isEmpty()) {
-                                loadLatest(reset = true)
-                            }
-                        },
-                    )
-                    NuvioPrimaryButton(
-                        text = stringResource(Res.string.plugins_browse_search),
-                        modifier = Modifier.weight(1f),
-                        enabled = query.isNotBlank() && !searching,
-                        onClick = { runSearch() },
-                    )
-                }
-                errorMessage?.let { error ->
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-                if (mode == PluginBrowseMode.Latest) {
-                    latestMessage?.let { message ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = message,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+            .distinctUntilChanged()
+            .collect { lastVisible ->
+                val total = gridState.layoutInfo.totalItemsCount
+                if (lastVisible >= total - 4) loadLatest(reset = false, category = selectedCategory)
             }
-        }
+    }
 
+    val showDetail = detail != null || (loadingDetail && detailItem != null)
+    if (showDetail) {
         val currentDetail = detail
-        if (currentDetail != null) {
-            item {
-                NuvioPrimaryButton(
-                    text = stringResource(Res.string.plugins_browse_back),
-                    onClick = {
-                        detail = null
-                        detailItem = null
-                        selectedEpisode = null
-                        streams = emptyList()
-                        errorMessage = null
-                    },
+        if (currentDetail == null) {
+            val item = detailItem
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.nuvio.colors.background),
+            ) {
+                PluginBrowseHeader(
+                    title = item?.name ?: scraperName,
+                    subtitle = null,
+                    provider = provider,
+                    onBack = ::closeDetail,
                 )
-            }
-
-            item {
-                DetailHeader(
-                    item = detailItem,
-                    detail = currentDetail,
-                )
-            }
-
-            if (currentDetail.isSeries) {
-                item {
-                    Text(
-                        text = stringResource(Res.string.plugins_browse_episodes),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                }
-                if (currentDetail.episodes.isEmpty()) {
-                    item {
-                        Text(
-                            text = stringResource(Res.string.plugins_browse_select_episode),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                } else {
-                    items(currentDetail.episodes) { episode ->
-                        EpisodeCard(
-                            episode = episode,
-                            selected = episode == selectedEpisode,
-                            onClick = {
-                                selectedEpisode = episode
-                                loadStreams(currentDetail, episode, episode.data)
-                            },
-                        )
-                    }
-                }
-            }
-
-            item {
-                Text(
-                    text = stringResource(Res.string.plugins_browse_streams),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-            }
-
-            if (loadingStreams) {
-                item { NuvioLoadingIndicator() }
-            } else if (currentDetail.isSeries && selectedEpisode == null) {
-                item {
-                    Text(
-                        text = stringResource(Res.string.plugins_browse_select_episode),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else if (streams.isEmpty()) {
-                item {
-                    Text(
-                        text = noStreamsText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
-                items(streams) { stream ->
-                    StreamCard(
-                        stream = stream,
-                        onClick = {
-                            val currentItem = detailItem
-                            if (currentItem != null) {
-                                onPlay(currentItem, currentDetail, selectedEpisode, stream)
-                            }
-                        },
-                    )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    NuvioLoadingIndicator()
                 }
             }
         } else {
-            if (loadingDetail) {
-                item { NuvioLoadingIndicator() }
+            PluginDetailContent(
+                item = detailItem,
+                detail = currentDetail,
+                provider = provider,
+                selectedEpisode = selectedEpisode,
+                streams = streams,
+                loadingStreams = loadingStreams,
+                errorMessage = errorMessage,
+                listState = detailListState,
+                onBack = ::closeDetail,
+                onSelectEpisode = { episode ->
+                    selectedEpisode = episode
+                    loadStreams(currentDetail, episode, episode.data)
+                },
+                onPlayStream = { stream ->
+                    detailItem?.let { onPlay(it, currentDetail, selectedEpisode, stream) }
+                },
+                onPlayFirst = {
+                    val first = streams.firstOrNull()
+                    if (first != null) {
+                        detailItem?.let { onPlay(it, currentDetail, selectedEpisode, first) }
+                    }
+                },
+                onOpenRecommendation = { recommendation -> openDetail(recommendation) },
+                onOpenPerson = onOpenPerson,
+            )
+        }
+        return
+    }
+
+    val displayItems = if (mode == PluginBrowseMode.Search) results else latestItems
+    val emptyText = if (mode == PluginBrowseMode.Search) {
+        errorMessage ?: noResultsText
+    } else {
+        latestMessage ?: latestEmptyText
+    }
+    val emptyTitle = if (mode == PluginBrowseMode.Search) {
+        stringResource(Res.string.plugins_browse_search)
+    } else {
+        stringResource(Res.string.plugins_browse_latest_empty)
+    }
+    val isEmpty = displayItems.isEmpty() && !searching && !loadingLatest
+    val isBusyFirstLoad = displayItems.isEmpty() && (searching || loadingLatest)
+    val categoryChips = latestCategories.filterNot { category ->
+        category.tabName.equals("Latest", ignoreCase = true)
+    }
+    val heroItems = remember(latestItems) { latestItems.take(10) }
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.nuvio.colors.background),
+    ) {
+        val columns = when {
+            maxWidth >= 840.dp -> 5
+            maxWidth >= 600.dp -> 4
+            else -> 3
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            state = gridState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(28.dp)),
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item(
+                key = "plugin_catalog_hero",
+                span = { GridItemSpan(maxLineSpan) },
+            ) {
+                if (heroItems.isEmpty()) {
+                    PluginCatalogHero(
+                        title = scraperName,
+                        provider = provider,
+                        categoryCount = latestCategories.size,
+                    )
+                } else {
+                    PluginCatalogHeroCarousel(
+                        items = heroItems,
+                        provider = provider,
+                        onOpenItem = { item -> openDetail(item) },
+                    )
+                }
             }
-            when (mode) {
-                PluginBrowseMode.Latest -> {
-                    if (loadingLatest && latestItems.isEmpty()) {
-                        item { NuvioLoadingIndicator() }
-                    } else if (latestItems.isEmpty()) {
-                        item {
-                            Text(
-                                text = latestMessage ?: latestEmptyText,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            item(
+                key = "plugin_catalog_controls",
+                span = { GridItemSpan(maxLineSpan) },
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    PluginSearchField(
+                        query = query,
+                        searching = searching,
+                        onQueryChange = { value ->
+                            query = value
+                            errorMessage = null
+                            if (value.isBlank() && mode == PluginBrowseMode.Search) {
+                                mode = PluginBrowseMode.Latest
+                                if (!latestAttempted) loadLatest(reset = true)
+                            }
+                        },
+                        onSearch = ::runSearch,
+                        onClear = {
+                            query = ""
+                            mode = PluginBrowseMode.Latest
+                            errorMessage = null
+                            if (!latestAttempted) loadLatest(reset = true)
+                        },
+                    )
+                    if (mode == PluginBrowseMode.Latest && categoryChips.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Chip(
+                                label = stringResource(Res.string.plugins_browse_latest),
+                                selected = selectedCategoryKey == null,
+                                onClick = { selectCategory(null) },
                             )
-                        }
-                    } else {
-                        items(latestItems) { item ->
-                            ResultCard(item = item, onClick = { openDetail(item) })
-                        }
-                        if (loadingLatest && latestItems.isNotEmpty()) {
-                            item { NuvioLoadingIndicator() }
-                        }
-                        if (latestHasNext || loadingLatest) {
-                            item {
-                                NuvioPrimaryButton(
-                                    text = loadMoreText,
-                                    enabled = !loadingLatest,
-                                    onClick = { loadLatest(reset = false) },
+                            categoryChips.forEach { category ->
+                                Chip(
+                                    label = category.label,
+                                    selected = selectedCategoryKey == category.key,
+                                    onClick = { selectCategory(category) },
                                 )
                             }
                         }
                     }
+                    errorMessage?.takeIf { displayItems.isNotEmpty() }?.let { message ->
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                        )
+                    }
                 }
+            }
+            if (isBusyFirstLoad) {
+                items(columns * 2) {
+                    SkeletonPoster(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                        cornerRadius = 12.dp,
+                        showLabels = true,
+                    )
+                }
+            } else if (isEmpty) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    HomeEmptyStateCard(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        title = emptyTitle,
+                        message = emptyText,
+                        actionLabel = if (mode == PluginBrowseMode.Latest) {
+                            stringResource(Res.string.action_retry)
+                        } else {
+                            null
+                        },
+                        onActionClick = if (mode == PluginBrowseMode.Latest) {
+                            { loadLatest(reset = true) }
+                        } else {
+                            null
+                        },
+                    )
+                }
+            } else {
+                items(
+                    items = displayItems,
+                    key = { item -> "${item.apiIndex}:${item.url}" },
+                ) { item ->
+                    Box(modifier = Modifier.padding(horizontal = 8.dp)) {
+                        PluginPosterTile(
+                            item = item,
+                            onClick = { openDetail(item) },
+                        )
+                    }
+                }
+                if (searching || loadingLatest) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            NuvioLoadingIndicator(modifier = Modifier.size(22.dp))
+                        }
+                    }
+                } else if (mode == PluginBrowseMode.Latest && latestMessage != null && displayItems.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            text = latestMessage.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.nuvio.colors.textMuted,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
+                    }
+                }
+            }
+        }
+        NuvioBackButton(
+            onClick = {
+                PluginBrowseStateStore.clear(stateKey)
+                onBack()
+            },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(start = 16.dp, top = 8.dp),
+            containerColor = Color.Black,
+            contentColor = Color.White,
+        )
+    }
+}
 
-                PluginBrowseMode.Search -> {
-                    if (searching) {
-                        item { NuvioLoadingIndicator() }
+@Composable
+private fun PluginCatalogHeroCarousel(
+    items: List<PluginBrowseItem>,
+    provider: PluginScraper?,
+    onOpenItem: (PluginBrowseItem) -> Unit,
+) {
+    val pagerState = rememberPagerState(pageCount = { items.size })
+    LaunchedEffect(items.size) {
+        if (pagerState.currentPage >= items.size) pagerState.scrollToPage(0)
+    }
+    LaunchedEffect(items.size, pagerState) {
+        if (items.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(5_000L)
+            pagerState.animateScrollToPage((pagerState.currentPage + 1) % items.size)
+        }
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(330.dp),
+    ) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+        ) { page ->
+            val item = items[page]
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { onOpenItem(item) },
+            ) {
+                if (!item.posterUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = item.posterUrl,
+                        contentDescription = item.name,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = 1.06f
+                                scaleY = 1.06f
+                            },
+                        contentScale = ContentScale.Crop,
+                        alignment = Alignment.Center,
+                    )
+                } else {
+                    GeneratedDetailArtwork(
+                        name = item.name,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = 0.18f),
+                                0.40f to Color.Black.copy(alpha = 0.44f),
+                                0.72f to Color.Black.copy(alpha = 0.82f),
+                                1f to MaterialTheme.nuvio.colors.background,
+                            ),
+                        ),
+                )
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.nuvio.colors.accent,
+                        ) {
+                            Text(
+                                text = "TOP ${page + 1}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                ),
+                                color = MaterialTheme.nuvio.colors.onAccent,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            )
+                        }
+                        Text(
+                            text = provider?.name?.uppercase().orEmpty(),
+                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.8.sp),
+                            color = Color.White.copy(alpha = 0.78f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
-                    items(results) { item ->
-                        ResultCard(item = item, onClick = { openDetail(item) })
+                    Spacer(modifier = Modifier.height(7.dp))
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = pluginMetaLine(item.type, item.year),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.78f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(top = 12.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            items.indices.forEach { index ->
+                Box(
+                    modifier = Modifier
+                        .size(if (index == pagerState.currentPage) 6.dp else 4.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Color.White.copy(
+                                alpha = if (index == pagerState.currentPage) 0.92f else 0.42f,
+                            ),
+                        ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PluginCatalogHero(
+    title: String,
+    provider: PluginScraper?,
+    categoryCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    val logo = provider?.logo?.takeIf { it.isNotBlank() }
+    val typeLine = provider?.supportedTypes.orEmpty().joinToString(" | ")
+    val versionLabel = provider?.version?.takeIf { it.isNotBlank() }?.let {
+        stringResource(Res.string.plugins_provider_version, it)
+    }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(300.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        tokens.colors.accent.copy(alpha = 0.65f),
+                        tokens.colors.surfaceElevated,
+                        tokens.colors.background,
+                    ),
+                ),
+            ),
+    ) {
+        if (logo != null) {
+            AsyncImage(
+                model = logo,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = 1.12f
+                        scaleY = 1.12f
+                        alpha = 0.82f
                     }
+                    .blur(18.dp),
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.Extension,
+                contentDescription = null,
+                tint = tokens.colors.textPrimary.copy(alpha = 0.10f),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 20.dp)
+                    .size(110.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.12f),
+                        0.40f to Color.Black.copy(alpha = 0.48f),
+                        0.76f to Color.Black.copy(alpha = 0.84f),
+                        1f to Color.Black.copy(alpha = 0.94f),
+                    ),
+                ),
+        )
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(18.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (logo != null) {
+                    AsyncImage(
+                        model = logo,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(6.dp)),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = stringResource(Res.string.plugins_browse_extension_label).uppercase(),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 0.8.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = Color.White.copy(alpha = 0.82f),
+                    maxLines = 1,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = provider?.description?.takeIf { it.isNotBlank() }
+                    ?: stringResource(Res.string.plugins_browse_provider_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.78f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (typeLine.isNotBlank()) HeroPill(typeLine)
+                if (versionLabel != null) HeroPill(versionLabel)
+                if (categoryCount > 1) {
+                    HeroPill(
+                        stringResource(
+                            Res.string.plugins_browse_categories_count,
+                            categoryCount,
+                        ),
+                    )
                 }
             }
         }
@@ -448,83 +907,597 @@ internal fun PluginBrowseScreen(
 }
 
 @Composable
-private fun ResultCard(
+private fun HeroPill(text: String) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = Color.Black.copy(alpha = 0.42f),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun PluginBrowseHeader(
+    title: String,
+    subtitle: String?,
+    provider: PluginScraper?,
+    onBack: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(start = 8.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NuvioBackButton(
+            onClick = onBack,
+            modifier = Modifier.size(40.dp),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        if (!provider?.logo.isNullOrBlank()) {
+            AsyncImage(
+                model = provider?.logo,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(7.dp)),
+                contentScale = ContentScale.Crop,
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = tokens.colors.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            subtitle?.takeIf { it.isNotBlank() }?.let {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PluginSearchField(
+    query: String,
+    searching: Boolean,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    onClear: () -> Unit,
+) {
+    NuvioInputField(
+        value = query,
+        onValueChange = onQueryChange,
+        placeholder = stringResource(Res.string.plugins_browse_search_placeholder),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (query.isNotBlank()) {
+                    IconButton(onClick = onClear) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = null,
+                            tint = MaterialTheme.nuvio.colors.textMuted,
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onSearch,
+                    enabled = query.isNotBlank() && !searching,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = stringResource(Res.string.plugins_browse_search),
+                        tint = if (query.isNotBlank()) {
+                            MaterialTheme.nuvio.colors.accent
+                        } else {
+                            MaterialTheme.nuvio.colors.textMuted
+                        },
+                    )
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun PluginPosterTile(
     item: PluginBrowseItem,
     onClick: () -> Unit,
 ) {
-    NuvioSurfaceCard(modifier = Modifier.clickable(onClick = onClick)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+    val tokens = MaterialTheme.nuvio
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.68f)
+                .clip(shape)
+                .background(tokens.colors.surface)
+                .nuvioCardDepth(
+                    shape = shape,
+                    surface = NuvioCardDepthSurface.Posters,
+                ),
         ) {
             if (!item.posterUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = item.posterUrl,
-                    contentDescription = null,
+                    contentDescription = item.name,
+                    modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(width = 56.dp, height = 80.dp)
-                        .clip(RoundedCornerShape(8.dp)),
                 )
             } else {
                 Icon(
                     imageVector = Icons.Rounded.Extension,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = listOfNotNull(item.type, item.year?.toString()).joinToString(" • "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = tokens.colors.textMuted,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(28.dp),
                 )
             }
         }
+        Text(
+            text = item.name,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = tokens.colors.textPrimary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = pluginMetaLine(item.type, item.year),
+            style = MaterialTheme.typography.bodySmall,
+            color = tokens.colors.textMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
 @Composable
-private fun DetailHeader(
+private fun PluginDetailContent(
     item: PluginBrowseItem?,
     detail: PluginBrowseDetail,
+    provider: PluginScraper?,
+    selectedEpisode: PluginBrowseEpisode?,
+    streams: List<PluginRuntimeResult>,
+    loadingStreams: Boolean,
+    errorMessage: String?,
+    listState: LazyListState,
+    onBack: () -> Unit,
+    onSelectEpisode: (PluginBrowseEpisode) -> Unit,
+    onPlayStream: (PluginRuntimeResult) -> Unit,
+    onPlayFirst: () -> Unit,
+    onOpenRecommendation: (PluginBrowseItem) -> Unit,
+    onOpenPerson: (PluginBrowseActor) -> Unit,
 ) {
-    NuvioSurfaceCard {
-        Row(modifier = Modifier.fillMaxWidth()) {
-            val poster = detail.posterUrl ?: item?.posterUrl
-            if (!poster.isNullOrBlank()) {
-                AsyncImage(
-                    model = poster,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(width = 72.dp, height = 104.dp)
-                        .clip(RoundedCornerShape(8.dp)),
+    val tokens = MaterialTheme.nuvio
+    val uriHandler = LocalUriHandler.current
+    val trailerScope = rememberCoroutineScope()
+    val inAppTrailer = AppFeaturePolicy.trailerPlaybackMode == TrailerPlaybackMode.IN_APP
+    val trailerUnavailableText = stringResource(Res.string.plugins_browse_trailer_unavailable)
+    var selectedTrailer by remember(detail.name) { mutableStateOf<PluginBrowseTrailer?>(null) }
+    var trailerSource by remember(detail.name) { mutableStateOf<TrailerPlaybackSource?>(null) }
+    var trailerLoading by remember(detail.name) { mutableStateOf(false) }
+    var trailerError by remember(detail.name) { mutableStateOf<String?>(null) }
+    fun openTrailer(trailer: PluginBrowseTrailer) {
+        val isYouTube = trailer.url.contains("youtube.com", ignoreCase = true) ||
+            trailer.url.contains("youtu.be", ignoreCase = true)
+        if (!inAppTrailer || !isYouTube) {
+            runCatching { uriHandler.openUri(trailer.url) }
+            return
+        }
+        selectedTrailer = trailer
+        trailerSource = null
+        trailerError = null
+        trailerLoading = true
+        trailerScope.launch {
+            val source = runCatching {
+                TrailerPlaybackResolver.resolveFromYouTubeUrl(trailer.url)
+            }.getOrNull()
+            trailerSource = source
+            trailerError = if (source == null) trailerUnavailableText else null
+            trailerLoading = false
+        }
+    }
+    val canPlay = streams.isNotEmpty() && !loadingStreams
+    val seasonGroups = remember(detail.episodes) {
+        detail.episodes
+            .groupBy { it.season }
+            .toList()
+            .sortedBy { (season, _) -> season ?: Int.MAX_VALUE }
+            .map { (season, episodes) -> EpisodeSeasonGroup(season, episodes) }
+    }
+    var expandedSeasons by remember(detail.name) {
+        mutableStateOf<Set<Int?>>(
+            seasonGroups.firstOrNull()?.season?.let { setOf(it) } ?: emptySet(),
+        )
+    }
+
+    val detailRows = buildList {
+        if (detail.tags.isNotEmpty()) {
+            add(stringResource(Res.string.plugins_browse_genres) to detail.tags.joinToString(", "))
+        }
+        detail.durationMinutes?.takeIf { it > 0 }?.let { minutes ->
+            add(
+                stringResource(Res.string.plugins_browse_runtime) to
+                    stringResource(Res.string.plugins_browse_minutes, minutes),
+            )
+        }
+        detail.contentRating?.takeIf { it.isNotBlank() }?.let { rating ->
+            add(stringResource(Res.string.plugins_browse_content_rating) to rating)
+        }
+        detail.rating?.takeIf { it > 0 }?.let { rating ->
+            add(stringResource(Res.string.plugins_browse_rating) to "★ $rating")
+        }
+        detail.status?.takeIf { it.isNotBlank() }?.let { status ->
+            add(stringResource(Res.string.plugins_browse_status) to status.replaceFirstChar { it.uppercase() })
+        }
+        if (detail.comingSoon) {
+            add(
+                stringResource(Res.string.plugins_browse_status) to
+                    stringResource(Res.string.plugins_browse_coming_soon),
+            )
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(tokens.colors.background),
+        contentPadding = PaddingValues(bottom = nuvioSafeBottomPadding(32.dp)),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        item(key = "hero") {
+            PluginDetailHero(
+                item = item,
+                detail = detail,
+                provider = provider,
+                onBack = onBack,
+            )
+        }
+
+        item(key = "play") {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+                NuvioPrimaryButton(
+                    text = stringResource(Res.string.action_play),
+                    enabled = canPlay,
+                    onClick = onPlayFirst,
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = detail.name,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                detail.description?.takeIf { it.isNotBlank() }?.let { description ->
-                    Spacer(modifier = Modifier.height(6.dp))
+                if (detail.isSeries && selectedEpisode != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 6,
+                        text = episodeLabel(selectedEpisode),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                val trailer = detail.trailers.firstOrNull()
+                if (trailer != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(tokens.shapes.button)
+                            .clickable { openTrailer(trailer) },
+                        shape = tokens.shapes.button,
+                        color = tokens.colors.surfaceCard,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.PlayArrow,
+                                contentDescription = null,
+                                tint = tokens.colors.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(Res.string.plugins_browse_trailers),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = tokens.colors.textPrimary,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (detail.isSeries) {
+            item(key = "episodes_header") {
+                SectionHeader(
+                    title = stringResource(Res.string.plugins_browse_episodes),
+                    detail = stringResource(
+                        Res.string.plugins_browse_episodes_count,
+                        detail.episodes.size,
+                    ),
+                    topPadding = 12.dp,
+                )
+            }
+            if (detail.episodes.isEmpty()) {
+                item(key = "episodes_empty") {
+                    MissingSectionText(stringResource(Res.string.plugins_browse_no_streams))
+                }
+            } else {
+                seasonGroups.forEach { group ->
+                    val expanded = group.season in expandedSeasons
+                    item(key = "season_${group.season}") {
+                        SeasonDropdownHeader(
+                            season = group.season,
+                            count = group.episodes.size,
+                            expanded = expanded,
+                            onClick = {
+                                expandedSeasons = if (expanded) {
+                                    expandedSeasons - group.season
+                                } else {
+                                    expandedSeasons + group.season
+                                }
+                            },
+                        )
+                    }
+                    if (expanded) {
+                        itemsIndexed(
+                            items = group.episodes,
+                            key = { index, episode ->
+                                "${group.season}:${index}:${episode.season}:${episode.episode}:${episode.name}"
+                            },
+                        ) { _, episode ->
+                            EpisodeRow(
+                                episode = episode,
+                                selected = episode == selectedEpisode,
+                                onClick = { onSelectEpisode(episode) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item(key = "sources_header") {
+            SectionHeader(
+                title = stringResource(Res.string.plugins_browse_sources),
+                detail = selectedEpisode?.let(::episodeLabel)
+                    ?: detail.name.takeIf { !detail.isSeries },
+                topPadding = 6.dp,
+            )
+        }
+
+        when {
+            loadingStreams -> {
+                items(3) { index ->
+                    StreamSkeletonRow(index = index)
+                }
+            }
+            errorMessage != null -> {
+                item(key = "sources_error") {
+                    MissingSectionText(errorMessage)
+                }
+            }
+            streams.isEmpty() -> {
+                item(key = "sources_empty") {
+                    MissingSectionText(stringResource(Res.string.plugins_browse_no_streams))
+                }
+            }
+            else -> {
+                itemsIndexed(
+                    items = streams,
+                    key = { index, stream ->
+                        "${index}:${stream.url}:${stream.name ?: stream.title}"
+                    },
+                ) { _, stream ->
+                    PluginStreamRow(
+                        stream = stream,
+                        onClick = { onPlayStream(stream) },
+                    )
+                }
+            }
+        }
+
+        if (!detail.description.isNullOrBlank()) {
+            item(key = "overview") {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)) {
+                    ExpandableDescription(
+                        text = detail.description.orEmpty(),
+                        collapsedMaxLines = 6,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = tokens.colors.textSecondary,
+                    )
+                }
+            }
+        }
+
+        if (detailRows.isNotEmpty()) {
+            item(key = "details_header") {
+                SectionHeader(
+                    title = stringResource(Res.string.plugins_browse_details),
+                    topPadding = 24.dp,
+                )
+            }
+            item(key = "details") {
+                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    detailRows.forEach { (label, value) ->
+                        DetailInfoRow(label = label, value = value)
+                    }
+                }
+            }
+        }
+
+        if (detail.actors.isNotEmpty()) {
+            item(key = "cast_header") {
+                SectionHeader(
+                    title = stringResource(Res.string.plugins_browse_cast),
+                    topPadding = 24.dp,
+                )
+            }
+            item(key = "cast") {
+                PluginCastRow(
+                    actors = detail.actors,
+                    onActorClick = onOpenPerson,
+                )
+            }
+        }
+
+        if (detail.trailers.isNotEmpty()) {
+            item(key = "trailers_header") {
+                SectionHeader(
+                    title = stringResource(Res.string.plugins_browse_trailers),
+                    topPadding = 24.dp,
+                )
+            }
+            itemsIndexed(
+                items = detail.trailers,
+                key = { index, trailer -> "trailer:$index:${trailer.url}" },
+            ) { index, trailer ->
+                PluginTrailerRow(
+                    index = index,
+                    onClick = { openTrailer(trailer) },
+                )
+            }
+        }
+
+        if (detail.recommendations.isNotEmpty()) {
+            item(key = "recommendations_header") {
+                SectionHeader(
+                    title = stringResource(Res.string.plugins_browse_more_like_this),
+                    topPadding = 24.dp,
+                )
+            }
+            item(key = "recommendations") {
+                PluginRecommendationRow(
+                    items = detail.recommendations,
+                    onClick = onOpenRecommendation,
+                )
+            }
+        }
+    }
+
+    TrailerPlayerPopup(
+        visible = selectedTrailer != null,
+        trailerTitle = stringResource(Res.string.plugins_browse_trailers),
+        trailerType = stringResource(Res.string.plugins_browse_trailers),
+        contentTitle = detail.name,
+        playbackSource = trailerSource,
+        isLoading = trailerLoading,
+        errorMessage = trailerError,
+        onDismiss = {
+            trailerLoading = false
+            trailerSource = null
+            trailerError = null
+            selectedTrailer = null
+        },
+        onRetry = selectedTrailer?.let { trailer -> { openTrailer(trailer) } },
+    )
+}
+
+@Composable
+private fun DetailInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.nuvio.colors.textMuted,
+            modifier = Modifier.width(88.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.nuvio.colors.textPrimary,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun PluginCastRow(
+    actors: List<PluginBrowseActor>,
+    onActorClick: (PluginBrowseActor) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        items(count = actors.size) { index ->
+            val actor = actors[index]
+            Column(
+                modifier = Modifier
+                    .width(84.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onActorClick(actor) }
+                    .padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(tokens.colors.surfaceCard),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!actor.imageUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = actor.imageUrl,
+                            contentDescription = actor.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Text(
+                            text = actor.name.take(2).uppercase(),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = tokens.colors.textMuted,
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = actor.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tokens.colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                actor.role?.takeIf { it.isNotBlank() }?.let { role ->
+                    Text(
+                        text = role,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -534,27 +1507,585 @@ private fun DetailHeader(
 }
 
 @Composable
-private fun EpisodeCard(
+private fun PluginTrailerRow(index: Int, onClick: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val shape = tokens.shapes.compactCard
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(shape)
+            .clickable(onClick = onClick),
+        shape = shape,
+        color = tokens.colors.surfaceCard,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(tokens.colors.accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    tint = tokens.colors.accent,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = stringResource(Res.string.plugins_browse_trailer_number, index + 1),
+                style = MaterialTheme.typography.titleSmall,
+                color = tokens.colors.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PluginRecommendationRow(
+    items: List<PluginBrowseItem>,
+    onClick: (PluginBrowseItem) -> Unit,
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        items(count = items.size) { index ->
+            val item = items[index]
+            Column(
+                modifier = Modifier
+                    .width(116.dp)
+                    .clickable { onClick(item) },
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(0.68f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.nuvio.colors.surface),
+                ) {
+                    if (!item.posterUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = item.posterUrl,
+                            contentDescription = item.name,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Extension,
+                            contentDescription = null,
+                            tint = MaterialTheme.nuvio.colors.textMuted,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .size(24.dp),
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = item.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.nuvio.colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = pluginMetaLine(item.type, item.year),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.nuvio.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+private data class EpisodeSeasonGroup(
+    val season: Int?,
+    val episodes: List<PluginBrowseEpisode>,
+)
+
+@Composable
+private fun SeasonDropdownHeader(
+    season: Int?,
+    count: Int,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val shape = tokens.shapes.compactCard
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(shape)
+            .clickable(onClick = onClick),
+        shape = shape,
+        color = tokens.colors.surfaceCard,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = season?.let {
+                        stringResource(Res.string.plugins_browse_season, it)
+                    } ?: stringResource(Res.string.plugins_browse_episodes),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = tokens.colors.textPrimary,
+                )
+                Text(
+                    text = stringResource(Res.string.plugins_browse_episodes_count, count),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textMuted,
+                )
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                contentDescription = null,
+                tint = tokens.colors.textMuted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun GeneratedDetailArtwork(
+    name: String,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    Box(
+        modifier = modifier.background(
+            Brush.linearGradient(
+                listOf(
+                    tokens.colors.accent.copy(alpha = 0.62f),
+                    tokens.colors.surfaceElevated,
+                    tokens.colors.background,
+                ),
+            ),
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            tokens.colors.accent.copy(alpha = 0.30f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
+        )
+        Text(
+            text = name,
+            style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold),
+            color = tokens.colors.textPrimary.copy(alpha = 0.10f),
+            textAlign = TextAlign.End,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .fillMaxWidth(0.68f)
+                .padding(top = 96.dp, end = 16.dp),
+        )
+    }
+}
+
+@Composable
+private fun PluginDetailHero(
+    item: PluginBrowseItem?,
+    detail: PluginBrowseDetail,
+    provider: PluginScraper?,
+    onBack: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val name = detail.name
+    val poster = detail.posterUrl ?: item?.posterUrl
+    val backdrop = detail.backgroundUrl
+    val providerName = provider?.name ?: item?.apiName ?: "CloudStream"
+    val type = detail.isSeries
+    val year = item?.year
+    val episodeCount = detail.episodes.size
+    val contentLogo = detail.logoUrl?.takeIf { it.isNotBlank() }
+    var logoFailed by remember(detail.logoUrl) { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(380.dp),
+    ) {
+        val heroArtwork = backdrop?.takeIf { it.isNotBlank() }
+        if (heroArtwork != null && heroArtwork != poster) {
+            AsyncImage(
+                model = heroArtwork,
+                contentDescription = null,
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer {
+                        scaleX = 1.06f
+                        scaleY = 1.06f
+                    },
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            GeneratedDetailArtwork(
+                name = name,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.30f),
+                        0.42f to tokens.colors.background.copy(alpha = 0.55f),
+                        0.78f to tokens.colors.background.copy(alpha = 0.92f),
+                        1f to tokens.colors.background,
+                    ),
+                ),
+        )
+        NuvioBackButton(
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(start = 16.dp, top = 8.dp),
+        )
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 104.dp, height = 156.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(tokens.colors.surface),
+            ) {
+                if (!poster.isNullOrBlank()) {
+                    AsyncImage(
+                        model = poster,
+                        contentDescription = name,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Extension,
+                        contentDescription = null,
+                        tint = tokens.colors.textMuted,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(28.dp),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (!provider?.logo.isNullOrBlank()) {
+                        AsyncImage(
+                            model = provider?.logo,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(CircleShape),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                    Text(
+                        text = providerName.uppercase(),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 0.8.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = tokens.colors.accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                if (contentLogo != null && !logoFailed) {
+                    AsyncImage(
+                        model = contentLogo,
+                        contentDescription = name,
+                        contentScale = ContentScale.Fit,
+                        alignment = Alignment.CenterStart,
+                        modifier = Modifier
+                            .fillMaxWidth(0.72f)
+                            .height(54.dp),
+                        onError = { logoFailed = true },
+                    )
+                } else {
+                    Text(
+                        text = name,
+                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                        color = tokens.colors.textPrimary,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    NuvioInfoBadge(
+                        text = stringResource(
+                            if (type) Res.string.plugins_browse_series else Res.string.plugins_browse_movie,
+                        ),
+                    )
+                    year?.takeIf { it > 0 }?.let { releaseYear ->
+                        NuvioInfoBadge(text = releaseYear.toString())
+                    }
+                    if (type && episodeCount > 0) {
+                        NuvioInfoBadge(
+                            text = stringResource(
+                                Res.string.plugins_browse_episodes_count,
+                                episodeCount,
+                            ),
+                        )
+                    }
+                    detail.rating?.takeIf { it > 0 }?.let { rating ->
+                        NuvioInfoBadge(text = "★ $rating")
+                    }
+                    detail.contentRating?.takeIf { it.isNotBlank() }?.let { rating ->
+                        NuvioInfoBadge(text = rating)
+                    }
+                    detail.durationMinutes?.takeIf { it > 0 }?.let { minutes ->
+                        NuvioInfoBadge(
+                            text = stringResource(Res.string.plugins_browse_minutes, minutes),
+                        )
+                    }
+                    detail.status?.takeIf { it.isNotBlank() }?.let { status ->
+                        NuvioInfoBadge(text = status.replaceFirstChar { it.uppercase() })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(
+    title: String,
+    detail: String? = null,
+    topPadding: Dp = 24.dp,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = topPadding, bottom = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.nuvio.colors.textPrimary,
+        )
+        detail?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.nuvio.colors.textMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun EpisodeRow(
     episode: PluginBrowseEpisode,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    NuvioSurfaceCard(modifier = Modifier.clickable(onClick = onClick)) {
+    val tokens = MaterialTheme.nuvio
+    val shape = tokens.shapes.compactCard
+    val meta = buildList {
+        add(episodeLabel(episode))
+        episode.runtimeMinutes?.takeIf { it > 0 }?.let { minutes ->
+            add(stringResource(Res.string.plugins_browse_minutes, minutes))
+        }
+    }.joinToString(" • ")
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(shape)
+            .clickable(onClick = onClick),
+        shape = shape,
+        color = if (selected) tokens.colors.accent.copy(alpha = 0.14f) else tokens.colors.surfaceCard,
+    ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = episodeLabel(episode),
-                style = MaterialTheme.typography.titleMedium,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            if (selected) {
+            if (!episode.posterUrl.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 96.dp, height = 56.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(tokens.colors.surfaceElevated),
+                ) {
+                    AsyncImage(
+                        model = episode.posterUrl,
+                        contentDescription = episode.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.48f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (selected) tokens.colors.accent else tokens.colors.surfaceElevated,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = if (selected) tokens.colors.onAccent else tokens.colors.textSecondary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Selected",
+                    text = episode.name.ifBlank { episodeLabel(episode) },
+                    style = MaterialTheme.typography.titleSmall,
+                    color = tokens.colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = meta,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (selected) tokens.colors.accent else tokens.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                episode.description?.takeIf { it.isNotBlank() }?.let { description ->
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PluginStreamRow(
+    stream: PluginRuntimeResult,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val shape = tokens.shapes.compactCard
+    val subtitle = listOfNotNull(
+        stream.quality?.takeIf { it.isNotBlank() },
+        stream.size?.takeIf { it.isNotBlank() },
+        stream.language?.takeIf { it.isNotBlank() },
+    ).joinToString(" • ")
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(shape)
+            .clickable(onClick = onClick),
+        shape = shape,
+        color = tokens.colors.surfaceCard,
+        shadowElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(tokens.colors.accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    tint = tokens.colors.accent,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stream.name ?: stream.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = tokens.colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (subtitle.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            stream.seeders?.takeIf { it > 0 }?.let { seeders ->
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "↑ $seeders",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
                 )
             }
         }
@@ -562,33 +2093,64 @@ private fun EpisodeCard(
 }
 
 @Composable
-private fun StreamCard(
-    stream: PluginRuntimeResult,
-    onClick: () -> Unit,
-) {
-    val subtitle = listOfNotNull(
-        stream.quality,
-        stream.size,
-        stream.language,
-    ).joinToString(" • ")
-
-    NuvioSurfaceCard(modifier = Modifier.clickable(onClick = onClick)) {
-        Text(
-            text = stream.name ?: stream.title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (subtitle.isNotBlank()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun StreamSkeletonRow(index: Int) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = tokens.shapes.compactCard,
+        color = tokens.colors.surfaceCard,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(tokens.colors.surfaceElevated),
             )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(if (index % 2 == 0) 0.48f else 0.62f)
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(tokens.colors.surfaceElevated),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.32f)
+                        .height(11.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(tokens.colors.surfaceElevated),
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun MissingSectionText(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.nuvio.colors.textMuted,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
+private fun pluginMetaLine(type: String, year: Int?): String {
+    val typeLabel = when (type.lowercase()) {
+        "movie" -> "Movie"
+        "series", "tv" -> "Series"
+        "live" -> "Live"
+        else -> type.replaceFirstChar { it.uppercase() }
+    }
+    return listOfNotNull(typeLabel, year?.takeIf { it > 0 }?.toString()).joinToString(" • ")
 }
 
 private fun episodeLabel(episode: PluginBrowseEpisode): String {
@@ -597,5 +2159,8 @@ private fun episodeLabel(episode: PluginBrowseEpisode): String {
         episode.episode != null -> "Episode ${episode.episode}"
         else -> null
     }
-    return listOfNotNull(prefix, episode.name.takeIf { it.isNotBlank() }).joinToString(" • ")
+    val name = episode.name.takeIf { it.isNotBlank() }
+    if (prefix == null) return name.orEmpty()
+    if (name == null || name.equals(prefix, ignoreCase = true)) return prefix
+    return "$prefix • $name"
 }

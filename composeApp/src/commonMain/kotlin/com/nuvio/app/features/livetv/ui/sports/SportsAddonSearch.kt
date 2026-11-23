@@ -108,12 +108,10 @@ internal object SportsAddonSearch {
             pluginProviders.map { scraper ->
                 async {
                     val out = ArrayList<SportsAddonMatch>()
-                    for (query in terms.take(2)) {
-                        val results = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
-                            runCatching { PluginRepository.browseSearch(scraper.id, query) }.getOrNull()
-                        } ?: continue
-                        results.forEach { item ->
-                            if (matchesEvent(ev.title, ev.sides.map { it.team.name } + ev.sides.map { it.team.abbr }, item.name)) {
+                    val names = ev.sides.map { it.team.name } + ev.sides.map { it.team.abbr }
+                    fun append(items: List<com.nuvio.app.features.plugins.external.PluginBrowseItem>) {
+                        items.forEach { item ->
+                            if (matchesEvent(ev.title, names, item.name)) {
                                 out += SportsAddonMatch(
                                     item = item.toCatalogMetaPreview(scraper.id, scraper.name),
                                     addonName = scraper.name,
@@ -122,6 +120,34 @@ internal object SportsAddonSearch {
                                 )
                             }
                         }
+                    }
+                    for (query in terms.take(2)) {
+                        val results = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
+                            runCatching { PluginRepository.browseSearch(scraper.id, query) }.getOrNull()
+                        } ?: continue
+                        append(results)
+                    }
+                    if (out.isEmpty()) {
+                        // Some providers expose live event channels only through their home feed,
+                        // not search. Scan the default feed plus sports-looking layers.
+                        val firstPage = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
+                            runCatching { PluginRepository.browseLatest(scraper.id, page = 1) }.getOrNull()
+                        }
+                        append(firstPage?.items.orEmpty())
+                        firstPage?.categories
+                            .orEmpty()
+                            .filter { category ->
+                                looksSportsLike(category.label) || looksSportsLike(category.tabName)
+                            }
+                            .take(3)
+                            .forEach { category ->
+                                val page = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
+                                    runCatching {
+                                        PluginRepository.browseLatest(scraper.id, page = 1, category = category)
+                                    }.getOrNull()
+                                }
+                                append(page?.items.orEmpty())
+                            }
                     }
                     out
                 }

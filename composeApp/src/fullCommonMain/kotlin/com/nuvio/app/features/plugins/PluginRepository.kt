@@ -6,6 +6,8 @@ import com.nuvio.app.features.addons.httpGetText
 import com.nuvio.app.features.addons.httpRequestRaw
 import com.nuvio.app.features.plugins.external.ExternalRepoParser
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
+import com.nuvio.app.features.plugins.external.PluginBrowseEpisode
 import com.nuvio.app.features.plugins.external.PluginLatestPage
 import com.nuvio.app.features.plugins.external.cloudStreamContentTypes
 import com.nuvio.app.features.plugins.external.externalExtensionHost
@@ -394,6 +396,22 @@ actual object PluginRepository {
         persist()
     }
 
+    actual fun setScraperShowInLucidTv(scraperId: String, showInLucidTv: Boolean) {
+        initialize()
+        _uiState.update { state ->
+            state.copy(
+                scrapers = state.scrapers.map { scraper ->
+                    if (scraper.id == scraperId) {
+                        scraper.copy(showInLucidTv = showInLucidTv)
+                    } else {
+                        scraper
+                    }
+                },
+            )
+        }
+        persist()
+    }
+
     actual fun setPluginsEnabled(enabled: Boolean) {
         initialize()
         _uiState.update { it.copy(pluginsEnabled = enabled) }
@@ -628,6 +646,7 @@ actual object PluginRepository {
                             showOnHome = previous?.showOnHome ?: true,
                             showInLiveTv = previous?.showInLiveTv ?: false,
                             showInSports = previous?.showInSports ?: false,
+                            showInLucidTv = previous?.showInLucidTv ?: false,
                             hasSettings = info.hasSettings,
                             settingsChecked = true,
                             settingsProbeVersion = 2,
@@ -747,6 +766,7 @@ actual object PluginRepository {
             showOnHome = previous?.showOnHome ?: true,
             showInLiveTv = previous?.showInLiveTv ?: false,
             showInSports = previous?.showInSports ?: false,
+            showInLucidTv = previous?.showInLucidTv ?: false,
             hasSettings = settingsSource?.hasSettings ?: false,
             settingsChecked = settingsSource?.settingsChecked ?: false,
             settingsProbeVersion = settingsSource?.settingsProbeVersion ?: 1,
@@ -1044,11 +1064,51 @@ actual object PluginRepository {
     internal actual suspend fun browseLatest(
         scraperId: String,
         page: Int,
+        category: PluginBrowseCategory?,
     ): PluginLatestPage? = externalExtensionHost.latest(
         scraperId = scraperId,
         profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId),
         page = page,
+        category = category,
     )
+
+    internal actual suspend fun browseEpisodes(
+        scraperId: String,
+        apiIndex: Int,
+        url: String,
+    ): List<PluginBrowseEpisode> {
+        val profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
+        val detail = externalExtensionHost.loadDetail(scraperId, profileId, apiIndex, url) ?: return emptyList()
+        return if (detail.isSeries) detail.episodes else emptyList()
+    }
+
+    internal actual suspend fun browseStreams(
+        scraperId: String,
+        apiIndex: Int,
+        url: String,
+        season: Int?,
+        episode: Int?,
+        timeoutMs: Long?,
+    ): List<PluginRuntimeResult> {
+        val profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
+        val detail = externalExtensionHost.loadDetail(scraperId, profileId, apiIndex, url) ?: return emptyList()
+        val data = if (detail.isSeries) {
+            detail.episodes.firstOrNull { it.season == season && it.episode == episode }?.data
+                ?: detail.episodes.firstOrNull()?.data
+        } else {
+            detail.movieData
+        }
+        if (data.isNullOrBlank()) return emptyList()
+        return externalExtensionHost.loadStreams(
+            scraperId = scraperId,
+            profileId = profileId,
+            apiIndex = apiIndex,
+            data = data,
+            season = season,
+            episode = episode,
+            timeoutMs = timeoutMs,
+        )
+    }
 
     actual suspend fun detectCloudStreamSettings(repositoryUrl: String?) = settingsDetectionMutex.withLock {
         initialize()

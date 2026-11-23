@@ -1,6 +1,8 @@
 package com.nuvio.app.features.plugins
 
+import com.nuvio.app.features.plugins.external.PluginBrowseEpisode
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
 import com.nuvio.app.features.plugins.external.PluginLatestPage
 import kotlinx.coroutines.flow.StateFlow
 
@@ -30,6 +32,8 @@ expect object PluginRepository {
     fun setScraperShowInLiveTv(scraperId: String, showInLiveTv: Boolean)
 
     fun setScraperShowInSports(scraperId: String, showInSports: Boolean)
+
+    fun setScraperShowInLucidTv(scraperId: String, showInLucidTv: Boolean)
 
     fun setPluginsEnabled(enabled: Boolean)
 
@@ -71,7 +75,25 @@ expect object PluginRepository {
     internal suspend fun browseLatest(
         scraperId: String,
         page: Int,
+        category: PluginBrowseCategory? = null,
     ): PluginLatestPage?
+
+    /** Resolve a CloudStream browse item into streams for Lucid TV playback. */
+    internal suspend fun browseStreams(
+        scraperId: String,
+        apiIndex: Int,
+        url: String,
+        season: Int?,
+        episode: Int?,
+        timeoutMs: Long? = null,
+    ): List<PluginRuntimeResult>
+
+    /** Load a series' episode list for Lucid TV marathons. */
+    internal suspend fun browseEpisodes(
+        scraperId: String,
+        apiIndex: Int,
+        url: String,
+    ): List<PluginBrowseEpisode>
 
     /** Loads unchecked CloudStream extensions once to discover whether they expose settings. */
     suspend fun detectCloudStreamSettings(repositoryUrl: String? = null)

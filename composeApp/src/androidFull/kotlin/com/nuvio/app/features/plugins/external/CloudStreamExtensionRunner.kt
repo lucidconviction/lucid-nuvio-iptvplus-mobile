@@ -136,37 +136,68 @@ internal class CloudStreamExtensionRunner(
         scraperId: String,
         profileId: Int,
         page: Int,
+        category: PluginBrowseCategory? = null,
     ): PluginLatestPage? {
         val apis = loader.loadExtension(scraperId, profileId)
         if (apis.isEmpty()) return null
+
+        val categories = buildList {
+            apis.forEachIndexed { index, api ->
+                if (!api.hasMainPage) return@forEachIndexed
+                api.mainPage.orEmpty().forEach { tab ->
+                    add(
+                        PluginBrowseCategory(
+                            apiIndex = index,
+                            apiName = api.name,
+                            tabName = tab.name,
+                            label = if (apis.size > 1) "${api.name} · ${tab.name}" else tab.name,
+                        ),
+                    )
+                }
+            }
+        }.distinctBy { it.key }
+
+        val targets = if (category != null) {
+            val api = apis.getOrNull(category.apiIndex) ?: return null
+            val tab = api.mainPage.orEmpty().firstOrNull { it.name == category.tabName } ?: return null
+            listOf(Triple(category.apiIndex, api, tab))
+        } else {
+            apis.mapIndexedNotNull { index, api ->
+                if (!api.hasMainPage) return@mapIndexedNotNull null
+                val tabs = api.mainPage.orEmpty()
+                val tab = tabs.firstOrNull { it.name.contains("latest", ignoreCase = true) }
+                    ?: tabs.firstOrNull()
+                    ?: return@mapIndexedNotNull null
+                Triple(index, api, tab)
+            }
+        }
+
         val homes = coroutineScope {
-            apis.mapIndexed { index, api ->
+            targets.map { (index, api, tab) ->
                 async {
                     try {
-                        if (!api.hasMainPage) return@async null
-                        val tabs = api.mainPage.orEmpty()
-                        val tab = tabs.firstOrNull { it.name.contains("latest", ignoreCase = true) }
-                            ?: tabs.firstOrNull()
-                            ?: return@async null
                         val request = MainPageRequest(tab.name, tab.data, tab.horizontalImages)
                         val response = withTimeoutOrNull(HOME_TIMEOUT_MS) {
                             api.getMainPage(page, request)
                         } ?: run {
-                            Log.d(TAG, "${api.name}: latest page $page timed out")
+                            Log.d(TAG, "${api.name}/${tab.name}: home page $page timed out")
                             return@async null
                         }
                         val items = response.items
                             .flatMap { list -> list.list.map { it.toBrowseItem(index, api.name) } }
                             .distinctBy { it.apiIndex to it.url }
-                        Log.d(TAG, "${api.name}: latest page $page -> ${items.size} items, next=${response.hasNext}")
+                        Log.d(
+                            TAG,
+                            "${api.name}/${tab.name}: home page $page -> ${items.size} items, next=${response.hasNext}",
+                        )
                         items to response.hasNext
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        Log.d(TAG, "${api.name}: latest page $page failed: ${e.javaClass.simpleName}: ${e.message}")
+                        Log.d(TAG, "${api.name}/${tab.name}: home page $page failed: ${e.javaClass.simpleName}: ${e.message}")
                         null
                     } catch (e: LinkageError) {
-                        Log.d(TAG, "${api.name}: latest page linkage error")
+                        Log.d(TAG, "${api.name}/${tab.name}: home page linkage error")
                         null
                     } catch (e: NotImplementedError) {
                         null
@@ -174,10 +205,10 @@ internal class CloudStreamExtensionRunner(
                 }
             }.awaitAll().filterNotNull()
         }
-        if (homes.isEmpty()) return null
         return PluginLatestPage(
             items = homes.flatMap { it.first }.distinctBy { it.apiIndex to it.url },
             hasNext = homes.any { it.second },
+            categories = categories,
         )
     }
 
@@ -212,31 +243,25 @@ internal class CloudStreamExtensionRunner(
         } ?: return null
 
         return when (response) {
-            is MovieLoadResponse -> PluginBrowseDetail(
+            is MovieLoadResponse -> response.toBrowseDetail(
                 apiIndex = apiIndex,
-                name = response.name,
-                posterUrl = response.posterUrl,
-                description = response.plot,
+                apiName = api.name,
                 isSeries = false,
                 movieData = response.dataUrl,
                 episodes = emptyList(),
             )
 
-            is LiveStreamLoadResponse -> PluginBrowseDetail(
+            is LiveStreamLoadResponse -> response.toBrowseDetail(
                 apiIndex = apiIndex,
-                name = response.name,
-                posterUrl = response.posterUrl,
-                description = null,
+                apiName = api.name,
                 isSeries = false,
                 movieData = response.dataUrl,
                 episodes = emptyList(),
             )
 
-            is TvSeriesLoadResponse -> PluginBrowseDetail(
+            is TvSeriesLoadResponse -> response.toBrowseDetail(
                 apiIndex = apiIndex,
-                name = response.name,
-                posterUrl = response.posterUrl,
-                description = response.plot,
+                apiName = api.name,
                 isSeries = true,
                 movieData = null,
                 episodes = response.episodes.map { episode ->
@@ -245,15 +270,16 @@ internal class CloudStreamExtensionRunner(
                         episode = episode.episode,
                         name = episode.name.orEmpty(),
                         data = episode.data,
+                        posterUrl = episode.posterUrl,
+                        description = episode.description,
+                        runtimeMinutes = episode.runTime,
                     )
                 },
             )
 
-            is AnimeLoadResponse -> PluginBrowseDetail(
+            is AnimeLoadResponse -> response.toBrowseDetail(
                 apiIndex = apiIndex,
-                name = response.name,
-                posterUrl = response.posterUrl,
-                description = response.plot,
+                apiName = api.name,
                 isSeries = true,
                 movieData = null,
                 episodes = response.episodes.values.flatten().map { episode ->
@@ -262,6 +288,9 @@ internal class CloudStreamExtensionRunner(
                         episode = episode.episode,
                         name = episode.name.orEmpty(),
                         data = episode.data,
+                        posterUrl = episode.posterUrl,
+                        description = episode.description,
+                        runtimeMinutes = episode.runTime,
                     )
                 },
             )
@@ -269,6 +298,45 @@ internal class CloudStreamExtensionRunner(
             else -> null
         }
     }
+
+    private fun LoadResponse.toBrowseDetail(
+        apiIndex: Int,
+        apiName: String,
+        isSeries: Boolean,
+        movieData: String?,
+        episodes: List<PluginBrowseEpisode>,
+    ): PluginBrowseDetail = PluginBrowseDetail(
+        apiIndex = apiIndex,
+        name = name,
+        posterUrl = posterUrl,
+        description = plot,
+        isSeries = isSeries,
+        movieData = movieData,
+        episodes = episodes,
+        backgroundUrl = backgroundPosterUrl,
+        tags = tags.orEmpty(),
+        durationMinutes = duration,
+        contentRating = contentRating,
+        actors = actors.orEmpty().mapNotNull { actorData ->
+            actorData.actor?.let { actor ->
+                PluginBrowseActor(
+                    name = actor.name,
+                    imageUrl = actor.image,
+                    role = actorData.roleString,
+                )
+            }
+        },
+        trailers = trailers.orEmpty().mapNotNull { trailer ->
+            trailer.extractorUrl?.takeIf { it.isNotBlank() }?.let(::PluginBrowseTrailer)
+        },
+        recommendations = recommendations.orEmpty()
+            .filter { it.url != url }
+            .distinctBy { it.url }
+            .map { it.toBrowseItem(apiIndex, apiName) },
+        comingSoon = comingSoon,
+        status = (this as? TvSeriesLoadResponse)?.showStatus?.name
+            ?: (this as? AnimeLoadResponse)?.showStatus?.name,
+    )
 
     /** Resolve links for a browse movie data string or selected episode. */
     suspend fun loadStreams(
@@ -278,9 +346,10 @@ internal class CloudStreamExtensionRunner(
         data: String,
         season: Int?,
         episode: Int?,
+        timeoutMs: Long? = null,
     ): List<PluginRuntimeResult> {
         val api = loader.loadExtension(scraperId, profileId).getOrNull(apiIndex) ?: return emptyList()
-        return loadLinks(api, data)
+        return loadLinks(api, data, timeoutMs ?: LOAD_LINKS_TIMEOUT_MS)
     }
 
     private fun SearchResponse.browseType(): String = when (type?.name) {
@@ -408,11 +477,15 @@ internal class CloudStreamExtensionRunner(
         return episodes.getOrNull(index)
     }
 
-    private suspend fun loadLinks(api: MainAPI, data: String): List<PluginRuntimeResult> {
+    private suspend fun loadLinks(
+        api: MainAPI,
+        data: String,
+        timeoutMs: Long = LOAD_LINKS_TIMEOUT_MS,
+    ): List<PluginRuntimeResult> {
         val links = Collections.synchronizedList(mutableListOf<ExtractorLink>())
         val subtitles = Collections.synchronizedList(mutableListOf<SubtitleFile>())
 
-        val completed = withTimeoutOrNull(LOAD_LINKS_TIMEOUT_MS) {
+        val completed = withTimeoutOrNull(timeoutMs) {
             try {
                 api.loadLinks(
                     data = data,
@@ -430,7 +503,7 @@ internal class CloudStreamExtensionRunner(
             }
         }
         if (completed == null) {
-            Log.w(TAG, "loadLinks timed out after ${LOAD_LINKS_TIMEOUT_MS}ms (${links.size} links collected)")
+            Log.w(TAG, "loadLinks timed out after ${timeoutMs}ms (${links.size} links collected)")
         }
         Log.d(TAG, "${api.name}: ${links.size} links, ${subtitles.size} subtitles")
 

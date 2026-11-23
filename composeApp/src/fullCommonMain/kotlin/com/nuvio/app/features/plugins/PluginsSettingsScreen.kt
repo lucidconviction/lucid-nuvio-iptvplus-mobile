@@ -1,5 +1,6 @@
 package com.nuvio.app.features.plugins
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,11 +25,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +69,8 @@ import nuvio.composeapp.generated.resources.plugins_badge_disabled
 import nuvio.composeapp.generated.resources.plugins_badge_enabled
 import nuvio.composeapp.generated.resources.plugins_badge_enabled_providers
 import nuvio.composeapp.generated.resources.plugins_badge_javascript
+import nuvio.composeapp.generated.resources.plugins_catalog_visibility
+import nuvio.composeapp.generated.resources.plugins_catalog_visibility_none
 import nuvio.composeapp.generated.resources.plugins_badge_providers
 import nuvio.composeapp.generated.resources.plugins_badge_refreshing
 import nuvio.composeapp.generated.resources.plugins_badge_repos
@@ -118,6 +123,7 @@ import nuvio.composeapp.generated.resources.plugins_section_installed_repos
 import nuvio.composeapp.generated.resources.plugins_section_overview
 import nuvio.composeapp.generated.resources.plugins_section_providers
 import nuvio.composeapp.generated.resources.plugins_show_in_live_tv
+import nuvio.composeapp.generated.resources.plugins_show_in_lucid_tv
 import nuvio.composeapp.generated.resources.plugins_show_in_sports
 import nuvio.composeapp.generated.resources.plugins_show_on_home
 import nuvio.composeapp.generated.resources.plugins_test_error_title
@@ -327,6 +333,9 @@ fun PluginsSettingsPageContent(
             },
             onSportsVisibilityChange = { show ->
                 PluginRepository.setScraperShowInSports(scraper.id, show)
+            },
+            onLucidTvVisibilityChange = { show ->
+                PluginRepository.setScraperShowInLucidTv(scraper.id, show)
             },
             onToggle = { enabled -> PluginRepository.toggleScraper(scraper.id, enabled) },
         )
@@ -883,6 +892,7 @@ private fun PluginProviderCard(
     onHomeVisibilityChange: (Boolean) -> Unit,
     onLiveTvVisibilityChange: (Boolean) -> Unit,
     onSportsVisibilityChange: (Boolean) -> Unit,
+    onLucidTvVisibilityChange: (Boolean) -> Unit,
     onToggle: (Boolean) -> Unit,
 ) {
     val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
@@ -974,54 +984,134 @@ private fun PluginProviderCard(
 
         if (isCloudStream) {
             Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            CatalogVisibilityDropdown(
+                scraper = scraper,
+                onHomeVisibilityChange = onHomeVisibilityChange,
+                onLiveTvVisibilityChange = onLiveTvVisibilityChange,
+                onSportsVisibilityChange = onSportsVisibilityChange,
+                onLucidTvVisibilityChange = onLucidTvVisibilityChange,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CatalogVisibilityDropdown(
+    scraper: PluginScraper,
+    onHomeVisibilityChange: (Boolean) -> Unit,
+    onLiveTvVisibilityChange: (Boolean) -> Unit,
+    onSportsVisibilityChange: (Boolean) -> Unit,
+    onLucidTvVisibilityChange: (Boolean) -> Unit,
+) {
+    var expanded by rememberSaveable(scraper.id) { mutableStateOf(false) }
+    val homeLabel = stringResource(Res.string.plugins_show_on_home)
+    val liveTvLabel = stringResource(Res.string.plugins_show_in_live_tv)
+    val sportsLabel = stringResource(Res.string.plugins_show_in_sports)
+    val lucidTvLabel = stringResource(Res.string.plugins_show_in_lucid_tv)
+    val activeLabels = listOfNotNull(
+        homeLabel.takeIf { scraper.showOnHome },
+        liveTvLabel.takeIf { scraper.showInLiveTv },
+        sportsLabel.takeIf { scraper.showInSports },
+        lucidTvLabel.takeIf { scraper.showInLucidTv },
+    )
+
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Visibility,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(Res.string.plugins_show_on_home),
+                    text = stringResource(Res.string.plugins_catalog_visibility),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                Switch(
-                    checked = scraper.showOnHome,
-                    onCheckedChange = onHomeVisibilityChange,
+                Text(
+                    text = activeLabels.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+                        ?: stringResource(Res.string.plugins_catalog_visibility_none),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (activeLabels.isEmpty()) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+            Icon(
+                imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
             ) {
-                Text(
-                    text = stringResource(Res.string.plugins_show_in_live_tv),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Switch(
-                    checked = scraper.showInLiveTv,
-                    onCheckedChange = onLiveTvVisibilityChange,
-                )
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(Res.string.plugins_show_in_sports),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Switch(
-                    checked = scraper.showInSports,
-                    onCheckedChange = onSportsVisibilityChange,
-                )
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    CatalogVisibilityToggle(
+                        label = homeLabel,
+                        checked = scraper.showOnHome,
+                        onCheckedChange = onHomeVisibilityChange,
+                    )
+                    CatalogVisibilityToggle(
+                        label = liveTvLabel,
+                        checked = scraper.showInLiveTv,
+                        onCheckedChange = onLiveTvVisibilityChange,
+                    )
+                    CatalogVisibilityToggle(
+                        label = sportsLabel,
+                        checked = scraper.showInSports,
+                        onCheckedChange = onSportsVisibilityChange,
+                    )
+                    CatalogVisibilityToggle(
+                        label = lucidTvLabel,
+                        checked = scraper.showInLucidTv,
+                        onCheckedChange = onLucidTvVisibilityChange,
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun CatalogVisibilityToggle(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
     }
 }
 

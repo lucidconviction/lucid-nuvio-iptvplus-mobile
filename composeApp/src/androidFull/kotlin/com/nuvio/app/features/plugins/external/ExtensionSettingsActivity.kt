@@ -58,6 +58,15 @@ class ExtensionSettingsActivity : AppCompatActivity() {
                 pending = withContext(Dispatchers.IO) {
                     AndroidExternalExtensionHost.settingsCallback(id, profileId)
                 }
+                if (pending == null) {
+                    Toast.makeText(
+                        this@ExtensionSettingsActivity,
+                        "This extension does not expose settings.",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    finish()
+                    return@launch
+                }
                 if (hasWindowFocus()) showPendingSettings()
             } catch (e: CancellationException) {
                 throw e

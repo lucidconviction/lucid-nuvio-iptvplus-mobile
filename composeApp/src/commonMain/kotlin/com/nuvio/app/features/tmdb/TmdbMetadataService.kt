@@ -82,6 +82,29 @@ object TmdbMetadataService {
             }
         }
 
+    suspend fun searchPerson(name: String): Int? = withContext(Dispatchers.Default) {
+        val clean = name.trim()
+        if (clean.isBlank()) return@withContext null
+        val settings = TmdbSettingsRepository.snapshot()
+        if (!settings.enabled) return@withContext null
+        val language = normalizeTmdbLanguage(settings.language)
+        try {
+            val response = fetch<TmdbPersonSearchResponse>(
+                endpoint = "search/person",
+                query = mapOf(
+                    "query" to clean,
+                    "language" to language,
+                    "include_adult" to "false",
+                ),
+            ) ?: return@withContext null
+            val exact = response.results.firstOrNull { it.name.equals(clean, ignoreCase = true) }
+            (exact ?: response.results.firstOrNull())?.id?.takeIf { it > 0 }
+        } catch (e: Exception) {
+            log.w(e) { "Person search failed for $clean" }
+            null
+        }
+    }
+
     suspend fun fetchPersonDetail(
         personId: Int,
         preferCrewCredits: Boolean? = null,
@@ -2105,6 +2128,17 @@ private data class TmdbEpisodeResponse(
 )
 
 // ─── Person Detail Models ───
+
+@Serializable
+private data class TmdbPersonSearchResponse(
+    val results: List<TmdbPersonSearchResult> = emptyList(),
+)
+
+@Serializable
+private data class TmdbPersonSearchResult(
+    val id: Int? = null,
+    val name: String? = null,
+)
 
 @Serializable
 private data class TmdbPersonResponse(
