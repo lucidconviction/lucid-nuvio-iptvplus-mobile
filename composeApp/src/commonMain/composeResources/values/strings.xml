@@ -2315,6 +2315,8 @@
     <string name="plugins_section_providers">PROVIDERS</string>
     <string name="plugins_section_extensions">EXTENSIONS</string>
     <string name="plugins_section_enabled_extensions">ENABLED EXTENSIONS</string>
+    <string name="plugins_repo_counts">%1$d providers · %2$d enabled</string>
+    <string name="plugins_manage">Manage</string>
     <string name="plugins_manage_extensions">Manage extensions</string>
     <string name="plugins_repo_no_enabled">No extensions enabled yet. Open Manage extensions to choose.</string>
     <string name="plugins_repo_no_extensions">This repository has no extensions.</string>

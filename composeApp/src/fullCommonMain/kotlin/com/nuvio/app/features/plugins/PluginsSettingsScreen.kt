@@ -6,13 +6,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -84,7 +89,9 @@ import nuvio.composeapp.generated.resources.plugins_message_cloudstream_installe
 import nuvio.composeapp.generated.resources.plugins_provider_disabled_by_repo
 import nuvio.composeapp.generated.resources.plugins_provider_no_description
 import nuvio.composeapp.generated.resources.plugins_provider_version
+import nuvio.composeapp.generated.resources.plugins_manage
 import nuvio.composeapp.generated.resources.plugins_manage_extensions
+import nuvio.composeapp.generated.resources.plugins_repo_counts
 import nuvio.composeapp.generated.resources.plugins_repo_fallback_label
 import nuvio.composeapp.generated.resources.plugins_repo_no_enabled
 import nuvio.composeapp.generated.resources.plugins_repo_no_extensions
@@ -228,44 +235,59 @@ fun PluginsSettingsPageContent(
         repositoryPageUrl = null
     }
 
+    fun openProviderSettings(scraper: PluginScraper) {
+        if (scraper.type == PluginRepositoryType.EXTERNAL_DEX) {
+            coroutineScope.launch {
+                if (PluginRepository.hasExtensionSettings(scraper.id)) {
+                    PluginRepository.openExtensionSettings(scraper.id)
+                } else {
+                    message = noExtensionSettingsMessage
+                }
+            }
+        } else {
+            coroutineScope.launch {
+                val layout = PluginRuntime.getPluginSettingsLayout(scraper.code, scraper.id)
+                if (layout != null) {
+                    configuringScraper = scraper
+                    configuringLayout = layout
+                }
+            }
+        }
+    }
+
+    fun openProviderTest(scraper: PluginScraper) {
+        if (scraper.type == PluginRepositoryType.EXTERNAL_DEX) {
+            testDialogScraper = scraper
+            testQuery = if (scraper.supportsType("movie")) "The Matrix" else "Game of Thrones"
+            testTmdbId = if (scraper.supportsType("movie")) "603" else "1396"
+        } else {
+            runProviderTest(scraper, null, null)
+        }
+    }
+
     val renderProviderCard: @Composable (PluginScraper) -> Unit = { scraper ->
         val repositoryName = repositoryNameByUrl[scraper.repositoryUrl]
             ?: scraper.repositoryUrl.fallbackRepositoryLabel(repoFallbackLabel)
-        val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
         PluginProviderCard(
             scraper = scraper,
             repositoryName = repositoryName,
             results = testResults[scraper.id],
             isTesting = testingScraperId == scraper.id,
             onBrowse = onBrowseProvider?.let { browse -> { browse(scraper) } },
-            onSettings = {
-                if (isCloudStream) {
-                    coroutineScope.launch {
-                        if (PluginRepository.hasExtensionSettings(scraper.id)) {
-                            PluginRepository.openExtensionSettings(scraper.id)
-                        } else {
-                            message = noExtensionSettingsMessage
-                        }
-                    }
-                } else {
-                    coroutineScope.launch {
-                        val layout = PluginRuntime.getPluginSettingsLayout(scraper.code, scraper.id)
-                        if (layout != null) {
-                            configuringScraper = scraper
-                            configuringLayout = layout
-                        }
-                    }
-                }
-            },
-            onTest = {
-                if (isCloudStream) {
-                    testDialogScraper = scraper
-                    testQuery = if (scraper.supportsType("movie")) "The Matrix" else "Game of Thrones"
-                    testTmdbId = if (scraper.supportsType("movie")) "603" else "1396"
-                } else {
-                    runProviderTest(scraper, null, null)
-                }
-            },
+            onSettings = { openProviderSettings(scraper) },
+            onTest = { openProviderTest(scraper) },
+            onToggle = { enabled -> PluginRepository.toggleScraper(scraper.id, enabled) },
+        )
+    }
+
+    val renderProviderRow: @Composable (PluginScraper) -> Unit = { scraper ->
+        PluginProviderRow(
+            scraper = scraper,
+            results = testResults[scraper.id],
+            isTesting = testingScraperId == scraper.id,
+            onBrowse = onBrowseProvider?.let { browse -> { browse(scraper) } },
+            onSettings = { openProviderSettings(scraper) },
+            onTest = { openProviderTest(scraper) },
             onToggle = { enabled -> PluginRepository.toggleScraper(scraper.id, enabled) },
         )
     }
@@ -441,96 +463,36 @@ fun PluginsSettingsPageContent(
             }
         } else {
             sortedRepos.forEach { repo ->
-                NuvioSurfaceCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = repo.name,
-                                style = MaterialTheme.typography.headlineLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            repo.version?.let { version ->
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = stringResource(Res.string.plugins_repo_version, version),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = repo.manifestUrl,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            NuvioIconActionButton(
-                                icon = Icons.Rounded.Refresh,
-                                contentDescription = stringResource(Res.string.plugins_cd_refresh_repo),
-                                tint = MaterialTheme.colorScheme.primary,
-                                onClick = { PluginRepository.refreshRepository(repo.manifestUrl, pushAfterRefresh = true) },
-                            )
-                            NuvioIconActionButton(
-                                icon = Icons.Rounded.Delete,
-                                contentDescription = stringResource(Res.string.plugins_cd_delete_repo),
-                                tint = MaterialTheme.colorScheme.error,
-                                onClick = { PluginRepository.removeRepository(repo.manifestUrl) },
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        NuvioInfoBadge(text = stringResource(Res.string.plugins_badge_providers, repo.scraperCount))
-                        NuvioInfoBadge(
-                            text = if (repo.type == PluginRepositoryType.EXTERNAL_DEX) {
-                                stringResource(Res.string.plugins_badge_cloudstream)
-                            } else {
-                                stringResource(Res.string.plugins_badge_javascript)
-                            },
-                        )
-                        if (repo.isRefreshing) {
-                            NuvioInfoBadge(text = stringResource(Res.string.plugins_badge_refreshing))
-                        }
-                    }
-                    repo.errorMessage?.let { errorMessage ->
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = errorMessage,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                NuvioPrimaryButton(
-                    text = stringResource(Res.string.plugins_manage_extensions),
-                    onClick = { repositoryPageUrl = repo.manifestUrl },
-                )
                 val enabledScrapers = sortedScrapers.filter { scraper ->
                     scraper.repositoryUrl == repo.manifestUrl && scraper.enabled
                 }
-                if (enabledScrapers.isEmpty()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(Res.string.plugins_repo_no_enabled),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                NuvioSurfaceCard {
+                    RepositoryGroupHeader(
+                        repository = repo,
+                        enabledCount = enabledScrapers.size,
+                        onManage = { repositoryPageUrl = repo.manifestUrl },
                     )
-                } else {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    enabledScrapers.forEach { scraper -> renderProviderCard(scraper) }
+                    repo.errorMessage?.let { errorMessage ->
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = errorMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    if (enabledScrapers.isEmpty()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = stringResource(Res.string.plugins_repo_no_enabled),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        enabledScrapers.forEach { scraper -> renderProviderRow(scraper) }
+                    }
                 }
             }
         }
@@ -540,7 +502,7 @@ fun PluginsSettingsPageContent(
         }
         if (orphanScrapers.isNotEmpty()) {
             NuvioSectionLabel(stringResource(Res.string.plugins_section_providers))
-            orphanScrapers.forEach { scraper -> renderProviderCard(scraper) }
+            orphanScrapers.forEach { scraper -> renderProviderRow(scraper) }
         }
         }
     }
@@ -907,6 +869,159 @@ private fun PluginProviderCard(
             Text(
                 text = stringResource(Res.string.plugins_test_no_results),
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RepositoryGroupHeader(
+    repository: PluginRepositoryItem,
+    enabledCount: Int,
+    onManage: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onManage),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = repository.name,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = stringResource(
+                    Res.string.plugins_repo_counts,
+                    repository.scraperCount,
+                    enabledCount,
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (repository.isRefreshing) {
+            Text(
+                text = stringResource(Res.string.plugins_badge_refreshing),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+        }
+        Text(
+            text = stringResource(Res.string.plugins_manage),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Icon(
+            imageVector = Icons.Rounded.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+private fun PluginProviderRow(
+    scraper: PluginScraper,
+    results: List<PluginRuntimeResult>?,
+    isTesting: Boolean,
+    onBrowse: (() -> Unit)?,
+    onSettings: () -> Unit,
+    onTest: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+) {
+    val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
+    val showSettings = if (isCloudStream) {
+        scraper.settingsChecked && scraper.hasSettings
+    } else {
+        scraper.hasSettings
+    }
+    val subtitle = buildList {
+        add(scraper.supportedTypes.joinToString(" | "))
+        add(stringResource(Res.string.plugins_provider_version, scraper.version))
+        if (!scraper.manifestEnabled) {
+            add(stringResource(Res.string.plugins_provider_disabled_by_repo))
+        }
+    }.joinToString(" · ")
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = scraper.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isCloudStream && onBrowse != null) {
+                    IconButton(onClick = onBrowse) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = stringResource(Res.string.plugins_browse_action),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                IconButton(onClick = onTest, enabled = !isTesting) {
+                    Icon(
+                        imageVector = Icons.Rounded.Bolt,
+                        contentDescription = stringResource(Res.string.plugins_button_test_provider),
+                        tint = if (isTesting) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                    )
+                }
+                if (showSettings) {
+                    IconButton(onClick = onSettings) {
+                        Icon(
+                            imageVector = Icons.Rounded.Settings,
+                            contentDescription = stringResource(Res.string.plugins_cd_provider_settings),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                Switch(
+                    checked = scraper.enabled,
+                    onCheckedChange = onToggle,
+                    enabled = scraper.manifestEnabled,
+                )
+            }
+        }
+        if (!results.isNullOrEmpty()) {
+            Text(
+                text = stringResource(Res.string.plugins_test_results_count, results.size),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else if (results != null) {
+            Text(
+                text = stringResource(Res.string.plugins_test_no_results),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
