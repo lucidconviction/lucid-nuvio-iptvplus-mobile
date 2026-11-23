@@ -119,6 +119,7 @@ internal data class AppTabActions(
     val onPluginsSettingsClick: () -> Unit = {},
     val onPluginBrowseClick: ((PluginScraper) -> Unit)? = null,
     val onPluginProviderClick: ((PluginScraper) -> Unit)? = null,
+    val onPluginViewAllClick: (() -> Unit)? = null,
     val onAccountSettingsClick: () -> Unit = {},
     val onSupportersContributorsSettingsClick: () -> Unit = {},
     val onLicensesAttributionsSettingsClick: () -> Unit = {},
@@ -146,6 +147,7 @@ internal data class AppTabActions(
     val onLiveTvPlayAddonItemInPip: (MetaPreview) -> Unit = {},
     val onLiveTvAddonItemToMultiView: (MetaPreview) -> Unit = {},
     val onLiveTvOpenAddonSettings: () -> Unit = {},
+    val onOpenPluginProvider: ((PluginScraper) -> Unit)? = null,
     val onWebPlayMedia: (WebMediaSource) -> Unit = {},
     val onWebBrowserActiveChange: (Boolean) -> Unit = {},
 )
@@ -180,6 +182,7 @@ internal fun AppTabHost(
                         onFolderClick = actions.onFolderClick,
                         onFirstCatalogRendered = actions.onInitialHomeContentRendered,
                         onPluginProviderClick = actions.onPluginProviderClick,
+                        onPluginViewAllClick = actions.onPluginViewAllClick,
                     )
                 }
             }
@@ -248,6 +251,7 @@ internal fun AppTabHost(
                     onPlayAddonItemInPip = actions.onLiveTvPlayAddonItemInPip,
                     onAddonItemToMultiView = actions.onLiveTvAddonItemToMultiView,
                     onOpenAddonSettings = actions.onLiveTvOpenAddonSettings,
+                    onOpenPluginProvider = actions.onOpenPluginProvider ?: {},
                 )
             }
 

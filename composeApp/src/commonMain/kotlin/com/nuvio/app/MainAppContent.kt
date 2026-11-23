@@ -1408,6 +1408,7 @@ internal fun MainAppContent(
             onOpenGame = { ev -> navController.navigate(LiveTvSportsGameRoute(eventId = ev.id, title = ev.title)) },
             onOpenLeague = { l -> navController.navigate(LiveTvSportsLeagueRoute(leagueId = l.id, title = l.name)) },
             onPlayAddonItem = ::openLiveTvAddonItem,
+            onPlayPluginItem = navController::openPreview,
         )
 
         /**
@@ -1996,6 +1997,9 @@ internal fun MainAppContent(
                                         ),
                                     )
                                 },
+                                onPluginViewAllClick = {
+                                    navController.navigate(CloudStreamProvidersRoute())
+                                },
                                 onAccountSettingsClick = { navController.navigate(AccountSettingsRoute(accountSettingsTitle)) },
                                 onSupportersContributorsSettingsClick = {
                                     if (AppFeaturePolicy.supportersContributorsPageEnabled) {
@@ -2053,6 +2057,14 @@ internal fun MainAppContent(
                                 onLiveTvPlayAddonItemInPip = ::openLiveTvAddonItemInPip,
                                 onLiveTvAddonItemToMultiView = ::addLiveTvAddonItemToMultiView,
                                 onLiveTvOpenAddonSettings = { navController.navigate(AddonsSettingsRoute(addonsSettingsTitle)) },
+                                onOpenPluginProvider = { scraper ->
+                                    navController.navigate(
+                                        PluginBrowseRoute(
+                                            scraperId = scraper.id,
+                                            scraperName = scraper.name,
+                                        ),
+                                    )
+                                },
                                 onWebPlayMedia = ::openWebMedia,
                                 onLiveTvSettingsClick = {
                                     if (useNativeNavigation && !isTabletLayout) {
@@ -2343,6 +2355,12 @@ internal fun MainAppContent(
                     }
                     entry<PluginBrowseRoute> { route ->
                         com.nuvio.app.features.plugins.browse.PluginBrowseDestination(
+                            route = route,
+                            navController = navController,
+                        )
+                    }
+                    entry<CloudStreamProvidersRoute> { route ->
+                        com.nuvio.app.features.plugins.browse.CloudStreamProvidersDestination(
                             route = route,
                             navController = navController,
                         )

@@ -109,6 +109,7 @@ internal object CloudStreamRuntime {
             Log.w(TAG, "No foreground Activity for extension settings")
             return
         }
+        Log.d(TAG, "Starting ExtensionSettingsActivity for $scraperId (profile $profileId)")
         ExtensionSettingsActivity.open(activity, scraperId, profileId)
     }
 

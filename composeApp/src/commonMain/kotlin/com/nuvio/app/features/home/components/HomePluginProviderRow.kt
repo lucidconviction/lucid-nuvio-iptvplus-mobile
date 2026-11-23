@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -15,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +35,8 @@ import com.nuvio.app.features.plugins.PluginScraper
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.plugins_badge_cloudstream
 import nuvio.composeapp.generated.resources.plugins_browse_provider_hint
+import nuvio.composeapp.generated.resources.plugins_view_all
+import nuvio.composeapp.generated.resources.plugins_view_all_subtitle
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -40,8 +44,10 @@ internal fun HomePluginProviderRow(
     providers: List<PluginScraper>,
     sectionPadding: Dp,
     onProviderClick: (PluginScraper) -> Unit,
+    onViewAll: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val shownProviders = providers.take(15)
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -60,11 +66,16 @@ internal fun HomePluginProviderRow(
             contentPadding = PaddingValues(horizontal = sectionPadding),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(providers, key = { provider -> provider.id }) { provider ->
+            items(shownProviders, key = { provider -> provider.id }) { provider ->
                 PluginProviderCard(
                     provider = provider,
                     onClick = { onProviderClick(provider) },
                 )
+            }
+            if (onViewAll != null) {
+                item(key = "cloudstream_view_all") {
+                    ViewAllPluginProvidersCard(onClick = onViewAll)
+                }
             }
         }
     }
@@ -78,9 +89,13 @@ private fun PluginProviderCard(
     NuvioSurfaceCard(
         modifier = Modifier
             .width(190.dp)
+            .height(112.dp)
             .clickable(onClick = onClick),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             if (!provider.logo.isNullOrBlank()) {
                 AsyncImage(
                     model = provider.logo,
@@ -113,6 +128,43 @@ private fun PluginProviderCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ViewAllPluginProvidersCard(onClick: () -> Unit) {
+    NuvioSurfaceCard(
+        modifier = Modifier
+            .width(190.dp)
+            .height(112.dp)
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Apps,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(Res.string.plugins_view_all),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = stringResource(Res.string.plugins_view_all_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                 )
             }
         }

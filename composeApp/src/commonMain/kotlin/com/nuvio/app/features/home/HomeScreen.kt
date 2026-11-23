@@ -134,6 +134,7 @@ fun HomeScreen(
     onFolderClick: ((collectionId: String, folderId: String) -> Unit)? = null,
     onFirstCatalogRendered: (() -> Unit)? = null,
     onPluginProviderClick: ((PluginScraper) -> Unit)? = null,
+    onPluginViewAllClick: (() -> Unit)? = null,
 ) {
     LaunchedEffect(Unit) {
         AddonRepository.initialize()
@@ -155,6 +156,7 @@ fun HomeScreen(
             pluginsUiState.scrapers.filter { scraper ->
                 scraper.enabled &&
                     scraper.manifestEnabled &&
+                    scraper.showOnHome &&
                     scraper.type == PluginRepositoryType.EXTERNAL_DEX
             }
         } else {
@@ -1065,17 +1067,6 @@ fun HomeScreen(
                 }
             }
 
-            if (pluginProviders.isNotEmpty() && onPluginProviderClick != null) {
-                item(key = "home_cloudstream_providers", contentType = "catalog") {
-                    HomePluginProviderRow(
-                        providers = pluginProviders,
-                        sectionPadding = homeSectionPadding,
-                        onProviderClick = onPluginProviderClick,
-                        modifier = Modifier.padding(bottom = 12.dp),
-                    )
-                }
-            }
-
             when {
                 isInitialHomeContentLoading -> {
                     homeContinueWatchingSections(
@@ -1207,6 +1198,18 @@ fun HomeScreen(
                         onItemLongPress = onContinueWatchingLongPress,
                         disintegrationRequest = continueWatchingDisintegrationRequest,
                     )
+
+                    if (pluginProviders.isNotEmpty() && onPluginProviderClick != null) {
+                        item(key = "home_cloudstream_providers", contentType = "catalog") {
+                            HomePluginProviderRow(
+                                providers = pluginProviders,
+                                sectionPadding = homeSectionPadding,
+                                onProviderClick = onPluginProviderClick,
+                                onViewAll = onPluginViewAllClick,
+                                modifier = Modifier.padding(bottom = 12.dp),
+                            )
+                        }
+                    }
 
                     if (topTenRow != null) {
                         item(key = "home_top_10", contentType = "catalog") {

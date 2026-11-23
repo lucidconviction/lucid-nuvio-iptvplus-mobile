@@ -25,6 +25,12 @@ expect object PluginRepository {
 
     fun toggleScraper(scraperId: String, enabled: Boolean)
 
+    fun setScraperShowOnHome(scraperId: String, showOnHome: Boolean)
+
+    fun setScraperShowInLiveTv(scraperId: String, showInLiveTv: Boolean)
+
+    fun setScraperShowInSports(scraperId: String, showInSports: Boolean)
+
     fun setPluginsEnabled(enabled: Boolean)
 
     fun setGroupStreamsByRepository(enabled: Boolean)

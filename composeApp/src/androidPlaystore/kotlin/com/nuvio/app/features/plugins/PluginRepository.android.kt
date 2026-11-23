@@ -33,6 +33,12 @@ actual object PluginRepository {
 
     actual fun toggleScraper(scraperId: String, enabled: Boolean) = Unit
 
+    actual fun setScraperShowOnHome(scraperId: String, showOnHome: Boolean) = Unit
+
+    actual fun setScraperShowInLiveTv(scraperId: String, showInLiveTv: Boolean) = Unit
+
+    actual fun setScraperShowInSports(scraperId: String, showInSports: Boolean) = Unit
+
     actual fun setPluginsEnabled(enabled: Boolean) = Unit
 
     actual fun setGroupStreamsByRepository(enabled: Boolean) = Unit

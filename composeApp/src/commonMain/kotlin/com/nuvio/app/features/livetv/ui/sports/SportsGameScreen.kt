@@ -351,7 +351,13 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
                 }
             }
             items(addonMatches, key = { "addon:" + it.manifestUrl + ":" + it.item.id }) { match ->
-                SportsAddonRow(match, onClick = { actions.onPlayAddonItem(match.item) })
+                SportsAddonRow(
+                    match,
+                    onClick = {
+                        if (match.isPlugin) actions.onPlayPluginItem(match.item)
+                        else actions.onPlayAddonItem(match.item)
+                    },
+                )
             }
         }
         // ---- YouTube videos for this game: previews before it, highlights and reaction after it.

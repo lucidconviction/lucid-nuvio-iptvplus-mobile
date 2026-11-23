@@ -290,12 +290,17 @@ The action is available from both plugin surfaces: the full-screen Plugins page 
 
 Extensions are no longer reachable only through Settings:
 
-- **Plugins → repository → Manage extensions** opens a repository-scoped extension page listing every extension in that repository with its switch, browse, test and settings actions. The main Plugins page uses compact, stacked repository groups: one-line headers with counts and Manage, followed by inline rows for the enabled extensions.
-- **Home** shows a CloudStream provider row immediately below the hero. Tapping a provider opens its Latest feed.
+- **Plugins → repository → Manage extensions** opens a repository-scoped extension page listing every extension in that repository with its enable switch, Show on Home, Show in Live TV and settings actions. Browse/Test are intentionally omitted there; they remain on the enabled rows of the main Plugins page.
+- The main Plugins page uses compact, stacked repository groups: one-line headers with counts, expand/collapse (collapsed by default) and Manage. Expanded groups list their enabled extensions inline.
+- **Home** shows a CloudStream row directly below Continue Watching, using equal-size tiles. It shows up to 15 providers selected with Show on Home, plus a View all tile.
+- **View all** opens a themed grid of equal-size extension tiles with a spring pop-in as tiles enter the viewport; tapping a tile opens that provider's Latest feed.
+- **Live TV → Add-ons** shows a CloudStream Live group for extensions with Show in Live TV enabled. Selecting one opens its live/latest catalog. No EPG programme data is synthesized (CloudStream has no standard EPG API).
+- **Sports** event pages query extensions with Show in Sports enabled, alongside sports add-ons. Matching extension events open the plugin stream page; guide data remains extension-generated.
+- The Add Repository section includes **Browse repository index**, which loads the MegaRepo (3737) CloudStream repository database and lets the user add any child repository individually.
 - **Search → Discover** lists each enabled CloudStream provider as a catalog under its supported Movie/TV type. Selecting one loads the provider's latest/home feed into the normal poster grid, with Load more using the provider's next page.
 - Plugin cards on Discover are registered in an in-memory item index. Tapping a card opens `PluginBrowseRoute` with the selected item already loaded, so its streams are one step away.
 - New CloudStream repositories install all providers **disabled**. The user chooses which extensions to enable; repository refreshes preserve that choice.
-- Provider cards only show the settings gear when the extension actually registers a settings UI. Opening a repository page probes its unchecked extensions, persists the result, and releases probe-loaded packages; repository install/refresh does the same for that repo.
+- Provider cards only show the settings gear when the extension actually registers a settings UI. Opening a repository page probes its unchecked extensions, persists the result, and releases probe-loaded packages; repository install/refresh does the same for that repo. If a plugin's load() fails before registering its settings callback, a DEX scan for `setOpenSettings`/`SettingsFragment` still exposes the gear (verified with CNC's SKTechProvider).
 - Disabled providers, the global plugin switch, and Play Store/App Store builds are respected.
 
 Current limits: global text search still queries addons only (extension search is available inside a provider's Browse page), and Home shows provider shortcuts rather than separate latest-video rows per extension.
@@ -1116,7 +1121,11 @@ private fun ExtractorLink.toRuntimeResult(provider: String): PluginRuntimeResult
 
 - Install a CloudStream repo, enable a provider, see streams in the stream list alongside addons/JS.
 - Add a new CloudStream repo: every installed provider starts disabled; enable only the desired ones and confirm a repo refresh keeps those choices.
-- Confirm the settings gear is absent for extensions without a settings screen and present for one that has one.
+- Confirm the settings gear is absent for extensions without a settings screen and present for one that has one. Open CNC's SKTechProvider settings from the phone.
+- Add a repository from **Browse repository index** (MegaRepo 3737 child list) and confirm consent/install behavior.
+- Enable **Show in Live TV** for a provider and confirm the CloudStream Live group appears under Live TV → Add-ons.
+- Enable **Show in Sports** for a provider and confirm its catalog results appear on a matching sports event page.
+- Toggle **Show on Home** off for a provider and confirm it disappears from the Home CloudStream row but remains available in View all.
 - Plugins → provider → Browse: the provider's latest/home feed loads without a query; scroll and use Load more.
 - Plugins → provider → Browse: search the provider's own site, open a result, load a movie link or a series episode, and play it.
 - Return from the player: the browse search/results/latest feed/selected episode are still present.

@@ -53,6 +53,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarViewDay
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LiveTv
@@ -143,6 +144,9 @@ import com.nuvio.app.core.ui.NuvioBottomSheetActionRow
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.ManagedAddon
 import com.nuvio.app.features.addons.liveTvAddons
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
+import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.catalog.CatalogUiState
 import com.nuvio.app.features.catalog.fetchCatalogPage
 import com.nuvio.app.features.home.MetaPreview
@@ -165,6 +169,8 @@ import nuvio.composeapp.generated.resources.livetv_header_search
 import nuvio.composeapp.generated.resources.livetv_header_settings
 import nuvio.composeapp.generated.resources.livetv_header_quick_channels
 import nuvio.composeapp.generated.resources.livetv_header_addons
+import nuvio.composeapp.generated.resources.livetv_cloudstream_group
+import nuvio.composeapp.generated.resources.livetv_cloudstream_live_catalog
 import nuvio.composeapp.generated.resources.livetv_quick_channels_section
 import nuvio.composeapp.generated.resources.livetv_quick_channels_open
 import nuvio.composeapp.generated.resources.livetv_no_matching_channels
@@ -234,6 +240,8 @@ fun LiveTvScreen(
     onOpenVirtualChannels: () -> Unit = {},
     /** Turns an inline add-on catalog into a Lucid TV channel. */
     onMakeVirtualChannel: (com.nuvio.app.features.addons.ManagedAddon, com.nuvio.app.features.addons.AddonCatalog) -> Unit = { _, _ -> },
+    /** Opens a CloudStream extension enabled for Live TV. */
+    onOpenPluginProvider: (PluginScraper) -> Unit = {},
 ) {
     val tokens = MaterialTheme.nuvio
     // Restore the open groups and the scroll position when coming back from the player.
@@ -578,6 +586,7 @@ fun LiveTvScreen(
                                 onAddToMultiView = onAddonItemToMultiView,
                                 onMakeChannel = onMakeVirtualChannel,
                                 onlyManifestUrl = onlyAddonManifest,
+                                onOpenPluginProvider = onOpenPluginProvider,
                             )
                         }
                     } else {
@@ -1069,63 +1078,161 @@ private fun AddonsCatalogInlineSection(
     onAddToMultiView: (MetaPreview) -> Unit,
     onMakeChannel: (com.nuvio.app.features.addons.ManagedAddon, com.nuvio.app.features.addons.AddonCatalog) -> Unit,
     onlyManifestUrl: String? = null,
+    onOpenPluginProvider: (PluginScraper) -> Unit = {},
 ) {
     val tokens = MaterialTheme.nuvio.colors
     // Lazy-load addons only when this section enters the composition (user scrolls here).
     // This prevents crashes caused by premature addon initialization during app startup.
     LaunchedEffect(Unit) {
         runCatching { AddonRepository.initialize() }
+        runCatching { PluginRepository.initialize() }
     }
 
     val uiState by AddonRepository.uiState.collectAsStateWithLifecycle()
+    val pluginsUiState by PluginRepository.uiState.collectAsStateWithLifecycle()
     val addons = uiState.addons.liveTvAddons()
         .let { list -> if (onlyManifestUrl == null) list else list.filter { it.manifestUrl == onlyManifestUrl } }
+    val livePluginProviders = remember(
+        onlyManifestUrl,
+        pluginsUiState.pluginsEnabled,
+        pluginsUiState.scrapers,
+    ) {
+        if (onlyManifestUrl != null || !pluginsUiState.pluginsEnabled) {
+            emptyList()
+        } else {
+            pluginsUiState.scrapers
+                .filter { scraper ->
+                    scraper.enabled &&
+                        scraper.manifestEnabled &&
+                        scraper.showInLiveTv &&
+                        scraper.type == PluginRepositoryType.EXTERNAL_DEX
+                }
+                .sortedBy { it.name.lowercase() }
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4)) {
-        if (addons.isEmpty()) {
+        if (addons.isEmpty() && livePluginProviders.isEmpty()) {
             AddonEmptyStateCard(tokens = tokens)
         } else {
-            // Keep expanded state for each addon keyed by manifest URL
-            val expandedAddons = remember { mutableStateMapOf<String, Boolean>() }
-            // Keep expanded state for each catalog keyed by "manifestUrl:catalogId"
-            val expandedCatalogs = remember { mutableStateMapOf<String, Boolean>() }
-
-            addons.forEach { addon ->
-                val manifest = addon.manifest
-                if (manifest != null && manifest.catalogs.isNotEmpty()) {
-                    val addonKey = addon.manifestUrl
-                    val isExpanded = expandedAddons.getOrPut(addonKey) { false }
-
-                    AddonCard(
-                        addon = addon,
-                        expanded = isExpanded,
-                        onToggle = { expandedAddons[addonKey] = !isExpanded },
+            if (livePluginProviders.isNotEmpty()) {
+                Text(
+                    text = stringResource(Res.string.livetv_cloudstream_group),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tokens.textMuted,
+                    modifier = Modifier.padding(
+                        start = NuvioTokens.Space.s4,
+                        bottom = NuvioTokens.Space.s4,
+                    ),
+                )
+                livePluginProviders.forEach { provider ->
+                    CloudStreamLiveProviderCard(
+                        provider = provider,
+                        tokens = tokens,
+                        onClick = { onOpenPluginProvider(provider) },
                     )
+                }
+                if (addons.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(NuvioTokens.Space.s8))
+                }
+            }
+            if (addons.isNotEmpty()) {
+                // Keep expanded state for each addon keyed by manifest URL
+                val expandedAddons = remember { mutableStateMapOf<String, Boolean>() }
+                // Keep expanded state for each catalog keyed by "manifestUrl:catalogId"
+                val expandedCatalogs = remember { mutableStateMapOf<String, Boolean>() }
 
-                    if (isExpanded) {
-                        manifest.catalogs.forEach { catalog ->
-                            val catalogKey = "$addonKey:${catalog.id}"
-                            val isCatExpanded = expandedCatalogs.getOrPut(catalogKey) { false }
+                addons.forEach { addon ->
+                    val manifest = addon.manifest
+                    if (manifest != null && manifest.catalogs.isNotEmpty()) {
+                        val addonKey = addon.manifestUrl
+                        val isExpanded = expandedAddons.getOrPut(addonKey) { false }
 
-                            ExpandableCatalogSection(
-                                manifestUrl = addon.manifestUrl,
-                                catalog = catalog,
-                                addonName = manifest.name,
-                                expanded = isCatExpanded,
-                                onToggle = { expandedCatalogs[catalogKey] = !isCatExpanded },
-                                onPlayItem = onPlayItem,
-                                onPlayInPip = onPlayInPip,
-                                onAddToMultiView = onAddToMultiView,
-                                onMakeChannel = { onMakeChannel(addon, catalog) },
-                            )
+                        AddonCard(
+                            addon = addon,
+                            expanded = isExpanded,
+                            onToggle = { expandedAddons[addonKey] = !isExpanded },
+                        )
+
+                        if (isExpanded) {
+                            manifest.catalogs.forEach { catalog ->
+                                val catalogKey = "$addonKey:${catalog.id}"
+                                val isCatExpanded = expandedCatalogs.getOrPut(catalogKey) { false }
+
+                                ExpandableCatalogSection(
+                                    manifestUrl = addon.manifestUrl,
+                                    catalog = catalog,
+                                    addonName = manifest.name,
+                                    expanded = isCatExpanded,
+                                    onToggle = { expandedCatalogs[catalogKey] = !isCatExpanded },
+                                    onPlayItem = onPlayItem,
+                                    onPlayInPip = onPlayInPip,
+                                    onAddToMultiView = onAddToMultiView,
+                                    onMakeChannel = { onMakeChannel(addon, catalog) },
+                                )
+                            }
                         }
+                    } else {
+                        // Addon with no manifest or no catalogs — show as disabled card
+                        AddonEmptyCatalogCard(addon = addon, tokens = tokens)
                     }
-                } else {
-                    // Addon with no manifest or no catalogs — show as disabled card
-                    AddonEmptyCatalogCard(addon = addon, tokens = tokens)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CloudStreamLiveProviderCard(
+    provider: PluginScraper,
+    tokens: NuvioColorTokens,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(NuvioTokens.Radius.xl))
+            .background(tokens.surface)
+            .clickable(onClick = onClick)
+            .padding(NuvioTokens.Space.s12),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
+                .background(tokens.accent.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.LiveTv,
+                contentDescription = null,
+                tint = tokens.accent,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = provider.name,
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = stringResource(Res.string.livetv_cloudstream_live_catalog),
+                style = MaterialTheme.typography.labelMedium,
+                color = tokens.textMuted,
+                maxLines = 1,
+            )
+        }
+        Icon(
+            Icons.Filled.ChevronRight,
+            contentDescription = null,
+            tint = tokens.textMuted,
+        )
     }
 }
 

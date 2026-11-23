@@ -96,13 +96,16 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
     }
 
     override suspend fun hasSettings(scraperId: String, profileId: Int): Boolean =
-        settingsCallback(scraperId, profileId) != null
+        withContext(Dispatchers.IO) {
+            loader()?.hasSettings(scraperId, profileId) == true
+        }
 
     override fun openSettings(scraperId: String, profileId: Int) {
         val context = appContext ?: run {
             Log.w(TAG, "openSettings before initialize")
             return
         }
+        Log.d(TAG, "Opening extension settings scraperId=$scraperId profile=$profileId")
         CloudStreamRuntime.openSettings(context, scraperId, profileId)
     }
 

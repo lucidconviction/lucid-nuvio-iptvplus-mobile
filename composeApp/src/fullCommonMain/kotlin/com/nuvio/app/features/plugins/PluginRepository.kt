@@ -346,6 +346,54 @@ actual object PluginRepository {
         persist()
     }
 
+    actual fun setScraperShowOnHome(scraperId: String, showOnHome: Boolean) {
+        initialize()
+        _uiState.update { state ->
+            state.copy(
+                scrapers = state.scrapers.map { scraper ->
+                    if (scraper.id == scraperId) {
+                        scraper.copy(showOnHome = showOnHome)
+                    } else {
+                        scraper
+                    }
+                },
+            )
+        }
+        persist()
+    }
+
+    actual fun setScraperShowInLiveTv(scraperId: String, showInLiveTv: Boolean) {
+        initialize()
+        _uiState.update { state ->
+            state.copy(
+                scrapers = state.scrapers.map { scraper ->
+                    if (scraper.id == scraperId) {
+                        scraper.copy(showInLiveTv = showInLiveTv)
+                    } else {
+                        scraper
+                    }
+                },
+            )
+        }
+        persist()
+    }
+
+    actual fun setScraperShowInSports(scraperId: String, showInSports: Boolean) {
+        initialize()
+        _uiState.update { state ->
+            state.copy(
+                scrapers = state.scrapers.map { scraper ->
+                    if (scraper.id == scraperId) {
+                        scraper.copy(showInSports = showInSports)
+                    } else {
+                        scraper
+                    }
+                },
+            )
+        }
+        persist()
+    }
+
     actual fun setPluginsEnabled(enabled: Boolean) {
         initialize()
         _uiState.update { it.copy(pluginsEnabled = enabled) }
@@ -577,8 +625,12 @@ actual object PluginRepository {
                             supportedTypes = info.supportedTypes,
                             enabled = enabled,
                             manifestEnabled = info.enabled,
+                            showOnHome = previous?.showOnHome ?: true,
+                            showInLiveTv = previous?.showInLiveTv ?: false,
+                            showInSports = previous?.showInSports ?: false,
                             hasSettings = info.hasSettings,
                             settingsChecked = true,
+                            settingsProbeVersion = 2,
                             logo = info.logo,
                             contentLanguage = info.contentLanguage ?: emptyList(),
                             formats = info.formats ?: info.supportedFormats,
@@ -692,8 +744,12 @@ actual object PluginRepository {
             // New CloudStream extensions are opt-in. Refreshes preserve the user's choice.
             enabled = previous?.enabled ?: false,
             manifestEnabled = entry.status == 1,
+            showOnHome = previous?.showOnHome ?: true,
+            showInLiveTv = previous?.showInLiveTv ?: false,
+            showInSports = previous?.showInSports ?: false,
             hasSettings = settingsSource?.hasSettings ?: false,
             settingsChecked = settingsSource?.settingsChecked ?: false,
+            settingsProbeVersion = settingsSource?.settingsProbeVersion ?: 1,
             logo = entry.iconUrl,
             contentLanguage = emptyList(),
             formats = null,
@@ -999,7 +1055,7 @@ actual object PluginRepository {
         val pending = _uiState.value.scrapers.filter { scraper ->
             scraper.type == PluginRepositoryType.EXTERNAL_DEX &&
                 scraper.manifestEnabled &&
-                !scraper.settingsChecked &&
+                scraper.settingsProbeVersion < 2 &&
                 (repositoryUrl == null || scraper.repositoryUrl == repositoryUrl)
         }
         if (pending.isEmpty()) return@withLock
@@ -1029,6 +1085,7 @@ actual object PluginRepository {
                                             current.copy(
                                                 hasSettings = hasSettings,
                                                 settingsChecked = true,
+                                                settingsProbeVersion = 2,
                                             )
                                         } else {
                                             current

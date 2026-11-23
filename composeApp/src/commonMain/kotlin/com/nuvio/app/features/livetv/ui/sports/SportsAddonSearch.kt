@@ -4,6 +4,9 @@ import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.catalog.fetchCatalogPage
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.livetv.sports.SportsEvent
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
+import com.nuvio.app.features.plugins.browse.toCatalogMetaPreview
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -11,11 +14,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** One event stream found in an installed add-on. */
+/** One event stream found in an installed add-on or CloudStream extension. */
 internal data class SportsAddonMatch(
     val item: MetaPreview,
     val addonName: String,
     val manifestUrl: String,
+    val isPlugin: Boolean = false,
 )
 
 /**
@@ -45,8 +49,17 @@ internal object SportsAddonSearch {
         }
         if (cached != null) return cached
         runCatching { AddonRepository.initialize() }
+        runCatching { PluginRepository.initialize() }
         val addons = AddonRepository.uiState.value.addons.filter { it.enabled && it.manifest != null }
-        if (addons.isEmpty()) return emptyList()
+        val pluginProviders = PluginRepository.uiState.value.scrapers
+            .filter { scraper ->
+                scraper.enabled &&
+                    scraper.manifestEnabled &&
+                    scraper.showInSports &&
+                    scraper.type == PluginRepositoryType.EXTERNAL_DEX
+            }
+            .take(8)
+        if (addons.isEmpty() && pluginProviders.isEmpty()) return emptyList()
 
         val terms = termsFor(ev)
         val jobs = ArrayList<Pair<String, com.nuvio.app.features.addons.AddonCatalog>>()
@@ -61,7 +74,7 @@ internal object SportsAddonSearch {
             }
         }
 
-        val found = coroutineScope {
+        val addonMatches = coroutineScope {
             jobs.map { (manifestUrl, catalog) ->
                 async {
                     val search = catalog.extra.firstOrNull { it.name.equals("search", ignoreCase = true) }
@@ -91,7 +104,31 @@ internal object SportsAddonSearch {
             }.awaitAll().flatten()
         }
 
-        val result = found
+        val pluginMatches = coroutineScope {
+            pluginProviders.map { scraper ->
+                async {
+                    val out = ArrayList<SportsAddonMatch>()
+                    for (query in terms.take(2)) {
+                        val results = withTimeoutOrNull(FETCH_TIMEOUT_MS) {
+                            runCatching { PluginRepository.browseSearch(scraper.id, query) }.getOrNull()
+                        } ?: continue
+                        results.forEach { item ->
+                            if (matchesEvent(ev.title, ev.sides.map { it.team.name } + ev.sides.map { it.team.abbr }, item.name)) {
+                                out += SportsAddonMatch(
+                                    item = item.toCatalogMetaPreview(scraper.id, scraper.name),
+                                    addonName = scraper.name,
+                                    manifestUrl = "plugin:${scraper.id}",
+                                    isPlugin = true,
+                                )
+                            }
+                        }
+                    }
+                    out
+                }
+            }.awaitAll().flatten()
+        }
+
+        val result = (addonMatches + pluginMatches)
             .distinctBy { "${it.manifestUrl}:${it.item.id}" }
             .sortedByDescending { scoreMatch(ev, it.item.name) }
             .take(MAX_RESULTS)

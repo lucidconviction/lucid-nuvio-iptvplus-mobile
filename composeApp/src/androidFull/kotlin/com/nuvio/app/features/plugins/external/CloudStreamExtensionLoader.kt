@@ -271,6 +271,38 @@ class CloudStreamExtensionLoader(
         return (loaded[key(profileId, scraperId)]?.plugin as? Plugin)?.openSettings
     }
 
+    /**
+     * Settings can be registered late in a plugin's load(), after network setup or
+     * Activity-specific casts. If the callback is missing, inspect the DEX for the
+     * settings registration entry points so the gear still appears.
+     */
+    @Synchronized
+    fun hasSettings(scraperId: String, profileId: Int): Boolean {
+        val callback = settingsCallback(scraperId, profileId)
+        if (callback != null) return true
+        return extensionFile(scraperId, profileId).let { file ->
+            file.isFile && dexMentionsSettings(file)
+        }
+    }
+
+    private fun dexMentionsSettings(file: File): Boolean = try {
+        ZipFile(file).use { zip ->
+            zip.entries().asSequence()
+                .filter { entry -> !entry.isDirectory && entry.name.endsWith(".dex") }
+                .any { entry ->
+                    zip.getInputStream(entry).use { stream ->
+                        val bytes = stream.readBytes()
+                        bytes.containsAscii("setOpenSettings") ||
+                            bytes.containsAscii("openSettings") ||
+                            bytes.containsAscii("SettingsFragment")
+                    }
+                }
+        }
+    } catch (e: Exception) {
+        Log.d(TAG, "Settings scan failed for ${file.name}: ${e.javaClass.simpleName}")
+        false
+    }
+
     fun ensureExtractorsLoaded(scraperIds: List<String>, profileId: Int) {
         for (id in scraperIds) synchronized(this) {
             if (preloaded.add(key(profileId, id))) loadExtension(id, profileId)
@@ -400,4 +432,16 @@ class CloudStreamExtensionLoader(
         }
         return null
     }
+}
+
+private fun ByteArray.containsAscii(text: String): Boolean {
+    val target = text.toByteArray(Charsets.US_ASCII)
+    if (target.isEmpty() || target.size > size) return false
+    loop@ for (start in 0..size - target.size) {
+        for (index in target.indices) {
+            if (this[start + index] != target[index]) continue@loop
+        }
+        return true
+    }
+    return false
 }

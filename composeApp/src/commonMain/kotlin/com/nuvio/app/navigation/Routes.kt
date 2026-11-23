@@ -117,6 +117,11 @@ data class PluginBrowseRoute(
 ) : SettingsDestinationRoute
 
 @Serializable
+data class CloudStreamProvidersRoute(
+    override val title: String = "CloudStream",
+) : AppRoute
+
+@Serializable
 data class AccountSettingsRoute(override val title: String = "") : SettingsDestinationRoute
 
 @Serializable

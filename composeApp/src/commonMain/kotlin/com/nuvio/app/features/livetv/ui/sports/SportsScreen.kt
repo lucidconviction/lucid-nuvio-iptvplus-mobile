@@ -104,6 +104,8 @@ data class SportsActions(
     val onOpenLeague: (League) -> Unit,
     /** Plays an event stream found in an installed add-on. */
     val onPlayAddonItem: (MetaPreview) -> Unit = {},
+    /** Opens an event found in a CloudStream extension. */
+    val onPlayPluginItem: (MetaPreview) -> Unit = {},
 )
 
 private enum class SportsTab { MINE, ALL, LIVE, SEARCH, FOLLOWING, REPLAYS }
