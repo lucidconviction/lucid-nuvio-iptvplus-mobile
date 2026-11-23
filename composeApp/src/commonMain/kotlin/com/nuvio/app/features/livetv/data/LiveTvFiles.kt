@@ -41,6 +41,13 @@ internal expect object LiveTvFiles {
     fun writeText(dir: String, name: String, text: String): Boolean
 
     /**
+     * Writes text produced piece by piece (compressed), returning true when it differs from what
+     * was stored before. Lets a very large channel list be saved without holding all of it in
+     * memory at once.
+     */
+    suspend fun writeTextStream(dir: String, name: String, producer: suspend ((String) -> Unit) -> Unit): Boolean
+
+    /**
      * Reads the stored file as text, in pieces of a few hundred KB (large guides are 50–200 MB,
      * so they're never held whole). Null when the file doesn't exist.
      */

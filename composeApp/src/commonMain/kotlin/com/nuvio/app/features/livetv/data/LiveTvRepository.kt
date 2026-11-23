@@ -135,7 +135,8 @@ internal object LiveTvRepository {
         if (initialized) return
         initialized = true
         scope.launch {
-            runCatching { mutex.withLock { rebuildLocked() } }
+            // Show the channel list saved last time straight away, then refresh it quietly.
+            runCatching { mutex.withLock { runCatching { loadSavedChannels() }; rebuildLocked() } }
             if (updateCheckDelayMs > 0) delay(updateCheckDelayMs)
             runCatching { refreshInternal(forcePlaylists = false, forceEpg = false) }
             firstCheckDone = true
@@ -556,6 +557,69 @@ internal object LiveTvRepository {
         else -> "${(bytes / 1024).coerceAtLeast(1)} KB"
     }
 
+    // ---------------------------------------------------------------- saved channel list
+
+    /** What the saved channel list was made from; null when nothing usable is saved. */
+    @kotlin.concurrent.Volatile private var savedFingerprint: String? = null
+    private val saveMutex = Mutex()
+
+    /**
+     * Start: the channel list saved last time, so channels show at once instead of after every
+     * playlist has been read again. Only playlists still enabled (and still downloaded) are
+     * taken; the normal rebuild replaces it quietly afterwards.
+     */
+    private suspend fun loadSavedChannels() = withContext(Dispatchers.Default) {
+        if (_channels.value.isNotEmpty()) return@withContext
+        val on = prefs.currentPlaylists()
+            .filter { it.liveEnabled && LiveTvFiles.exists(LiveTvDirs.PLAYLISTS, playlistFile(it.id)) }
+            .mapTo(HashSet()) { it.id }
+        if (on.isEmpty()) return@withContext
+        val saved = LiveTvFiles.readChunks(LiveTvDirs.STATE, SavedChannels.FILE) { chunks ->
+            SavedChannels.read(linesOf(chunks))
+        }
+        if (saved == null) {
+            if (LiveTvFiles.exists(LiveTvDirs.STATE, SavedChannels.FILE)) {
+                LiveTvFiles.delete(LiveTvDirs.STATE, SavedChannels.FILE)
+            }
+            return@withContext
+        }
+        val channels = saved.channels.filter { it.sourceId in on }
+        if (channels.isEmpty()) return@withContext
+        savedFingerprint = saved.stamp
+        _channels.value = channels
+    }
+
+    private fun channelsFingerprint(playlists: List<PlaylistSource>, list: List<LiveChannel>): String {
+        var h = 1125899906842597L
+        for (c in list) h = 31 * h + c.hashCode()
+        val setup = playlists.filter { it.liveEnabled }
+            .sortedBy { it.id }
+            .joinToString("|") { "${it.id}:${it.name}:${it.userAgent}:${it.useEmbeddedEpg}" }
+        return "$h-${list.size}-${setup.hashCode()}"
+    }
+
+    /** Saves the channel list (in the background) when it differs from what's saved already. */
+    private fun saveChannelsIfChanged(list: List<LiveChannel>) {
+        if (list.isEmpty()) return
+        val stamp = channelsFingerprint(prefs.currentPlaylists(), list)
+        if (stamp == savedFingerprint) return
+        savedFingerprint = stamp
+        val toSave = list
+        scope.launch(Dispatchers.Default) {
+            saveMutex.withLock {
+                // A newer list made meanwhile: that one gets saved instead.
+                if (savedFingerprint != stamp) return@withLock
+                runCatching {
+                    LiveTvFiles.writeTextStream(LiveTvDirs.STATE, SavedChannels.FILE) { write ->
+                        SavedChannels.write(stamp, toSave, write)
+                    }
+                }.onFailure {
+                    savedFingerprint = null
+                }
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- channels
 
     private suspend fun buildChannels() = withContext(Dispatchers.Default) {
@@ -630,6 +694,7 @@ internal object LiveTvRepository {
             }
         }
         _channels.value = out
+        saveChannelsIfChanged(out)
     }
 
     /** The chunks of a file as lines (a line may span two chunks). */

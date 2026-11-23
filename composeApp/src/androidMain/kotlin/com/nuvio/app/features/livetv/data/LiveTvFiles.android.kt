@@ -162,6 +162,29 @@ internal actual object LiveTvFiles {
         return changed
     }
 
+    actual suspend fun writeTextStream(
+        dir: String,
+        name: String,
+        producer: suspend ((String) -> Unit) -> Unit,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val target = file(dir, name)
+        val tmp = File(target.parentFile, "$name.stream.tmp")
+        try {
+            GZIPOutputStream(tmp.outputStream().buffered(64 * 1024), 64 * 1024).bufferedWriter(Charsets.UTF_8).use { writer ->
+                producer { chunk -> writer.write(chunk) }
+            }
+            val changed = !target.isFile || !sameDecoded(target, tmp)
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
+            target.setLastModified(System.currentTimeMillis())
+            changed
+        } finally {
+            tmp.delete()
+        }
+    }
+
     actual fun <T> readChunks(dir: String, name: String, block: (Sequence<String>) -> T): T? {
         val f = file(dir, name)
         if (!f.isFile) return null
