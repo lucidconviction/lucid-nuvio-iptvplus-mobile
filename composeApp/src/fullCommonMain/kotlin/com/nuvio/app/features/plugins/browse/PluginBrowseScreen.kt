@@ -86,6 +86,7 @@ import coil3.compose.AsyncImage
 import com.nuvio.app.core.build.AppFeaturePolicy
 import com.nuvio.app.core.build.TrailerPlaybackMode
 import com.nuvio.app.core.ui.Chip
+import com.nuvio.app.core.ui.DialogSurface
 import com.nuvio.app.core.ui.NuvioBackButton
 import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.NuvioInfoBadge
@@ -106,12 +107,16 @@ import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.details.components.ExpandableDescription
 import com.nuvio.app.features.details.components.TrailerPlayerPopup
+import com.nuvio.app.features.library.LibraryItem
 import com.nuvio.app.features.library.LibraryRepository
 import com.nuvio.app.features.library.toLibraryItem
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.plugins.PluginBrowseRepository
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginRepositoryType
+import com.nuvio.app.features.profiles.ProfileRepository
+import com.nuvio.app.features.tracking.TrackingLibraryProvider
+import com.nuvio.app.features.tracking.TrackingProviderRegistry
 import com.nuvio.app.features.plugins.PluginRuntimeResult
 import com.nuvio.app.features.plugins.PluginSubtitleResult
 import com.nuvio.app.features.plugins.PluginScraper
@@ -1137,6 +1142,7 @@ private fun PluginDetailContent(
     var tmdbId by remember(detail.name) { mutableStateOf<Int?>(null) }
     var tmdbMeta by remember(detail.name) { mutableStateOf<MetaDetails?>(null) }
     var savedInLibrary by remember(detail.name) { mutableStateOf(false) }
+    var showSaveOptions by remember { mutableStateOf(false) }
     LaunchedEffect(detail.name, detail.isSeries, item?.year) {
         val id = TmdbMetadataService.searchTitleId(
             name = detail.name,
@@ -1167,15 +1173,16 @@ private fun PluginDetailContent(
         }
     }
     val allTrailers = remember(detail.trailers, tmdbMeta) {
-        buildList {
-            addAll(detail.trailers)
-            tmdbMeta?.trailers.orEmpty().forEach { trailer ->
-                if (trailer.site.equals("YouTube", ignoreCase = true) && trailer.key.isNotBlank()) {
-                    val url = "https://www.youtube.com/watch?v=${trailer.key}"
-                    if (none { it.url == url }) add(PluginBrowseTrailer(url))
-                }
+        val fromTmdb = tmdbMeta?.trailers.orEmpty()
+            .filter { trailer ->
+                trailer.site.equals("YouTube", ignoreCase = true) &&
+                    trailer.key.isNotBlank() &&
+                    (trailer.type.equals("Trailer", ignoreCase = true) ||
+                        trailer.type.equals("Teaser", ignoreCase = true))
             }
-        }
+            .map { PluginBrowseTrailer("https://www.youtube.com/watch?v=${it.key}") }
+            .distinctBy { it.url }
+        if (fromTmdb.isNotEmpty()) fromTmdb else detail.trailers
     }
     var selectedTrailer by remember(detail.name) { mutableStateOf<PluginBrowseTrailer?>(null) }
     var trailerSource by remember(detail.name) { mutableStateOf<TrailerPlaybackSource?>(null) }
@@ -1285,7 +1292,8 @@ private fun PluginDetailContent(
                 scraper.enabled &&
                     scraper.manifestEnabled &&
                     scraper.id != scraperId &&
-                    scraper.type == PluginRepositoryType.EXTERNAL_DEX
+                    scraper.type == PluginRepositoryType.EXTERNAL_DEX &&
+                    (scraper.showInLiveTv || scraper.showInSports || scraper.showInLucidTv)
             }
             .take(6)
         if (extensions.isEmpty()) return emptyList()
@@ -1408,25 +1416,45 @@ private fun PluginDetailContent(
         }
     }
 
-    fun toggleSaved() {
+    fun libraryItemForSave(): LibraryItem? {
         val meta = tmdbMeta
         val id = tmdbId
         if (meta == null || id == null) {
             NuvioToastController.show("No TMDB match for this title.")
-            return
+            return null
         }
+        return meta.toLibraryItem(0L).copy(
+            id = "tmdb:$id",
+            type = if (detail.isSeries) "series" else "movie",
+            tmdbId = id,
+        )
+    }
+
+    fun saveTo(target: TrackingLibraryProvider?) {
+        val item = libraryItemForSave() ?: return
+        showSaveOptions = false
         scope.launch {
-            val item = meta.toLibraryItem(0L).copy(
-                id = "tmdb:$id",
-                type = if (detail.isSeries) "series" else "movie",
-                tmdbId = id,
-            )
-            val result = runCatching { LibraryRepository.toggleSaved(item) }.getOrNull()
-            if (result == null) {
+            val ok = runCatching {
+                if (target == null) {
+                    LibraryRepository.toggleLocalSaved(item)
+                    true
+                } else {
+                    val desired = target.toggledDefaultMembership(target.membership(item))
+                    target.applyMembership(
+                        profileId = ProfileRepository.activeProfileId,
+                        item = item,
+                        desiredMembership = desired,
+                    )
+                    true
+                }
+            }.getOrDefault(false)
+            if (!ok) {
                 NuvioToastController.show("Could not save this title.")
             } else {
-                savedInLibrary = !savedInLibrary
-                NuvioToastController.show(if (savedInLibrary) "Saved" else "Removed from library")
+                savedInLibrary = LibraryRepository.isSaved(item.id, item.type)
+                NuvioToastController.show(
+                    if (savedInLibrary) "Saved" else "Removed from library",
+                )
             }
         }
     }
@@ -1559,7 +1587,7 @@ private fun PluginDetailContent(
                         modifier = Modifier
                             .weight(1f)
                             .clip(tokens.shapes.button)
-                            .clickable { toggleSaved() },
+                            .clickable { showSaveOptions = true },
                         shape = tokens.shapes.button,
                         color = if (savedInLibrary) {
                             tokens.colors.accent.copy(alpha = 0.16f)
@@ -1734,13 +1762,10 @@ private fun PluginDetailContent(
                     topPadding = 24.dp,
                 )
             }
-            itemsIndexed(
-                items = allTrailers,
-                key = { index, trailerItem -> "trailer:$index:${trailerItem.url}" },
-            ) { index, trailerItem ->
-                PluginTrailerRow(
-                    index = index,
-                    onClick = { openTrailer(trailerItem) },
+            item(key = "trailers_grid") {
+                PluginTrailerThumbnailGrid(
+                    trailers = allTrailers,
+                    onTrailerClick = { openTrailer(it) },
                 )
             }
         }
@@ -1835,6 +1860,31 @@ private fun PluginDetailContent(
         }
         PlatformBackHandler(enabled = showSources) {
             showSources = false
+        }
+    }
+
+    if (showSaveOptions) {
+        DialogSurface(
+            onDismissRequest = { showSaveOptions = false },
+            title = "Save to",
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SaveTargetRow(
+                    title = "Nuvio Library",
+                    subtitle = "Local library",
+                    onClick = { saveTo(null) },
+                )
+                val providers = remember(showSaveOptions) {
+                    TrackingProviderRegistry.connectedLibraryProviders()
+                }
+                providers.forEach { provider ->
+                    SaveTargetRow(
+                        title = provider.providerId.displayName,
+                        subtitle = "Connected tracker",
+                        onClick = { saveTo(provider) },
+                    )
+                }
+            }
         }
     }
 
@@ -2151,6 +2201,148 @@ private fun PluginTmdbRecommendationRow(
             }
         }
     }
+}
+
+@Composable
+private fun SaveTargetRow(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(tokens.shapes.compactCard)
+            .clickable(onClick = onClick),
+        shape = tokens.shapes.compactCard,
+        color = tokens.colors.surfaceCard,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = tokens.colors.textPrimary,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PluginTrailerThumbnailGrid(
+    trailers: List<PluginBrowseTrailer>,
+    onTrailerClick: (PluginBrowseTrailer) -> Unit,
+) {
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        trailers.chunked(3).forEachIndexed { rowIndex, row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEachIndexed { columnIndex, trailer ->
+                    PluginTrailerThumbnail(
+                        trailer = trailer,
+                        index = rowIndex * 3 + columnIndex,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onTrailerClick(trailer) },
+                    )
+                }
+                repeat(3 - row.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PluginTrailerThumbnail(
+    trailer: PluginBrowseTrailer,
+    index: Int,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val thumbnail = youtubeVideoKey(trailer.url)?.let { key ->
+        "https://img.youtube.com/vi/$key/hqdefault.jpg"
+    }
+    Box(
+        modifier = modifier
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(tokens.colors.surfaceElevated)
+            .clickable(onClick = onClick),
+    ) {
+        if (thumbnail != null) {
+            AsyncImage(
+                model = thumbnail,
+                contentDescription = "Trailer ${index + 1}",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.PlayArrow,
+                contentDescription = null,
+                tint = tokens.colors.textMuted,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(28.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.4f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.78f),
+                    ),
+                ),
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.50f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.PlayArrow,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Text(
+            text = "Trailer ${index + 1}",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(6.dp),
+        )
+    }
+}
+
+private fun youtubeVideoKey(url: String): String? {
+    val patterns = listOf(
+        Regex("""[?&]v=([A-Za-z0-9_-]{6,})"""),
+        Regex("""youtu\.be/([A-Za-z0-9_-]{6,})"""),
+        Regex("""/embed/([A-Za-z0-9_-]{6,})"""),
+    )
+    return patterns.firstNotNullOfOrNull { it.find(url)?.groupValues?.getOrNull(1) }
 }
 
 @Composable
