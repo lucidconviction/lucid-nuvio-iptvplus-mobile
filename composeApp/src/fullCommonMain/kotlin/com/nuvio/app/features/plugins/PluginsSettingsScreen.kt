@@ -1153,6 +1153,16 @@ private fun RepositoryGroupHeader(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (repository.errorMessage != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = repository.manifestUrl,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         if (repository.isRefreshing) {
             Text(

@@ -99,6 +99,8 @@ actual object PluginRepository {
     private val settingsDetectionMutex = Mutex()
     private val persistenceRevision = atomic(0L)
     private val persistenceLock = SynchronizedObject()
+    /** A synced profile can hold many CloudStream repositories; don't install them all at once. */
+    private val externalInstallLimiter = Semaphore(4)
     private val persistedRevisionByProfile = mutableMapOf<Int, Long>()
 
     actual fun initialize() {
@@ -719,6 +721,15 @@ actual object PluginRepository {
         repoUrl: String,
         profileId: Int,
         previousScrapers: Map<String, PluginScraper>,
+    ): PluginScraper? = externalInstallLimiter.withPermit {
+        installExternalEntryUnlocked(entry, repoUrl, profileId, previousScrapers)
+    }
+
+    private suspend fun installExternalEntryUnlocked(
+        entry: com.nuvio.app.features.plugins.external.ExternalPluginEntry,
+        repoUrl: String,
+        profileId: Int,
+        previousScrapers: Map<String, PluginScraper>,
     ): PluginScraper? {
         val scraperId = "${repoUrl.lowercase()}:${entry.internalName}"
         val previous = previousScrapers[scraperId]
@@ -996,40 +1007,49 @@ actual object PluginRepository {
                 }?.scraper
             }
             ?: emptyList()
+        val seenRepositoryUrls = HashSet<String>()
+        val repositories = ArrayList<PluginRepositoryItem>()
+        stored?.repositories.orEmpty().forEach { storedRepository ->
+            val healedUrl = healPluginRepositoryUrl(storedRepository.manifestUrl)
+            if (healedUrl != storedRepository.manifestUrl) requiresMigration = true
+            if (!seenRepositoryUrls.add(healedUrl.lowercase())) {
+                requiresMigration = true
+                return@forEach
+            }
+            repositories += PluginRepositoryItem(
+                manifestUrl = healedUrl,
+                name = storedRepository.name,
+                description = storedRepository.description,
+                version = storedRepository.version,
+                scraperCount = storedRepository.scraperCount,
+                lastUpdated = storedRepository.lastUpdated,
+                isRefreshing = false,
+                errorMessage = null,
+                type = storedRepository.type,
+            )
+        }
+        val healedScrapers = scrapers.map { scraper ->
+            val healedUrl = healPluginRepositoryUrl(scraper.repositoryUrl)
+            if (healedUrl == scraper.repositoryUrl) {
+                scraper
+            } else {
+                requiresMigration = true
+                scraper.copy(repositoryUrl = healedUrl)
+            }
+        }
         return LoadedPluginState(
             state = PluginsUiState(
                 pluginsEnabled = stored?.pluginsEnabled ?: true,
                 groupStreamsByRepository = stored?.groupStreamsByRepository ?: false,
-                repositories = stored?.repositories
-                    ?.map {
-                        PluginRepositoryItem(
-                            manifestUrl = it.manifestUrl,
-                            name = it.name,
-                            description = it.description,
-                            version = it.version,
-                            scraperCount = it.scraperCount,
-                            lastUpdated = it.lastUpdated,
-                            isRefreshing = false,
-                            errorMessage = null,
-                            type = it.type,
-                        )
-                    }
-                    ?: emptyList(),
-                scrapers = scrapers,
+                repositories = repositories,
+                scrapers = healedScrapers,
             ),
             requiresMigration = requiresMigration,
         )
     }
 
     private fun dedupeManifestUrls(urls: List<String>): List<String> =
-        urls.map(::ensureManifestSuffix).distinct()
-
-    private fun ensureManifestSuffix(url: String): String {
-        val path = url.substringBefore("?").trimEnd('/')
-        val query = url.substringAfter("?", "")
-        val withSuffix = if (path.endsWith("/manifest.json")) path else "$path/manifest.json"
-        return if (query.isEmpty()) withSuffix else "$withSuffix?$query"
-    }
+        urls.map { ensurePluginManifestUrl(healPluginRepositoryUrl(it)) }.distinct()
 
     private fun normalizeManifestUrl(rawUrl: String): String {
         val trimmed = rawUrl.trim()
@@ -1168,4 +1188,33 @@ internal fun isRepositoryShortCode(input: String): Boolean {
     if (trimmed.isEmpty()) return false
     if (trimmed.contains("://") || trimmed.contains('/') || trimmed.contains('.')) return false
     return trimmed.length in 2..64 && trimmed.all { it.isLetterOrDigit() || it == '-' || it == '_' }
+}
+
+/**
+ * Earlier builds appended `/manifest.json` to every synced repository URL, turning a CloudStream
+ * `repo.json` link into `repo.json/manifest.json`. Undo that for stored state.
+ */
+internal fun healPluginRepositoryUrl(url: String): String {
+    val trimmed = url.trim()
+    val suffix = "/manifest.json"
+    val queryIndex = trimmed.indexOf('?')
+    val path = if (queryIndex >= 0) trimmed.substring(0, queryIndex) else trimmed
+    if (!path.endsWith(suffix, ignoreCase = true)) return trimmed
+    val parent = path.dropLast(suffix.length)
+    if (!parent.substringAfterLast('/').endsWith(".json", ignoreCase = true)) return trimmed
+    val query = if (queryIndex >= 0) trimmed.substring(queryIndex) else ""
+    return parent + query
+}
+
+internal fun ensurePluginManifestUrl(url: String): String {
+    val trimmed = url.trim()
+    if (trimmed.isEmpty()) return trimmed
+    val path = trimmed.substringBefore("?").trimEnd('/')
+    val query = trimmed.substringAfter("?", "")
+    // A JSON file is already a manifest (Nuvio) or a CloudStream repository index.
+    if (path.endsWith(".json", ignoreCase = true)) {
+        return if (query.isEmpty()) path else "$path?$query"
+    }
+    val withSuffix = "$path/manifest.json"
+    return if (query.isEmpty()) withSuffix else "$withSuffix?$query"
 }
