@@ -82,6 +82,37 @@ object TmdbMetadataService {
             }
         }
 
+    suspend fun searchTitleId(name: String, isSeries: Boolean, year: Int? = null): Int? =
+        withContext(Dispatchers.Default) {
+            val clean = name.trim()
+            if (clean.isBlank()) return@withContext null
+            val settings = TmdbSettingsRepository.snapshot()
+            if (!settings.enabled) return@withContext null
+            val language = normalizeTmdbLanguage(settings.language)
+            try {
+                val endpoint = if (isSeries) "search/tv" else "search/movie"
+                val query = buildMap {
+                    put("query", clean)
+                    put("language", language)
+                    put("include_adult", "false")
+                    if (year != null && year > 0) {
+                        put(if (isSeries) "first_air_date_year" else "year", year.toString())
+                    }
+                }
+                val response = fetch<TmdbTitleSearchResponse>(
+                    endpoint = endpoint,
+                    query = query,
+                ) ?: return@withContext null
+                val exact = response.results.firstOrNull { result ->
+                    (result.title ?: result.name).equals(clean, ignoreCase = true)
+                }
+                (exact ?: response.results.firstOrNull())?.id?.takeIf { it > 0 }
+            } catch (e: Exception) {
+                log.w(e) { "Title search failed for $clean" }
+                null
+            }
+        }
+
     suspend fun searchPerson(name: String): Int? = withContext(Dispatchers.Default) {
         val clean = name.trim()
         if (clean.isBlank()) return@withContext null
@@ -2128,6 +2159,18 @@ private data class TmdbEpisodeResponse(
 )
 
 // ─── Person Detail Models ───
+
+@Serializable
+private data class TmdbTitleSearchResponse(
+    val results: List<TmdbTitleSearchResult> = emptyList(),
+)
+
+@Serializable
+private data class TmdbTitleSearchResult(
+    val id: Int? = null,
+    val title: String? = null,
+    val name: String? = null,
+)
 
 @Serializable
 private data class TmdbPersonSearchResponse(

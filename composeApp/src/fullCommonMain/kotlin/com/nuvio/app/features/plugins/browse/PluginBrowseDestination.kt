@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import com.nuvio.app.SettingsDestination
+import com.nuvio.app.openPreview
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
@@ -54,6 +55,7 @@ internal actual fun PluginBrowseDestination(
             scraperName = route.scraperName,
             initialItem = initialItem,
             onBack = onBack,
+            onOpenMeta = navController::openPreview,
             onOpenPerson = { actor ->
                 scope.launch {
                     val personId = TmdbMetadataService.searchPerson(actor.name)
@@ -70,11 +72,10 @@ internal actual fun PluginBrowseDestination(
                     }
                 }
             },
-            onPlay = { item, detail, episode, result ->
-                val providerName = "CloudStream · ${route.scraperName}"
+            onPlaySource = { providerName, providerAddonId, item, detail, episode, result ->
                 val stream = result.toBrowseStreamItem(
                     providerName = providerName,
-                    providerId = "plugin:${route.scraperId}",
+                    providerId = providerAddonId,
                 )
                 val directUrl = stream.playableDirectUrl
                 if (directUrl == null) {
@@ -82,7 +83,7 @@ internal actual fun PluginBrowseDestination(
                     return@PluginBrowseScreen
                 }
 
-                val contentId = "pluginbrowse:${route.scraperId}:${item.apiIndex}:${item.url.hashCode()}"
+                val contentId = "pluginbrowse:$providerAddonId:${item.apiIndex}:${item.url.hashCode()}"
                 val contentType = if (detail.isSeries) "tv" else "movie"
                 val contentKey = StreamLinkCacheRepository.contentKey(
                     type = contentType,
@@ -98,7 +99,7 @@ internal actual fun PluginBrowseDestination(
                     url = directUrl,
                     streamName = stream.streamLabel,
                     addonName = providerName,
-                    addonId = "plugin:${route.scraperId}",
+                    addonId = providerAddonId,
                     requestHeaders = requestHeaders,
                     responseHeaders = responseHeaders,
                     filename = stream.behaviorHints.filename,
@@ -122,7 +123,7 @@ internal actual fun PluginBrowseDestination(
                     streamTitle = stream.streamLabel,
                     streamSubtitle = stream.streamSubtitle,
                     providerName = providerName,
-                    providerAddonId = "plugin:${route.scraperId}",
+                    providerAddonId = providerAddonId,
                     contentType = contentType,
                     videoId = contentId,
                     parentMetaId = contentId,

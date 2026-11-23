@@ -1,7 +1,9 @@
 package com.nuvio.app.features.plugins.browse
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,10 +16,13 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -36,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -44,8 +50,10 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -83,32 +91,56 @@ import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.NuvioInfoBadge
 import com.nuvio.app.core.ui.NuvioInputField
 import com.nuvio.app.core.ui.NuvioLoadingIndicator
+import com.nuvio.app.core.ui.NuvioModalBottomSheet
 import com.nuvio.app.core.ui.NuvioPrimaryButton
+import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.NuvioScreenHeader
+import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.SkeletonPoster
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioCardDepth
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.features.details.MetaCompany
+import com.nuvio.app.features.details.MetaDetails
+import com.nuvio.app.features.home.MetaPreview
 import com.nuvio.app.features.details.components.ExpandableDescription
 import com.nuvio.app.features.details.components.TrailerPlayerPopup
+import com.nuvio.app.features.library.LibraryRepository
+import com.nuvio.app.features.library.toLibraryItem
 import com.nuvio.app.features.home.components.HomeEmptyStateCard
 import com.nuvio.app.features.plugins.PluginBrowseRepository
 import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
 import com.nuvio.app.features.plugins.PluginRuntimeResult
+import com.nuvio.app.features.plugins.PluginSubtitleResult
 import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.plugins.external.PluginBrowseActor
 import com.nuvio.app.features.plugins.external.PluginBrowseCategory
 import com.nuvio.app.features.plugins.external.PluginBrowseDetail
 import com.nuvio.app.features.plugins.external.PluginBrowseTrailer
+import com.nuvio.app.features.plugins.external.toBrowseStreamItem
+import com.nuvio.app.features.streams.AddonStreamGroup
+import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.StreamsRepository
+import com.nuvio.app.features.streams.StreamsUiState
+import com.nuvio.app.features.player.PlayerProviderFilterRow
+import com.nuvio.app.features.player.PlayerStreamList
+import com.nuvio.app.features.tmdb.TmdbMetadataService
+import com.nuvio.app.features.tmdb.TmdbSettingsRepository
 import com.nuvio.app.features.trailer.TrailerPlaybackResolver
 import com.nuvio.app.features.trailer.TrailerPlaybackSource
 import com.nuvio.app.features.plugins.external.PluginBrowseEpisode
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.action_close
 import nuvio.composeapp.generated.resources.action_play
 import nuvio.composeapp.generated.resources.action_retry
 import nuvio.composeapp.generated.resources.plugins_browse_detail_failed
@@ -145,6 +177,16 @@ import nuvio.composeapp.generated.resources.plugins_browse_series
 import nuvio.composeapp.generated.resources.plugins_browse_sources
 import nuvio.composeapp.generated.resources.plugins_browse_streams
 import nuvio.composeapp.generated.resources.plugins_browse_streams_failed
+import nuvio.composeapp.generated.resources.plugins_production
+import nuvio.composeapp.generated.resources.plugins_save
+import nuvio.composeapp.generated.resources.plugins_saved
+import nuvio.composeapp.generated.resources.plugins_sources_title
+import nuvio.composeapp.generated.resources.plugins_sources_this_extension
+import nuvio.composeapp.generated.resources.plugins_sources_other_extensions
+import nuvio.composeapp.generated.resources.plugins_sources_addons
+import nuvio.composeapp.generated.resources.plugins_sources_loading
+import nuvio.composeapp.generated.resources.plugins_sources_empty
+import nuvio.composeapp.generated.resources.plugins_sources_hold
 import nuvio.composeapp.generated.resources.plugins_browse_trailer_unavailable
 import nuvio.composeapp.generated.resources.plugins_provider_version
 import org.jetbrains.compose.resources.stringResource
@@ -160,7 +202,15 @@ internal fun PluginBrowseScreen(
     initialItem: PluginBrowseItem? = null,
     onBack: () -> Unit,
     onOpenPerson: (PluginBrowseActor) -> Unit = {},
-    onPlay: (PluginBrowseItem, PluginBrowseDetail, PluginBrowseEpisode?, PluginRuntimeResult) -> Unit,
+    onOpenMeta: (MetaPreview) -> Unit = {},
+    onPlaySource: (
+        providerName: String,
+        providerAddonId: String,
+        item: PluginBrowseItem,
+        detail: PluginBrowseDetail,
+        episode: PluginBrowseEpisode?,
+        result: PluginRuntimeResult,
+    ) -> Unit,
 ) {
     var searching by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -223,29 +273,6 @@ internal fun PluginBrowseScreen(
     val latestFailedText = stringResource(Res.string.plugins_browse_latest_failed)
     val selectedCategory = latestCategories.firstOrNull { it.key == selectedCategoryKey }
 
-    fun loadStreams(
-        currentDetail: PluginBrowseDetail,
-        episode: PluginBrowseEpisode?,
-        data: String,
-    ) {
-        loadingStreams = true
-        streams = emptyList()
-        errorMessage = null
-        scope.launch {
-            PluginBrowseRepository.loadStreams(
-                scraperId = scraperId,
-                detail = currentDetail,
-                season = episode?.season,
-                episode = episode?.episode,
-                data = data,
-            ).onSuccess { loaded ->
-                streams = loaded
-            }.onFailure { error ->
-                errorMessage = error.message ?: streamsFailedText
-            }
-            loadingStreams = false
-        }
-    }
 
     fun closeDetail() {
         detail = null
@@ -270,16 +297,7 @@ internal fun PluginBrowseScreen(
                     if (loaded == null) {
                         errorMessage = detailFailedText
                     } else if (loaded.isSeries) {
-                        // Pre-select the first episode so the hero Play button is immediately useful.
-                        val first = loaded.episodes.firstOrNull()
-                        if (first == null) {
-                            errorMessage = noStreamsText
-                        } else {
-                            selectedEpisode = first
-                            loadStreams(loaded, first, first.data)
-                        }
-                    } else {
-                        loadStreams(loaded, null, loaded.movieData.orEmpty())
+                        selectedEpisode = loaded.episodes.firstOrNull()
                     }
                 }
                 .onFailure { error ->
@@ -420,32 +438,23 @@ internal fun PluginBrowseScreen(
                 }
             }
         } else {
-            PluginDetailContent(
-                item = detailItem,
-                detail = currentDetail,
-                provider = provider,
-                selectedEpisode = selectedEpisode,
-                streams = streams,
-                loadingStreams = loadingStreams,
-                errorMessage = errorMessage,
-                listState = detailListState,
-                onBack = ::closeDetail,
-                onSelectEpisode = { episode ->
-                    selectedEpisode = episode
-                    loadStreams(currentDetail, episode, episode.data)
-                },
-                onPlayStream = { stream ->
-                    detailItem?.let { onPlay(it, currentDetail, selectedEpisode, stream) }
-                },
-                onPlayFirst = {
-                    val first = streams.firstOrNull()
-                    if (first != null) {
-                        detailItem?.let { onPlay(it, currentDetail, selectedEpisode, first) }
-                    }
-                },
-                onOpenRecommendation = { recommendation -> openDetail(recommendation) },
-                onOpenPerson = onOpenPerson,
-            )
+            Box(modifier = Modifier.fillMaxSize()) {
+                PluginDetailContent(
+                    item = detailItem,
+                    detail = currentDetail,
+                    provider = provider,
+                    scraperId = scraperId,
+                    scraperName = scraperName,
+                    selectedEpisode = selectedEpisode,
+                    listState = detailListState,
+                    onBack = ::closeDetail,
+                    onSelectEpisode = { episode -> selectedEpisode = episode },
+                    onOpenRecommendation = { recommendation -> openDetail(recommendation) },
+                    onOpenPerson = onOpenPerson,
+                    onOpenMeta = onOpenMeta,
+                    onPlaySource = onPlaySource,
+                )
+            }
         }
         return
     }
@@ -1078,53 +1087,108 @@ private fun PluginPosterTile(
     }
 }
 
+private data class PluginResolvedSource(
+    val providerName: String,
+    val providerAddonId: String,
+    val result: PluginRuntimeResult,
+    val isCurrent: Boolean,
+)
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun PluginDetailContent(
     item: PluginBrowseItem?,
     detail: PluginBrowseDetail,
     provider: PluginScraper?,
+    scraperId: String,
+    scraperName: String,
     selectedEpisode: PluginBrowseEpisode?,
-    streams: List<PluginRuntimeResult>,
-    loadingStreams: Boolean,
-    errorMessage: String?,
     listState: LazyListState,
     onBack: () -> Unit,
     onSelectEpisode: (PluginBrowseEpisode) -> Unit,
-    onPlayStream: (PluginRuntimeResult) -> Unit,
-    onPlayFirst: () -> Unit,
     onOpenRecommendation: (PluginBrowseItem) -> Unit,
     onOpenPerson: (PluginBrowseActor) -> Unit,
+    onOpenMeta: (MetaPreview) -> Unit,
+    onPlaySource: (
+        providerName: String,
+        providerAddonId: String,
+        item: PluginBrowseItem,
+        detail: PluginBrowseDetail,
+        episode: PluginBrowseEpisode?,
+        result: PluginRuntimeResult,
+    ) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
     val uriHandler = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
     val trailerScope = rememberCoroutineScope()
+    val contentItem = item ?: PluginBrowseItem(
+        apiIndex = detail.apiIndex,
+        apiName = scraperName,
+        name = detail.name,
+        url = "",
+        posterUrl = detail.posterUrl,
+        type = if (detail.isSeries) "tv" else "movie",
+        year = null,
+    )
     val inAppTrailer = AppFeaturePolicy.trailerPlaybackMode == TrailerPlaybackMode.IN_APP
     val trailerUnavailableText = stringResource(Res.string.plugins_browse_trailer_unavailable)
+    val noSourcesText = stringResource(Res.string.plugins_sources_empty)
+    var tmdbId by remember(detail.name) { mutableStateOf<Int?>(null) }
+    var tmdbMeta by remember(detail.name) { mutableStateOf<MetaDetails?>(null) }
+    var savedInLibrary by remember(detail.name) { mutableStateOf(false) }
+    LaunchedEffect(detail.name, detail.isSeries, item?.year) {
+        val id = TmdbMetadataService.searchTitleId(
+            name = detail.name,
+            isSeries = detail.isSeries,
+            year = item?.year,
+        )
+        tmdbId = id
+        tmdbMeta = if (id != null) {
+            runCatching {
+                TmdbMetadataService.fetchStandaloneMeta(
+                    type = if (detail.isSeries) "tv" else "movie",
+                    id = "tmdb:$id",
+                    settings = TmdbSettingsRepository.snapshot(),
+                )
+            }.getOrNull()
+        } else {
+            null
+        }
+        savedInLibrary = if (id != null) {
+            runCatching {
+                LibraryRepository.isSaved(
+                    id = "tmdb:$id",
+                    type = if (detail.isSeries) "series" else "movie",
+                )
+            }.getOrDefault(false)
+        } else {
+            false
+        }
+    }
+    val allTrailers = remember(detail.trailers, tmdbMeta) {
+        buildList {
+            addAll(detail.trailers)
+            tmdbMeta?.trailers.orEmpty().forEach { trailer ->
+                if (trailer.site.equals("YouTube", ignoreCase = true) && trailer.key.isNotBlank()) {
+                    val url = "https://www.youtube.com/watch?v=${trailer.key}"
+                    if (none { it.url == url }) add(PluginBrowseTrailer(url))
+                }
+            }
+        }
+    }
     var selectedTrailer by remember(detail.name) { mutableStateOf<PluginBrowseTrailer?>(null) }
     var trailerSource by remember(detail.name) { mutableStateOf<TrailerPlaybackSource?>(null) }
     var trailerLoading by remember(detail.name) { mutableStateOf(false) }
     var trailerError by remember(detail.name) { mutableStateOf<String?>(null) }
-    fun openTrailer(trailer: PluginBrowseTrailer) {
-        val isYouTube = trailer.url.contains("youtube.com", ignoreCase = true) ||
-            trailer.url.contains("youtu.be", ignoreCase = true)
-        if (!inAppTrailer || !isYouTube) {
-            runCatching { uriHandler.openUri(trailer.url) }
-            return
-        }
-        selectedTrailer = trailer
-        trailerSource = null
-        trailerError = null
-        trailerLoading = true
-        trailerScope.launch {
-            val source = runCatching {
-                TrailerPlaybackResolver.resolveFromYouTubeUrl(trailer.url)
-            }.getOrNull()
-            trailerSource = source
-            trailerError = if (source == null) trailerUnavailableText else null
-            trailerLoading = false
-        }
-    }
-    val canPlay = streams.isNotEmpty() && !loadingStreams
+    var resolvingPlay by remember(detail.name) { mutableStateOf(false) }
+    var showSources by remember { mutableStateOf(false) }
+    var sourcesLoading by remember { mutableStateOf(false) }
+    var selectedSourceFilter by remember { mutableStateOf<String?>(null) }
+    var sourcesRequested by remember(detail.name) { mutableStateOf(false) }
+    var currentSources by remember(detail.name) { mutableStateOf<List<PluginResolvedSource>>(emptyList()) }
+    var otherSources by remember(detail.name) { mutableStateOf<List<PluginResolvedSource>>(emptyList()) }
+    var addonSources by remember(detail.name) { mutableStateOf<List<PluginResolvedSource>>(emptyList()) }
     val seasonGroups = remember(detail.episodes) {
         detail.episodes
             .groupBy { it.season }
@@ -1137,7 +1201,6 @@ private fun PluginDetailContent(
             seasonGroups.firstOrNull()?.season?.let { setOf(it) } ?: emptySet(),
         )
     }
-
     val detailRows = buildList {
         if (detail.tags.isNotEmpty()) {
             add(stringResource(Res.string.plugins_browse_genres) to detail.tags.joinToString(", "))
@@ -1163,7 +1226,252 @@ private fun PluginDetailContent(
                     stringResource(Res.string.plugins_browse_coming_soon),
             )
         }
+        tmdbMeta?.director?.takeIf { it.isNotEmpty() }?.let { directors ->
+            add("Director" to directors.joinToString(", "))
+        }
+        tmdbMeta?.writer?.takeIf { it.isNotEmpty() }?.let { writers ->
+            add("Writer" to writers.joinToString(", "))
+        }
+        tmdbMeta?.country?.takeIf { it.isNotBlank() }?.let { add("Country" to it) }
+        tmdbMeta?.language?.takeIf { it.isNotBlank() }?.let { add("Language" to it) }
+        tmdbMeta?.collectionName?.takeIf { it.isNotBlank() }?.let { add("Collection" to it) }
     }
+
+    fun openTrailer(trailer: PluginBrowseTrailer) {
+        val isYouTube = trailer.url.contains("youtube.com", ignoreCase = true) ||
+            trailer.url.contains("youtu.be", ignoreCase = true)
+        if (!inAppTrailer || !isYouTube) {
+            runCatching { uriHandler.openUri(trailer.url) }
+            return
+        }
+        selectedTrailer = trailer
+        trailerSource = null
+        trailerError = null
+        trailerLoading = true
+        trailerScope.launch {
+            val source = runCatching {
+                TrailerPlaybackResolver.resolveFromYouTubeUrl(trailer.url)
+            }.getOrNull()
+            trailerSource = source
+            trailerError = if (source == null) trailerUnavailableText else null
+            trailerLoading = false
+        }
+    }
+
+    suspend fun loadCurrentSources(): List<PluginResolvedSource> {
+        val data = if (detail.isSeries) selectedEpisode?.data else detail.movieData
+        if (data.isNullOrBlank()) return emptyList()
+        return PluginBrowseRepository.loadStreams(
+            scraperId = scraperId,
+            detail = detail,
+            season = selectedEpisode?.season,
+            episode = selectedEpisode?.episode,
+            data = data,
+            timeoutMs = 20_000L,
+        ).getOrElse { emptyList() }
+            .map {
+                PluginResolvedSource(
+                    providerName = "CloudStream · $scraperName",
+                    providerAddonId = "plugin:$scraperId",
+                    result = it,
+                    isCurrent = true,
+                )
+            }
+    }
+
+    suspend fun loadOtherSources(): List<PluginResolvedSource> {
+        val extensions = PluginRepository.uiState.value.scrapers
+            .filter { scraper ->
+                scraper.enabled &&
+                    scraper.manifestEnabled &&
+                    scraper.id != scraperId &&
+                    scraper.type == PluginRepositoryType.EXTERNAL_DEX
+            }
+            .take(6)
+        if (extensions.isEmpty()) return emptyList()
+        return coroutineScope {
+            extensions.map { extension ->
+                async {
+                    val matches = withTimeoutOrNull(8_000L) {
+                        runCatching {
+                            PluginRepository.browseSearch(extension.id, detail.name)
+                        }.getOrNull()
+                    }.orEmpty()
+                    val match = matches.firstOrNull { it.name.equals(detail.name, ignoreCase = true) }
+                        ?: matches.firstOrNull()
+                        ?: return@async emptyList()
+                    val links = withTimeoutOrNull(18_000L) {
+                        runCatching {
+                            PluginRepository.browseStreams(
+                                scraperId = extension.id,
+                                apiIndex = match.apiIndex,
+                                url = match.url,
+                                season = null,
+                                episode = null,
+                                timeoutMs = 12_000L,
+                            )
+                        }.getOrNull()
+                    }.orEmpty()
+                    links.take(3).map {
+                        PluginResolvedSource(
+                            providerName = "CloudStream · ${extension.name}",
+                            providerAddonId = "plugin:${extension.id}",
+                            result = it,
+                            isCurrent = false,
+                        )
+                    }
+                }
+            }.awaitAll().flatten()
+        }
+    }
+
+    suspend fun loadAddonSources(): List<PluginResolvedSource> {
+        val tmdbId = withTimeoutOrNull(8_000L) {
+            TmdbMetadataService.searchTitleId(
+                name = detail.name,
+                isSeries = detail.isSeries,
+                year = item?.year,
+            )
+        } ?: return emptyList()
+        val type = if (detail.isSeries) "tv" else "movie"
+        val streams = withTimeoutOrNull(20_000L) {
+            runCatching {
+                StreamsRepository.resolveStreamCandidates(
+                    type = type,
+                    videoId = tmdbId.toString(),
+                    parentMetaId = tmdbId.toString(),
+                    season = selectedEpisode?.season,
+                    episode = selectedEpisode?.episode,
+                    timeoutMs = 15_000L,
+                )
+            }.getOrNull()
+        }.orEmpty()
+        return streams
+            .filter { it.playableDirectUrl != null }
+            .take(5)
+            .map {
+                PluginResolvedSource(
+                    providerName = "Add-on · ${it.addonName}",
+                    providerAddonId = it.addonId.ifBlank { "addon:${it.addonName}" },
+                    result = it.toPluginResult(),
+                    isCurrent = false,
+                )
+            }
+    }
+
+    fun play(source: PluginResolvedSource) {
+        showSources = false
+        onPlaySource(
+            source.providerName,
+            source.providerAddonId,
+            contentItem,
+            detail,
+            selectedEpisode,
+            source.result,
+        )
+    }
+
+    fun playAutomatically() {
+        if (resolvingPlay) return
+        resolvingPlay = true
+        scope.launch {
+            val chosen = currentSources.firstOrNull()
+                ?: loadCurrentSources().firstOrNull()
+                ?: otherSources.firstOrNull()
+                ?: loadOtherSources().firstOrNull()
+                ?: addonSources.firstOrNull()
+                ?: loadAddonSources().firstOrNull()
+            if (chosen == null) {
+                NuvioToastController.show(noSourcesText)
+            } else {
+                play(chosen)
+            }
+            resolvingPlay = false
+        }
+    }
+
+    fun openSources() {
+        showSources = true
+        if (sourcesRequested) return
+        sourcesRequested = true
+        sourcesLoading = true
+        scope.launch {
+            coroutineScope {
+                val current = async { loadCurrentSources() }
+                val other = async { loadOtherSources() }
+                val addons = async { loadAddonSources() }
+                currentSources = current.await()
+                otherSources = other.await()
+                addonSources = addons.await()
+            }
+            sourcesLoading = false
+        }
+    }
+
+    fun toggleSaved() {
+        val meta = tmdbMeta
+        val id = tmdbId
+        if (meta == null || id == null) {
+            NuvioToastController.show("No TMDB match for this title.")
+            return
+        }
+        scope.launch {
+            val item = meta.toLibraryItem(0L).copy(
+                id = "tmdb:$id",
+                type = if (detail.isSeries) "series" else "movie",
+                tmdbId = id,
+            )
+            val result = runCatching { LibraryRepository.toggleSaved(item) }.getOrNull()
+            if (result == null) {
+                NuvioToastController.show("Could not save this title.")
+            } else {
+                savedInLibrary = !savedInLibrary
+                NuvioToastController.show(if (savedInLibrary) "Saved" else "Removed from library")
+            }
+        }
+    }
+
+    val trailer = allTrailers.firstOrNull()
+    val allResolvedSources = listOf(currentSources, otherSources, addonSources).flatten()
+    val sourceByKey = allResolvedSources.associateBy { source ->
+        "${source.providerAddonId}|${source.result.url}"
+    }
+    val sourceGroups = remember(currentSources, otherSources, addonSources, scraperId, scraperName) {
+        buildList {
+            if (currentSources.isNotEmpty()) {
+                add(
+                    AddonStreamGroup(
+                        addonName = "CloudStream · $scraperName",
+                        addonId = "plugin:$scraperId",
+                        streams = currentSources.map { it.toStreamItem() },
+                    ),
+                )
+            }
+            otherSources.groupBy { it.providerAddonId to it.providerName }.forEach { (key, group) ->
+                add(
+                    AddonStreamGroup(
+                        addonName = key.second,
+                        addonId = key.first,
+                        streams = group.map { it.toStreamItem() },
+                    ),
+                )
+            }
+            addonSources.groupBy { it.providerAddonId to it.providerName }.forEach { (key, group) ->
+                add(
+                    AddonStreamGroup(
+                        addonName = key.second,
+                        addonId = key.first,
+                        streams = group.map { it.toStreamItem() },
+                    ),
+                )
+            }
+        }
+    }
+    val sourceUiState = StreamsUiState(
+        groups = sourceGroups,
+        selectedFilter = selectedSourceFilter,
+        isAnyLoading = sourcesLoading,
+    )
 
     LazyColumn(
         state = listState,
@@ -1183,14 +1491,57 @@ private fun PluginDetailContent(
         }
 
         item(key = "play") {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
-                NuvioPrimaryButton(
-                    text = stringResource(Res.string.action_play),
-                    enabled = canPlay,
-                    onClick = onPlayFirst,
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(tokens.shapes.button)
+                        .combinedClickable(
+                            enabled = !resolvingPlay,
+                            onClick = { playAutomatically() },
+                            onLongClick = { openSources() },
+                        ),
+                    shape = tokens.shapes.button,
+                    color = tokens.colors.accent,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (resolvingPlay) {
+                            NuvioLoadingIndicator(
+                                size = 20.dp,
+                                color = tokens.colors.onAccent,
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Rounded.PlayArrow,
+                                contentDescription = null,
+                                tint = tokens.colors.onAccent,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(Res.string.action_play),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = tokens.colors.onAccent,
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = stringResource(Res.string.plugins_sources_hold),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
                 )
                 if (detail.isSeries && selectedEpisode != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = episodeLabel(selectedEpisode),
                         style = MaterialTheme.typography.bodySmall,
@@ -1199,34 +1550,71 @@ private fun PluginDetailContent(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                val trailer = detail.trailers.firstOrNull()
-                if (trailer != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Surface(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .weight(1f)
                             .clip(tokens.shapes.button)
-                            .clickable { openTrailer(trailer) },
+                            .clickable { toggleSaved() },
                         shape = tokens.shapes.button,
-                        color = tokens.colors.surfaceCard,
+                        color = if (savedInLibrary) {
+                            tokens.colors.accent.copy(alpha = 0.16f)
+                        } else {
+                            tokens.colors.surfaceCard
+                        },
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.PlayArrow,
+                                imageVector = Icons.Rounded.Bookmark,
                                 contentDescription = null,
-                                tint = tokens.colors.accent,
+                                tint = if (savedInLibrary) tokens.colors.accent else tokens.colors.textMuted,
                                 modifier = Modifier.size(18.dp),
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = stringResource(Res.string.plugins_browse_trailers),
+                                text = stringResource(
+                                    if (savedInLibrary) Res.string.plugins_saved else Res.string.plugins_save,
+                                ),
                                 style = MaterialTheme.typography.labelLarge,
-                                color = tokens.colors.textPrimary,
+                                color = if (savedInLibrary) tokens.colors.accent else tokens.colors.textPrimary,
                             )
+                        }
+                    }
+                    if (trailer != null) {
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(tokens.shapes.button)
+                                .clickable { openTrailer(trailer) },
+                            shape = tokens.shapes.button,
+                            color = tokens.colors.surfaceCard,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PlayArrow,
+                                    contentDescription = null,
+                                    tint = tokens.colors.accent,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(Res.string.plugins_browse_trailers),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = tokens.colors.textPrimary,
+                                )
+                            }
                         }
                     }
                 }
@@ -1283,46 +1671,6 @@ private fun PluginDetailContent(
             }
         }
 
-        item(key = "sources_header") {
-            SectionHeader(
-                title = stringResource(Res.string.plugins_browse_sources),
-                detail = selectedEpisode?.let(::episodeLabel)
-                    ?: detail.name.takeIf { !detail.isSeries },
-                topPadding = 6.dp,
-            )
-        }
-
-        when {
-            loadingStreams -> {
-                items(3) { index ->
-                    StreamSkeletonRow(index = index)
-                }
-            }
-            errorMessage != null -> {
-                item(key = "sources_error") {
-                    MissingSectionText(errorMessage)
-                }
-            }
-            streams.isEmpty() -> {
-                item(key = "sources_empty") {
-                    MissingSectionText(stringResource(Res.string.plugins_browse_no_streams))
-                }
-            }
-            else -> {
-                itemsIndexed(
-                    items = streams,
-                    key = { index, stream ->
-                        "${index}:${stream.url}:${stream.name ?: stream.title}"
-                    },
-                ) { _, stream ->
-                    PluginStreamRow(
-                        stream = stream,
-                        onClick = { onPlayStream(stream) },
-                    )
-                }
-            }
-        }
-
         if (!detail.description.isNullOrBlank()) {
             item(key = "overview") {
                 Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp)) {
@@ -1367,7 +1715,19 @@ private fun PluginDetailContent(
             }
         }
 
-        if (detail.trailers.isNotEmpty()) {
+        if (tmdbMeta?.productionCompanies?.isNotEmpty() == true) {
+            item(key = "production_header") {
+                SectionHeader(
+                    title = stringResource(Res.string.plugins_production),
+                    topPadding = 24.dp,
+                )
+            }
+            item(key = "production") {
+                PluginProductionRow(companies = tmdbMeta?.productionCompanies.orEmpty())
+            }
+        }
+
+        if (allTrailers.isNotEmpty()) {
             item(key = "trailers_header") {
                 SectionHeader(
                     title = stringResource(Res.string.plugins_browse_trailers),
@@ -1375,17 +1735,31 @@ private fun PluginDetailContent(
                 )
             }
             itemsIndexed(
-                items = detail.trailers,
-                key = { index, trailer -> "trailer:$index:${trailer.url}" },
-            ) { index, trailer ->
+                items = allTrailers,
+                key = { index, trailerItem -> "trailer:$index:${trailerItem.url}" },
+            ) { index, trailerItem ->
                 PluginTrailerRow(
                     index = index,
-                    onClick = { openTrailer(trailer) },
+                    onClick = { openTrailer(trailerItem) },
                 )
             }
         }
 
-        if (detail.recommendations.isNotEmpty()) {
+        val tmdbMoreLikeThis = tmdbMeta?.moreLikeThis.orEmpty()
+        if (tmdbMoreLikeThis.isNotEmpty()) {
+            item(key = "recommendations_header") {
+                SectionHeader(
+                    title = stringResource(Res.string.plugins_browse_more_like_this),
+                    topPadding = 24.dp,
+                )
+            }
+            item(key = "recommendations") {
+                PluginTmdbRecommendationRow(
+                    items = tmdbMoreLikeThis,
+                    onClick = onOpenMeta,
+                )
+            }
+        } else if (detail.recommendations.isNotEmpty()) {
             item(key = "recommendations_header") {
                 SectionHeader(
                     title = stringResource(Res.string.plugins_browse_more_like_this),
@@ -1398,6 +1772,69 @@ private fun PluginDetailContent(
                     onClick = onOpenRecommendation,
                 )
             }
+        }
+    }
+
+    if (showSources) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(tokens.colors.background),
+        ) {
+            NuvioScreenHeader(
+                title = stringResource(Res.string.plugins_sources_title),
+                onBack = { showSources = false },
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Text(
+                    text = if (detail.isSeries && selectedEpisode != null) {
+                        episodeLabel(selectedEpisode)
+                    } else {
+                        detail.name
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = tokens.colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                PlayerProviderFilterRow(
+                    streamsUiState = sourceUiState,
+                    onFilterSelected = { selectedSourceFilter = it },
+                    onRefresh = {
+                        sourcesRequested = false
+                        scope.launch {
+                            sourcesLoading = true
+                            val current = loadCurrentSources()
+                            val other = loadOtherSources()
+                            val addons = loadAddonSources()
+                            currentSources = current
+                            otherSources = other
+                            addonSources = addons
+                            sourcesLoading = false
+                        }
+                    },
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                PlayerStreamList(
+                    streamsUiState = sourceUiState,
+                    onStreamSelected = { stream ->
+                        val source = sourceByKey["${stream.addonId}|${stream.url}"]
+                        if (source != null) {
+                            play(source)
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        PlatformBackHandler(enabled = showSources) {
+            showSources = false
         }
     }
 
@@ -1415,9 +1852,103 @@ private fun PluginDetailContent(
             trailerError = null
             selectedTrailer = null
         },
-        onRetry = selectedTrailer?.let { trailer -> { openTrailer(trailer) } },
+        onRetry = selectedTrailer?.let { trailerItem -> { openTrailer(trailerItem) } },
     )
 }
+
+@Composable
+private fun SourcesGroupHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.nuvio.colors.textMuted,
+        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+    )
+}
+
+@Composable
+private fun SourceSheetRow(
+    source: PluginResolvedSource,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val shape = tokens.shapes.compactCard
+    val subtitle = listOfNotNull(
+        source.providerName.takeIf { !source.isCurrent },
+        source.result.quality?.takeIf { it.isNotBlank() },
+        source.result.size?.takeIf { it.isNotBlank() },
+        source.result.language?.takeIf { it.isNotBlank() },
+    ).joinToString("  ·  ")
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .clickable(onClick = onClick),
+        shape = shape,
+        color = tokens.colors.surfaceCard,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(tokens.colors.accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    tint = tokens.colors.accent,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = source.result.name ?: source.result.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = tokens.colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun PluginResolvedSource.toStreamItem(): StreamItem =
+    result.toBrowseStreamItem(
+        providerName = providerName,
+        providerId = providerAddonId,
+    )
+
+private fun StreamItem.toPluginResult(): PluginRuntimeResult = PluginRuntimeResult(
+    title = name ?: title ?: streamLabel,
+    name = name,
+    url = url.orEmpty(),
+    quality = null,
+    size = null,
+    language = null,
+    provider = addonName,
+    type = streamType,
+    headers = behaviorHints.proxyHeaders?.request,
+    infoHash = infoHash,
+    subtitles = externalSubtitles
+        .map { PluginSubtitleResult(it.url, it.language, it.name, it.headers) }
+        .ifEmpty { null },
+)
 
 @Composable
 private fun DetailInfoRow(label: String, value: String) {
@@ -1499,6 +2030,122 @@ private fun PluginCastRow(
                         color = tokens.colors.textMuted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PluginProductionRow(companies: List<MetaCompany>) {
+    val tokens = MaterialTheme.nuvio
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(count = companies.size) { index ->
+            val company = companies[index]
+            Surface(
+                shape = tokens.shapes.compactCard,
+                color = tokens.colors.surfaceCard,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(tokens.colors.surfaceElevated),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!company.logo.isNullOrBlank()) {
+                            AsyncImage(
+                                model = company.logo,
+                                contentDescription = company.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Text(
+                                text = company.name.take(2).uppercase(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = tokens.colors.textMuted,
+                            )
+                        }
+                    }
+                    Text(
+                        text = company.name,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = tokens.colors.textPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 150.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PluginTmdbRecommendationRow(
+    items: List<MetaPreview>,
+    onClick: (MetaPreview) -> Unit,
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        items(count = items.size) { index ->
+            val item = items[index]
+            Column(
+                modifier = Modifier
+                    .width(116.dp)
+                    .clickable { onClick(item) },
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(0.68f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.nuvio.colors.surface),
+                ) {
+                    if (!item.poster.isNullOrBlank()) {
+                        AsyncImage(
+                            model = item.poster,
+                            contentDescription = item.name,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Extension,
+                            contentDescription = null,
+                            tint = MaterialTheme.nuvio.colors.textMuted,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .size(24.dp),
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = item.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.nuvio.colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                item.releaseInfo?.takeIf { it.isNotBlank() }?.let { info ->
+                    Text(
+                        text = info,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.nuvio.colors.textMuted,
+                        maxLines = 1,
                     )
                 }
             }

@@ -60,6 +60,7 @@ internal object PluginBrowseRepository {
         season: Int?,
         episode: Int?,
         data: String,
+        timeoutMs: Long? = null,
     ): Result<List<com.nuvio.app.features.plugins.PluginRuntimeResult>> = runCatching {
         externalExtensionHost.loadStreams(
             scraperId = scraperId,
@@ -68,6 +69,7 @@ internal object PluginBrowseRepository {
             data = data,
             season = season,
             episode = episode,
+            timeoutMs = timeoutMs,
         )
     }
 }

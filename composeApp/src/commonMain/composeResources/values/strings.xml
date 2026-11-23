@@ -2358,6 +2358,13 @@
     <string name="plugins_browse_stream_unavailable">This stream cannot be played directly.</string>
     <string name="plugins_browse_person_not_found">Could not find this cast member in TMDB.</string>
     <string name="plugins_browse_trailer_unavailable">Could not play this trailer.</string>
+    <string name="plugins_sources_title">Sources</string>
+    <string name="plugins_sources_this_extension">This extension</string>
+    <string name="plugins_sources_other_extensions">Other extensions</string>
+    <string name="plugins_sources_addons">Add-ons</string>
+    <string name="plugins_sources_loading">Looking for sources…</string>
+    <string name="plugins_sources_empty">No sources found.</string>
+    <string name="plugins_sources_hold">Hold Play to choose a source</string>
     <string name="plugins_browse_select_episode">Select an episode.</string>
     <string name="plugins_browse_results_for">Results for “%1$s”</string>
     <string name="plugins_browse_titles_count">%1$d titles</string>
@@ -2370,6 +2377,9 @@
     <string name="plugins_browse_cast">Cast</string>
     <string name="plugins_browse_trailers">Trailers</string>
     <string name="plugins_browse_more_like_this">More like this</string>
+    <string name="plugins_production">Production</string>
+    <string name="plugins_save">Save</string>
+    <string name="plugins_saved">Saved</string>
     <string name="plugins_browse_genres">Genres</string>
     <string name="plugins_browse_runtime">Runtime</string>
     <string name="plugins_browse_status">Status</string>

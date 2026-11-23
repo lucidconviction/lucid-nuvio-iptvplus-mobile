@@ -123,6 +123,8 @@ fun WebAppsScreen(
     var showScripts by remember { mutableStateOf(false) }
     var showMedia by remember { mutableStateOf(false) }
     var showBrowserMenu by remember { mutableStateOf(false) }
+    var showOpenPages by remember { mutableStateOf(false) }
+    var openPages by remember { mutableStateOf<List<BrowserPageEntry>>(emptyList()) }
     var showShieldLog by remember { mutableStateOf(false) }
     var autoPlayDismissed by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -176,7 +178,13 @@ fun WebAppsScreen(
         }
     }
     LaunchedEffect(browserState.url) {
-        if (browserState.url.isNotBlank()) address = browserState.url
+        val url = browserState.url
+        if (url.isNotBlank()) {
+            address = url
+            val title = browserState.title.ifBlank { webAppFallbackName(url) }
+            openPages = (listOf(BrowserPageEntry(url, title)) + openPages.filterNot { it.url == url })
+                .take(12)
+        }
     }
 
     fun openUrl(raw: String) {
@@ -315,6 +323,13 @@ fun WebAppsScreen(
                 }
                 IconButton(onClick = { controller.reload() }) {
                     Icon(Icons.Filled.Refresh, contentDescription = "Reload", tint = tokens.colors.textPrimary)
+                }
+                IconButton(onClick = { showOpenPages = true }) {
+                    Icon(
+                        Icons.Filled.Public,
+                        contentDescription = "Open pages",
+                        tint = if (openPages.size > 1) tokens.colors.accent else tokens.colors.textPrimary,
+                    )
                 }
                 NuvioInputField(
                     value = address,
@@ -560,6 +575,102 @@ fun WebAppsScreen(
         PlatformBackHandler(enabled = true) {
             if (controller.exitFullscreen()) return@PlatformBackHandler
             if (controller.state.value.canGoBack) controller.goBack() else activeUrl = null
+        }
+    }
+
+    if (showOpenPages) {
+        DialogSurface(
+            onDismissRequest = { showOpenPages = false },
+            title = "Open pages",
+        ) {
+            if (openPages.isEmpty()) {
+                Text(
+                    text = "No open pages yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textMuted,
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                ) {
+                    items(openPages, key = { it.url }) { page ->
+                        val isCurrent = page.url == browserState.url
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(tokens.shapes.compactCard)
+                                .clickable {
+                                    showOpenPages = false
+                                    activeUrl = page.url
+                                    address = page.url
+                                    controller.load(page.url)
+                                },
+                            color = if (isCurrent) {
+                                tokens.colors.accent.copy(alpha = 0.14f)
+                            } else {
+                                tokens.colors.surfaceCard
+                            },
+                            shape = tokens.shapes.compactCard,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = NuvioTokens.Space.s12,
+                                    vertical = NuvioTokens.Space.s10,
+                                ),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s10),
+                            ) {
+                                Icon(
+                                    Icons.Filled.Public,
+                                    contentDescription = null,
+                                    tint = if (isCurrent) tokens.colors.accent else tokens.colors.textMuted,
+                                    modifier = Modifier.size(NuvioTokens.Icon.sm),
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = page.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = tokens.colors.textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = page.url,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = tokens.colors.textMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        openPages = openPages.filterNot { it.url == page.url }
+                                        if (page.url == browserState.url) {
+                                            val next = openPages.firstOrNull()
+                                            if (next != null) {
+                                                activeUrl = next.url
+                                                address = next.url
+                                                controller.load(next.url)
+                                            } else {
+                                                activeUrl = null
+                                                showOpenPages = false
+                                            }
+                                        }
+                                    },
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        contentDescription = "Close page",
+                                        tint = tokens.colors.textMuted,
+                                        modifier = Modifier.size(NuvioTokens.Icon.sm),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1588,3 +1699,8 @@ private fun UserscriptEditor(
 }
 
 private fun browserPageTitle(url: String): String = webAppFallbackName(url)
+
+private data class BrowserPageEntry(
+    val url: String,
+    val title: String,
+)
