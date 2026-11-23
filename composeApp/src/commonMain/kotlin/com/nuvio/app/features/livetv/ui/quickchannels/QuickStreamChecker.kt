@@ -5,9 +5,11 @@ import com.nuvio.app.features.livetv.data.StreamUrls
 import com.nuvio.app.features.livetv.data.XtreamClient
 import com.nuvio.app.features.livetv.model.LiveChannel
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.CancellationException
@@ -144,6 +146,62 @@ internal object QuickStreamChecker {
                 headers = headers,
             ),
         )
+    }
+
+    /**
+     * Rejects HLS manifests that are clearly not video (some IPTV providers publish
+     * picture-only placeholder playlists). Unknown or slow manifests are treated as usable
+     * so a working stream is never hidden because of a probe timeout.
+     */
+    suspend fun isHlsManifestUsable(url: String, headers: Map<String, String> = emptyMap()): Boolean {
+        if (!url.contains(".m3u8", ignoreCase = true)) return true
+        val manifest = fetchManifest(url, headers) ?: return true
+        if (!manifest.contains("#EXTM3U")) return false
+        if (manifestLooksBroken(manifest)) return false
+        val variantUrl = firstVariantUrl(manifest, url) ?: return true
+        val variant = fetchManifest(variantUrl, headers) ?: return true
+        return !manifestLooksBroken(variant)
+    }
+
+    private suspend fun fetchManifest(url: String, headers: Map<String, String>): String? =
+        withContext(Dispatchers.IO) {
+            withTimeoutOrNull(6_000L) {
+                runCatching {
+                    client.get(url) {
+                        headers.forEach { (key, value) ->
+                            if (key.isNotBlank() && value.isNotBlank()) header(key, value)
+                        }
+                        if (headers.keys.none { it.equals(HttpHeaders.UserAgent, ignoreCase = true) }) {
+                            header(HttpHeaders.UserAgent, USER_AGENT)
+                        }
+                    }.bodyAsText()
+                }.getOrNull()
+            }
+        }
+
+    private fun manifestLooksBroken(manifest: String): Boolean {
+        val lower = manifest.lowercase()
+        if (lower.contains(".png")) return true
+        return lower.contains("codecs=") && lower.contains("png")
+    }
+
+    private fun firstVariantUrl(manifest: String, baseUrl: String): String? {
+        val candidate = manifest.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { line -> line.isNotEmpty() && !line.startsWith("#") && line.contains(".m3u8", true) }
+            ?: return null
+        if (candidate.startsWith("http://", true) || candidate.startsWith("https://", true)) {
+            return candidate
+        }
+        val base = baseUrl.substringBefore('?')
+        return when {
+            candidate.startsWith("/") -> {
+                val scheme = base.substringBefore("://", "")
+                val host = base.substringAfter("://", "").substringBefore('/')
+                if (scheme.isBlank() || host.isBlank()) null else "$scheme://$host$candidate"
+            }
+            else -> base.substringBeforeLast('/') + "/" + candidate
+        }
     }
 
     private suspend fun checkChannel(

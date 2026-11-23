@@ -164,6 +164,7 @@ import com.nuvio.app.features.livetv.ui.multiview.LiveTvMultiViewScreen
 import com.nuvio.app.features.livetv.ui.multiview.MultiViewQuickNavBadge
 import com.nuvio.app.features.livetv.ui.multiview.MultiViewRepository
 import com.nuvio.app.features.livetv.ui.multiview.MultiViewStream
+import com.nuvio.app.features.livetv.ui.quickchannels.QuickStreamChecker
 import com.nuvio.app.features.livetv.ui.sports.SportsActions
 import com.nuvio.app.features.livetv.ui.sports.SportsGameScreen
 import com.nuvio.app.features.livetv.ui.sports.SportsLeagueScreen
@@ -1411,7 +1412,7 @@ internal fun MainAppContent(
         fun openLiveTvPluginItem(scraper: PluginScraper, item: PluginBrowseItem) {
             coroutineScope.launch {
                 NuvioToastController.show("Finding best source…")
-                val results: List<PluginRuntimeResult> = withTimeoutOrNull(70_000L) {
+                val results: List<PluginRuntimeResult> = withTimeoutOrNull(60_000L) {
                     runCatching {
                         PluginRepository.browseStreams(
                             scraperId = scraper.id,
@@ -1419,7 +1420,7 @@ internal fun MainAppContent(
                             url = item.url,
                             season = null,
                             episode = null,
-                            timeoutMs = 22_000L,
+                            timeoutMs = 45_000L,
                         )
                     }.getOrNull()
                 }.orEmpty()
@@ -1457,13 +1458,22 @@ internal fun MainAppContent(
                         compareByDescending<PluginRuntimeResult> { qualityRank(it.quality) }
                             .thenByDescending { it.seeders ?: 0 },
                     )
-                val stream = ranked.firstNotNullOfOrNull { result ->
+                val mapped = ranked.mapNotNull { result ->
                     val candidate = result.toBrowseStreamItem(
                         providerName = providerName,
                         providerId = "plugin:${scraper.id}",
                     )
                     candidate.takeIf { it.playableDirectUrl != null }
                 }
+                val stream = mapped.firstOrNull { candidate ->
+                    val url = candidate.playableDirectUrl ?: return@firstOrNull false
+                    runCatching {
+                        QuickStreamChecker.isHlsManifestUsable(
+                            url = url,
+                            headers = candidate.behaviorHints.proxyHeaders?.request.orEmpty(),
+                        )
+                    }.getOrDefault(true)
+                } ?: mapped.firstOrNull()
                 val directUrl = stream?.playableDirectUrl
                 if (stream == null || directUrl == null) {
                     NuvioToastController.show(getString(Res.string.plugins_browse_stream_unavailable))

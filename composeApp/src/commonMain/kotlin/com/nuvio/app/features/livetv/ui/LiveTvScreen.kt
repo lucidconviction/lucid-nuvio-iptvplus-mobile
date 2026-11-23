@@ -1233,8 +1233,6 @@ private fun CloudStreamLiveProviderSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    start = NuvioTokens.Space.s40,
-                    end = NuvioTokens.Space.s8,
                     top = NuvioTokens.Space.s4,
                     bottom = NuvioTokens.Space.s8,
                 ),
@@ -1269,12 +1267,20 @@ private fun CloudStreamLiveProviderSection(
                             color = tokens.textMuted,
                         )
                     } else {
-                        fallbackItems.take(80).forEach { item ->
-                            CloudStreamChannelRow(
-                                item = item,
-                                tokens = tokens,
-                                onClick = { onOpenItem(item) },
-                            )
+                        Column(
+                            modifier = Modifier.padding(
+                                start = NuvioTokens.Space.s48,
+                                end = NuvioTokens.Space.s12,
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                        ) {
+                            fallbackItems.take(80).forEach { item ->
+                                CloudStreamChannelRow(
+                                    item = item,
+                                    tokens = tokens,
+                                    onClick = { onOpenItem(item) },
+                                )
+                            }
                         }
                     }
                 }
@@ -1321,46 +1327,73 @@ private fun CloudStreamLayerRow(
         loading = false
     }
 
+    val arrow by animateFloatAsState(if (expanded) 180f else 0f)
     Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
+                .padding(start = NuvioTokens.Space.s24)
+                .clip(RoundedCornerShape(NuvioTokens.Radius.xl))
                 .background(tokens.surface)
                 .clickable { expanded = !expanded }
-                .padding(horizontal = NuvioTokens.Space.s10, vertical = NuvioTokens.Space.s10),
+                .padding(NuvioTokens.Space.s12),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
         ) {
-            Icon(
-                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = null,
-                tint = tokens.textMuted,
-                modifier = Modifier.size(NuvioTokens.Icon.sm),
-            )
-            Column(modifier = Modifier.weight(1f)) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
+                    .background(tokens.accent.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.LiveTv,
+                    contentDescription = null,
+                    tint = tokens.accent,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+            ) {
                 Text(
                     text = category.label,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleMedium,
                     color = tokens.textPrimary,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (attempted) {
-                    Text(
-                        text = stringResource(Res.string.livetv_cloudstream_channels, items.size),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = tokens.textMuted,
+                val channelsLabel = if (attempted) {
+                    stringResource(
+                        Res.string.livetv_cloudstream_channels,
+                        items.size,
                     )
+                } else {
+                    null
                 }
+                Text(
+                    text = listOfNotNull(provider.name, "live", channelsLabel).joinToString("  ·  "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tokens.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
+            Icon(
+                Icons.Filled.ExpandMore,
+                contentDescription = null,
+                tint = if (expanded) tokens.accent else tokens.textMuted,
+                modifier = Modifier.rotate(arrow),
+            )
         }
         when {
             !expanded -> Unit
             loading -> {
                 Row(
-                    modifier = Modifier.padding(start = NuvioTokens.Space.s20),
+                    modifier = Modifier.padding(start = NuvioTokens.Space.s48),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
                 ) {
@@ -1377,7 +1410,7 @@ private fun CloudStreamLayerRow(
                     text = errorMessage.orEmpty(),
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.danger,
-                    modifier = Modifier.padding(start = NuvioTokens.Space.s20),
+                    modifier = Modifier.padding(start = NuvioTokens.Space.s48),
                 )
             }
             items.isEmpty() -> {
@@ -1385,12 +1418,15 @@ private fun CloudStreamLayerRow(
                     text = stringResource(Res.string.livetv_cloudstream_no_layers),
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.textMuted,
-                    modifier = Modifier.padding(start = NuvioTokens.Space.s20),
+                    modifier = Modifier.padding(start = NuvioTokens.Space.s48),
                 )
             }
             else -> {
                 Column(
-                    modifier = Modifier.padding(start = NuvioTokens.Space.s10),
+                    modifier = Modifier.padding(
+                        start = NuvioTokens.Space.s48,
+                        end = NuvioTokens.Space.s12,
+                    ),
                     verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
                 ) {
                     items.take(80).forEach { item ->
