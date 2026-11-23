@@ -65,6 +65,10 @@ internal object UnsupportedExternalExtensionHost : ExternalExtensionHost {
         season: Int?,
         episode: Int?,
     ): List<PluginRuntimeResult> = emptyList()
+
+    override fun isExtensionLoaded(scraperId: String, profileId: Int): Boolean = false
+
+    override fun releaseExtension(scraperId: String, profileId: Int) = Unit
 }
 
 internal val platformExternalExtensionHost: ExternalExtensionHost = UnsupportedExternalExtensionHost

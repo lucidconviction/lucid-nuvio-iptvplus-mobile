@@ -76,6 +76,12 @@ internal interface ExternalExtensionHost {
         season: Int?,
         episode: Int?,
     ): List<PluginRuntimeResult>
+
+    /** Whether the extension package is currently held in the loader cache. */
+    fun isExtensionLoaded(scraperId: String, profileId: Int): Boolean
+
+    /** Evict a probe-loaded extension without deleting its package. */
+    fun releaseExtension(scraperId: String, profileId: Int)
 }
 
 /** Supplied by a platform source directory (androidFull / iosFull). */

@@ -284,6 +284,15 @@ class CloudStreamExtensionLoader(
     }
 
     @Synchronized
+    fun isLoaded(scraperId: String, profileId: Int): Boolean =
+        loaded.containsKey(key(profileId, scraperId))
+
+    @Synchronized
+    fun releaseExtension(scraperId: String, profileId: Int) {
+        evictCache(scraperId, profileId)
+    }
+
+    @Synchronized
     private fun evictCache(scraperId: String, profileId: Int) {
         preloaded.remove(key(profileId, scraperId))
         val extension = loaded.remove(key(profileId, scraperId)) ?: return

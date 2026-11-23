@@ -317,7 +317,7 @@ actual object PluginRepository {
                     )
                 }
                 persist()
-                detectCloudStreamSettings()
+                detectCloudStreamSettings(manifestUrl)
                 if (pushAfterRefresh) {
                     pushToServer()
                 }
@@ -994,12 +994,13 @@ actual object PluginRepository {
         page = page,
     )
 
-    actual suspend fun detectCloudStreamSettings() = settingsDetectionMutex.withLock {
+    actual suspend fun detectCloudStreamSettings(repositoryUrl: String?) = settingsDetectionMutex.withLock {
         initialize()
         val pending = _uiState.value.scrapers.filter { scraper ->
             scraper.type == PluginRepositoryType.EXTERNAL_DEX &&
                 scraper.manifestEnabled &&
-                !scraper.settingsChecked
+                !scraper.settingsChecked &&
+                (repositoryUrl == null || scraper.repositoryUrl == repositoryUrl)
         }
         if (pending.isEmpty()) return@withLock
         val profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
@@ -1009,12 +1010,17 @@ actual object PluginRepository {
                 pending.map { scraper ->
                     async {
                         semaphore.withPermit {
+                            val wasLoaded = externalExtensionHost.isExtensionLoaded(scraper.id, profileId)
                             val hasSettings = try {
                                 externalExtensionHost.hasSettings(scraper.id, profileId)
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (_: Throwable) {
                                 false
+                            } finally {
+                                if (!wasLoaded) {
+                                    externalExtensionHost.releaseExtension(scraper.id, profileId)
+                                }
                             }
                             _uiState.update { state ->
                                 state.copy(

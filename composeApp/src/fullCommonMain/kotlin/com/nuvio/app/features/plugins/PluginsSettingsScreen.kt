@@ -115,7 +115,6 @@ fun PluginsSettingsPageContent(
 ) {
     LaunchedEffect(Unit) {
         PluginRepository.initialize()
-        PluginRepository.detectCloudStreamSettings()
     }
 
     val uiState by PluginRepository.uiState.collectAsStateWithLifecycle()
@@ -180,7 +179,9 @@ fun PluginsSettingsPageContent(
                         installedTemplate.replace("%1\$s", result.repository.name)
                     }
                     if (result.repository.type == PluginRepositoryType.EXTERNAL_DEX) {
-                        coroutineScope.launch { PluginRepository.detectCloudStreamSettings() }
+                        coroutineScope.launch {
+                            PluginRepository.detectCloudStreamSettings(result.repository.manifestUrl)
+                        }
                     }
                 }
                 is AddPluginRepositoryResult.Error -> {
@@ -275,6 +276,9 @@ fun PluginsSettingsPageContent(
     ) {
         val page = repositoryPage
         if (page != null) {
+            LaunchedEffect(page.manifestUrl) {
+                PluginRepository.detectCloudStreamSettings(page.manifestUrl)
+            }
             NuvioScreenHeader(
                 title = page.name,
                 includeStatusBarPadding = false,

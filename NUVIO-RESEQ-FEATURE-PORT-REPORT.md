@@ -295,7 +295,7 @@ Extensions are no longer reachable only through Settings:
 - **Search → Discover** lists each enabled CloudStream provider as a catalog under its supported Movie/TV type. Selecting one loads the provider's latest/home feed into the normal poster grid, with Load more using the provider's next page.
 - Plugin cards on Discover are registered in an in-memory item index. Tapping a card opens `PluginBrowseRoute` with the selected item already loaded, so its streams are one step away.
 - New CloudStream repositories install all providers **disabled**. The user chooses which extensions to enable; repository refreshes preserve that choice.
-- Provider cards only show the settings gear when the extension actually registers a settings UI. The app probes unchecked extensions once in the background after install/refresh and persists the result.
+- Provider cards only show the settings gear when the extension actually registers a settings UI. Opening a repository page probes its unchecked extensions, persists the result, and releases probe-loaded packages; repository install/refresh does the same for that repo.
 - Disabled providers, the global plugin switch, and Play Store/App Store builds are respected.
 
 Current limits: global text search still queries addons only (extension search is available inside a provider's Browse page), and Home shows provider shortcuts rather than separate latest-video rows per extension.

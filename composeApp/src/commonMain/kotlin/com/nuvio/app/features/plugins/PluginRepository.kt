@@ -68,5 +68,5 @@ expect object PluginRepository {
     ): PluginLatestPage?
 
     /** Loads unchecked CloudStream extensions once to discover whether they expose settings. */
-    suspend fun detectCloudStreamSettings()
+    suspend fun detectCloudStreamSettings(repositoryUrl: String? = null)
 }

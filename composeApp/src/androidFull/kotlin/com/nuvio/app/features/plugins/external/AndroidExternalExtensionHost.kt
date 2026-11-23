@@ -142,6 +142,13 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         runner()?.loadStreams(scraperId, profileId, apiIndex, data, season, episode).orEmpty()
     }
 
+    override fun isExtensionLoaded(scraperId: String, profileId: Int): Boolean =
+        loader()?.isLoaded(scraperId, profileId) == true
+
+    override fun releaseExtension(scraperId: String, profileId: Int) {
+        loader()?.releaseExtension(scraperId, profileId)
+    }
+
     /** Called from [ExtensionSettingsActivity] off the main thread. */
     fun settingsCallback(scraperId: String, profileId: Int): ((Context) -> Unit)? =
         loader()?.settingsCallback(scraperId, profileId)

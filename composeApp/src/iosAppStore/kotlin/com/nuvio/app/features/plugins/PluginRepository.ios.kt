@@ -73,5 +73,5 @@ actual object PluginRepository {
         page: Int,
     ): PluginLatestPage? = null
 
-    actual suspend fun detectCloudStreamSettings() = Unit
+    actual suspend fun detectCloudStreamSettings(repositoryUrl: String?) = Unit
 }
