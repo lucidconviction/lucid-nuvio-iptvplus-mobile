@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.LiveStreamLoadResponse
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.MainPageData
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.MovieLoadResponse
 import com.lagradost.cloudstream3.MovieSearchResponse
@@ -42,6 +43,17 @@ private const val MIN_TITLE_SIMILARITY = 0.5
  * loadLinks() -> [PluginRuntimeResult]. `TmdbProvider` packages get the JSON
  * payload they expect first, with a TMDB URL as fallback.
  */
+/**
+ * Categories a provider actually offers. Some extensions declare tabs without setting
+ * `hasMainPage`, so honour real tabs instead of treating the provider as search-only.
+ */
+internal fun cloudStreamBrowseTabs(api: MainAPI): List<MainPageData> {
+    val tabs = api.mainPage.orEmpty()
+    val named = tabs.filter { it.name.isNotBlank() || it.data.isNotBlank() }
+    if (named.isNotEmpty()) return named
+    return if (api.hasMainPage) tabs else emptyList()
+}
+
 internal class CloudStreamExtensionRunner(
     private val loader: CloudStreamExtensionLoader,
 ) {
@@ -141,16 +153,18 @@ internal class CloudStreamExtensionRunner(
         val apis = loader.loadExtension(scraperId, profileId)
         if (apis.isEmpty()) return null
 
+        val tabsByApi = apis.map { cloudStreamBrowseTabs(it) }
         val categories = buildList {
             apis.forEachIndexed { index, api ->
-                if (!api.hasMainPage) return@forEachIndexed
-                api.mainPage.orEmpty().forEach { tab ->
+                tabsByApi[index].forEach { tab ->
+                    val label = tab.name.ifBlank { tab.data }
+                    if (label.isBlank()) return@forEach
                     add(
                         PluginBrowseCategory(
                             apiIndex = index,
                             apiName = api.name,
-                            tabName = tab.name,
-                            label = if (apis.size > 1) "${api.name} · ${tab.name}" else tab.name,
+                            tabName = label,
+                            label = if (apis.size > 1) "${api.name} · $label" else label,
                         ),
                     )
                 }
@@ -159,17 +173,27 @@ internal class CloudStreamExtensionRunner(
 
         val targets = if (category != null) {
             val api = apis.getOrNull(category.apiIndex) ?: return null
-            val tab = api.mainPage.orEmpty().firstOrNull { it.name == category.tabName } ?: return null
+            val tab = tabsByApi.getOrNull(category.apiIndex).orEmpty()
+                .firstOrNull { it.name == category.tabName || (it.name.isBlank() && it.data == category.tabName) }
+                ?: return null
             listOf(Triple(category.apiIndex, api, tab))
         } else {
             apis.mapIndexedNotNull { index, api ->
-                if (!api.hasMainPage) return@mapIndexedNotNull null
-                val tabs = api.mainPage.orEmpty()
-                val tab = tabs.firstOrNull { it.name.contains("latest", ignoreCase = true) }
-                    ?: tabs.firstOrNull()
-                    ?: return@mapIndexedNotNull null
+                val tabs = tabsByApi[index]
+                val tab = tabs.firstOrNull {
+                    it.name.contains("latest", ignoreCase = true) ||
+                        it.data.contains("latest", ignoreCase = true)
+                } ?: tabs.firstOrNull() ?: return@mapIndexedNotNull null
                 Triple(index, api, tab)
             }
+        }
+        if (categories.isNotEmpty() || targets.isNotEmpty()) {
+            Log.d(
+                TAG,
+                "browse tabs: " + apis.mapIndexed { index, api ->
+                    "${api.name}(has=${api.hasMainPage}, tabs=${tabsByApi[index].size})"
+                }.joinToString(),
+            )
         }
 
         val homes = coroutineScope {

@@ -2340,13 +2340,14 @@
     <string name="plugins_badge_enabled_providers">%1$d enabled</string>
     <string name="plugins_test_error_title">Error</string>
     <string name="plugins_browse_action">Browse</string>
-    <string name="plugins_browse_provider_hint">Latest &amp; search</string>
+    <string name="plugins_browse_provider_hint">Catalog &amp; search</string>
     <string name="plugins_browse_search_placeholder">Search this provider</string>
     <string name="plugins_browse_search">Search</string>
     <string name="plugins_browse_latest">Latest</string>
     <string name="plugins_browse_load_more">Load more</string>
-    <string name="plugins_browse_latest_empty">This provider does not provide a latest feed. Use search.</string>
-    <string name="plugins_browse_latest_failed">Could not load the latest videos.</string>
+    <string name="plugins_browse_no_catalog_title">Nothing to browse</string>
+    <string name="plugins_browse_latest_empty">No catalog categories were returned. Use search.</string>
+    <string name="plugins_browse_latest_failed">Could not load this provider's catalog.</string>
     <string name="plugins_browse_no_results">No results.</string>
     <string name="plugins_browse_search_failed">Search failed.</string>
     <string name="plugins_browse_detail_failed">Could not load this title.</string>

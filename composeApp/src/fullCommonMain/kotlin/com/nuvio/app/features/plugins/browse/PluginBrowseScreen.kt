@@ -166,6 +166,7 @@ import nuvio.composeapp.generated.resources.plugins_browse_episodes_count
 import nuvio.composeapp.generated.resources.plugins_browse_extension_label
 import nuvio.composeapp.generated.resources.plugins_browse_latest
 import nuvio.composeapp.generated.resources.plugins_browse_latest_empty
+import nuvio.composeapp.generated.resources.plugins_browse_no_catalog_title
 import nuvio.composeapp.generated.resources.plugins_browse_latest_failed
 import nuvio.composeapp.generated.resources.plugins_browse_live
 import nuvio.composeapp.generated.resources.plugins_browse_movie
@@ -352,6 +353,7 @@ internal fun PluginBrowseScreen(
             latestHasNext = false
         }
         scope.launch {
+            var fallbackCategory: PluginBrowseCategory? = null
             PluginBrowseRepository.latest(scraperId, page, category)
                 .onSuccess { feed ->
                     latestAttempted = true
@@ -373,7 +375,15 @@ internal fun PluginBrowseScreen(
                         }
                         latestHasNext = feed.hasNext
                         latestPage = page
-                        if (latestItems.isEmpty()) latestMessage = latestEmptyText
+                        if (reset && category == null && feed.items.isEmpty()) {
+                            // "Latest" is optional: open the first real catalog category instead.
+                            fallbackCategory = feed.categories.firstOrNull {
+                                !it.tabName.equals("Latest", ignoreCase = true)
+                            }
+                        }
+                        if (latestItems.isEmpty() && fallbackCategory == null) {
+                            latestMessage = latestEmptyText
+                        }
                     }
                 }
                 .onFailure { error ->
@@ -381,6 +391,12 @@ internal fun PluginBrowseScreen(
                     latestMessage = error.message ?: latestFailedText
                 }
             loadingLatest = false
+            fallbackCategory?.let { fallback ->
+                selectedCategoryKey = fallback.key
+                latestAttempted = true
+                latestMessage = null
+                loadLatest(reset = true, category = fallback)
+            }
         }
     }
 
@@ -473,7 +489,7 @@ internal fun PluginBrowseScreen(
     val emptyTitle = if (mode == PluginBrowseMode.Search) {
         stringResource(Res.string.plugins_browse_search)
     } else {
-        stringResource(Res.string.plugins_browse_latest_empty)
+        stringResource(Res.string.plugins_browse_no_catalog_title)
     }
     val isEmpty = displayItems.isEmpty() && !searching && !loadingLatest
     val isBusyFirstLoad = displayItems.isEmpty() && (searching || loadingLatest)
