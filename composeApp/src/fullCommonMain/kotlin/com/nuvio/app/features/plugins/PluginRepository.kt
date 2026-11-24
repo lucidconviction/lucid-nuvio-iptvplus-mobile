@@ -100,20 +100,24 @@ actual object PluginRepository {
     private val persistenceRevision = atomic(0L)
     private val persistenceLock = SynchronizedObject()
     /** A synced profile can hold many CloudStream repositories; don't install them all at once. */
-    private val externalInstallLimiter = Semaphore(4)
+    private val externalInstallLimiter = Semaphore(2)
+    /** One repository refresh at a time per pair; large synced profiles install too much at once. */
+    private val repositoryRefreshLimiter = Semaphore(2)
     private val persistedRevisionByProfile = mutableMapOf<Int, Long>()
 
-    actual fun initialize() {
+    actual fun initialize(refreshDue: Boolean) {
         val effectiveProfileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
         val shouldRefreshStoredRepos = !initialized || currentProfileId != effectiveProfileId
         ensureStateLoadedForProfile(effectiveProfileId)
-        if (!shouldRefreshStoredRepos) return
+        if (!shouldRefreshStoredRepos || !refreshDue) return
 
         val state = _uiState.value
         val nowEpochMs = currentEpochMillis()
-        state.repositories.filter { repo ->
+        // One repository per launch: a large synced profile must never install everything at
+        // once. The Plugins page has a manual refresh for the rest.
+        state.repositories.firstOrNull { repo ->
             shouldRefreshRepository(repo, state.scrapers, nowEpochMs)
-        }.forEach { repo ->
+        }?.let { repo ->
             refreshRepositoryInternal(repo.manifestUrl, pushAfterRefresh = false, ensureInitialized = false)
         }
     }
@@ -282,6 +286,7 @@ actual object PluginRepository {
         markRefreshing(manifestUrl)
         var refreshJob: Job? = null
         refreshJob = scope.launch {
+            repositoryRefreshLimiter.withPermit {
             try {
                 val result = try {
                     val previous = _uiState.value.scrapers.associateBy { it.id }
@@ -329,6 +334,7 @@ actual object PluginRepository {
                 if (activeRefreshJobs[manifestUrl] === refreshJob) {
                     activeRefreshJobs.remove(manifestUrl)
                 }
+            }
             }
         }
         activeRefreshJobs[manifestUrl] = refreshJob

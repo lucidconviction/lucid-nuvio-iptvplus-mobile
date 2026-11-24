@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 expect object PluginRepository {
     val uiState: StateFlow<PluginsUiState>
 
-    fun initialize()
+    fun initialize(refreshDue: Boolean = false)
 
     fun onProfileChanged(profileId: Int)
 

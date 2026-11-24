@@ -124,6 +124,8 @@ internal fun LiveTvPlayerOverlay(
     enabled: Boolean,
     /** Swipe up/down changes channels only while a live channel is playing. */
     swipeEnabled: Boolean = enabled,
+    /** Whether the stream is actually playing; auto-next waits while paused. */
+    playing: Boolean = true,
     onPanelOpened: () -> Unit,
     onSwitch: (LiveChannel, nowTitle: String?) -> Unit,
     /** Long-pressing a Quick Channels result sends that stream to Multi-view. */
@@ -142,7 +144,7 @@ internal fun LiveTvPlayerOverlay(
     LaunchedEffect(Unit) { runCatching { AddonRepository.initialize() } }
     val addonUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val liveAddons = addonUiState.addons.liveTvAddons()
-    LaunchedEffect(Unit) { runCatching { PluginRepository.initialize() } }
+    LaunchedEffect(Unit) { runCatching { PluginRepository.initialize(refreshDue = false) } }
     val pluginUiState by PluginRepository.uiState.collectAsStateWithLifecycle()
     val livePluginProviders = remember(pluginUiState.pluginsEnabled, pluginUiState.scrapers) {
         if (!pluginUiState.pluginsEnabled) {
@@ -189,6 +191,28 @@ internal fun LiveTvPlayerOverlay(
         ?: sections.firstOrNull()
 
     fun nowTitle(c: LiveChannel): String? = programs[c.key]?.firstOrNull { it.startMs <= now && it.stopMs > now }?.title
+
+    val currentProgramEndMs = currentKey?.let { key ->
+        programs[key]?.firstOrNull { it.startMs <= now && it.stopMs > now }?.stopMs
+    }
+    val nextUpChannel = remember(section, currentKey) {
+        val channels = section?.channels.orEmpty()
+        val index = channels.indexOfFirst { it.key == currentKey }
+        if (index >= 0) channels.getOrNull(index + 1) else null
+    }
+    val nextUpRemainingMs = currentProgramEndMs?.minus(now)
+    val showNextUp = nextUpChannel != null && nextUpRemainingMs != null && nextUpRemainingMs in 1L..30_000L
+
+    // A live channel's current programme ending moves the tuner to the next channel in the list.
+    LaunchedEffect(currentKey, nextUpChannel?.key, currentProgramEndMs, enabled, panelOpen, playing) {
+        if (!enabled || panelOpen || !playing) return@LaunchedEffect
+        val end = currentProgramEndMs ?: return@LaunchedEffect
+        val target = nextUpChannel ?: return@LaunchedEffect
+        val key = currentKey ?: return@LaunchedEffect
+        val wait = end - LiveTvClock.nowMs()
+        if (wait > 0) delay(wait)
+        if (currentKey == key) onSwitch(target, nowTitle(target))
+    }
 
     val displayChannels by LiveTvRepository.displayChannels.collectAsStateWithLifecycle()
     val sportsMatches by SportsRepository.matches.collectAsStateWithLifecycle()
@@ -253,6 +277,21 @@ internal fun LiveTvPlayerOverlay(
             modifier = Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(NuvioTokens.Space.s16),
         ) {
             banner?.let { c -> ChannelBanner(c, nowTitle(c)) }
+        }
+
+        AnimatedVisibility(
+            visible = showNextUp && !panelOpen && enabled && playing,
+            enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .safeDrawingPadding()
+                .padding(end = NuvioTokens.Space.s16, bottom = 92.dp),
+        ) {
+            nextUpChannel?.let { channel ->
+                NextUpPreview(channel, nowTitle(channel)) {
+                    onSwitch(channel, nowTitle(channel))
+                }
+            }
         }
 
         AnimatedVisibility(
@@ -466,6 +505,79 @@ internal fun LiveTvPlayerOverlay(
                     }
                 }
                 }
+            }
+        }
+    }
+}
+
+/** Small "Next up" preview of the channel the tuner will move to when this programme ends. */
+@Composable
+private fun NextUpPreview(
+    channel: LiveChannel,
+    nowTitle: String?,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val shape = RoundedCornerShape(NuvioTokens.Radius.lg)
+    Row(
+        modifier = Modifier
+            .width(250.dp)
+            .clip(shape)
+            .background(Color.Black.copy(alpha = 0.82f))
+            .border(1.dp, Color.White.copy(alpha = 0.18f), shape)
+            .clickable(onClick = onClick)
+            .padding(NuvioTokens.Space.s8),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(64.dp)
+                .height(44.dp)
+                .clip(RoundedCornerShape(NuvioTokens.Radius.sm))
+                .background(tokens.colors.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            val art = channel.thumbnail?.takeIf { it.isNotBlank() } ?: channel.logo
+            if (art != null) {
+                AsyncImage(
+                    model = art,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    Icons.Filled.LiveTv,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(NuvioTokens.Icon.sm),
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                "NEXT UP",
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.accent,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                channel.name,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!nowTitle.isNullOrBlank()) {
+                Text(
+                    nowTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.65f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

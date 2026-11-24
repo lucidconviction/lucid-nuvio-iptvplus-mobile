@@ -138,7 +138,7 @@ fun HomeScreen(
 ) {
     LaunchedEffect(Unit) {
         AddonRepository.initialize()
-        PluginRepository.initialize()
+        PluginRepository.initialize(refreshDue = true)
         CollectionRepository.initialize()
         ContinueWatchingPreferencesRepository.ensureLoaded()
         WatchedRepository.ensureLoaded()

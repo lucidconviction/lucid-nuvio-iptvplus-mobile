@@ -14,7 +14,7 @@ actual object PluginRepository {
 
     actual val uiState: StateFlow<PluginsUiState> = disabledState.asStateFlow()
 
-    actual fun initialize() = Unit
+    actual fun initialize(refreshDue: Boolean) = Unit
 
     actual fun onProfileChanged(profileId: Int) = Unit
 

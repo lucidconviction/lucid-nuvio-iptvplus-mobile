@@ -499,6 +499,13 @@ fun PluginsSettingsPageContent(
                 enabled = !isAdding,
                 onClick = { openRepoIndex() },
             )
+            Spacer(modifier = Modifier.height(4.dp))
+            TextButton(
+                enabled = !isAdding && sortedRepos.isNotEmpty(),
+                onClick = { PluginRepository.refreshAll() },
+            ) {
+                Text("Refresh all repositories")
+            }
             message?.let { text ->
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(

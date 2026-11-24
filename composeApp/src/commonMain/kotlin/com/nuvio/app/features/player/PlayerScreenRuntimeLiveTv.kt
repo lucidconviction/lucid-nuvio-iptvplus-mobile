@@ -225,6 +225,7 @@ internal fun PlayerScreenRuntime.RenderLiveTvChannels() {
         enabled = !isInPip && !playerControlsLocked,
         // Only a live channel changes on a swipe; On Demand and recordings keep their gestures.
         swipeEnabled = isLiveTv && !isInPip && !playerControlsLocked,
+        playing = playbackSnapshot.isPlaying,
         onPanelOpened = { controlsVisible = false },
         onSwitch = { channel, nowTitle -> switchLiveChannel(channel, nowTitle) },
         onAddToMultiView = { channel -> args.onAddChannelToMultiView?.invoke(channel) },
