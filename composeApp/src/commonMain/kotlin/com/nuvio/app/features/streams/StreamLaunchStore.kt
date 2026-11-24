@@ -21,6 +21,8 @@ data class StreamLaunch(
     val startFromBeginning: Boolean = false,
     /** The add-on entry point wants the first working stream played without showing the picker. */
     val forceAutoPlay: Boolean = false,
+    /** Opened from the Live TV section; the player keeps the channel panel. */
+    val fromLiveTvSection: Boolean = false,
 )
 
 object StreamLaunchStore {

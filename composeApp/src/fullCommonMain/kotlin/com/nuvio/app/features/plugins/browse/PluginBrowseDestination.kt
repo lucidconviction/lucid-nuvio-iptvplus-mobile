@@ -124,6 +124,7 @@ internal actual fun PluginBrowseDestination(
                     streamSubtitle = stream.streamSubtitle,
                     providerName = providerName,
                     providerAddonId = providerAddonId,
+                    fromLiveTvSection = route.fromLiveTvSection,
                     contentType = contentType,
                     videoId = contentId,
                     parentMetaId = contentId,

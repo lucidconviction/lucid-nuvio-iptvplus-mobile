@@ -21,7 +21,7 @@ internal val PlayerScreenRuntime.isLiveTv: Boolean
 
 /** Whether what's playing came from the Live TV section: live, catch-up, a recording or On Demand. */
 internal val PlayerScreenRuntime.isLiveTvContent: Boolean
-    get() = LiveTvPlayback.ownsContent(activeProviderAddonId)
+    get() = activeFromLiveTvSection || LiveTvPlayback.ownsContent(activeProviderAddonId)
 
 /** The title for the controls: the channel now on screen, which changes as you switch channels. */
 internal fun PlayerScreenRuntime.liveTitleOr(fallback: String): String =
@@ -97,6 +97,7 @@ internal fun PlayerScreenRuntime.switchLiveChannel(channel: LiveChannel, nowTitl
     addonCatalogPlayJob = null
     virtualSwitchJob?.cancel()
     virtualSwitchJob = null
+    activeFromLiveTvSection = true
     val req = LiveTvPlayback.switchTo(channel)
     flushWatchProgress()
     credentialRefreshJob?.cancel()
@@ -230,6 +231,9 @@ internal fun PlayerScreenRuntime.RenderLiveTvChannels() {
         onOpenAddonCatalog = { manifestUrl, catalog -> args.onOpenAddonCatalog?.invoke(manifestUrl, catalog) },
         onPlayAddonCatalogItem = { item, addon, onFinished ->
             playAddonCatalogItem(item, addon, onFinished)
+        },
+        onPlayPluginCatalogItem = { scraper, item, onFinished ->
+            playPluginCatalogItem(scraper, item, onFinished)
         },
     )
 }

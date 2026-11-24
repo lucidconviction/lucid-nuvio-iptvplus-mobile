@@ -113,6 +113,8 @@ data class PluginBrowseRoute(
     val initialPoster: String? = null,
     val initialType: String? = null,
     val initialYear: Int? = null,
+    /** Opened from the Live TV tab; the player keeps the channel panel. */
+    val fromLiveTvSection: Boolean = false,
     override val title: String = scraperName,
 ) : SettingsDestinationRoute
 

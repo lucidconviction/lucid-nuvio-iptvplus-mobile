@@ -91,6 +91,11 @@ import com.nuvio.app.features.livetv.sports.SportsRepository
 import com.nuvio.app.features.livetv.ui.quickchannels.QuickChannel
 import com.nuvio.app.features.livetv.ui.quickchannels.QuickChannelList
 import com.nuvio.app.features.livetv.ui.quickchannels.rememberQuickChannelMatchState
+import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.PluginRepositoryType
+import com.nuvio.app.features.plugins.PluginScraper
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
 import kotlinx.coroutines.delay
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_close
@@ -126,6 +131,8 @@ internal fun LiveTvPlayerOverlay(
     onOpenAddonCatalog: (manifestUrl: String, catalog: AddonCatalog) -> Unit = { _, _ -> },
     /** Plays an add-on catalog item in place; [onFinished] gets true when playback switched. */
     onPlayAddonCatalogItem: (MetaPreview, ManagedAddon, (Boolean) -> Unit) -> Unit = { _, _, onFinished -> onFinished(false) },
+    /** Plays a CloudStream catalog item in place; [onFinished] gets true when playback switched. */
+    onPlayPluginCatalogItem: (PluginScraper, PluginBrowseItem, (Boolean) -> Unit) -> Unit = { _, _, onFinished -> onFinished(false) },
 ) {
     val tokens = MaterialTheme.nuvio
     val state by remember { LiveTvRepository.ensureLoaded(); LiveTvViewState.list }.collectAsStateWithLifecycle()
@@ -135,6 +142,22 @@ internal fun LiveTvPlayerOverlay(
     LaunchedEffect(Unit) { runCatching { AddonRepository.initialize() } }
     val addonUiState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val liveAddons = addonUiState.addons.liveTvAddons()
+    LaunchedEffect(Unit) { runCatching { PluginRepository.initialize() } }
+    val pluginUiState by PluginRepository.uiState.collectAsStateWithLifecycle()
+    val livePluginProviders = remember(pluginUiState.pluginsEnabled, pluginUiState.scrapers) {
+        if (!pluginUiState.pluginsEnabled) {
+            emptyList()
+        } else {
+            pluginUiState.scrapers
+                .filter { scraper ->
+                    scraper.enabled &&
+                        scraper.manifestEnabled &&
+                        scraper.showInLiveTv &&
+                        scraper.type == PluginRepositoryType.EXTERNAL_DEX
+                }
+                .sortedBy { it.name.lowercase() }
+        }
+    }
     val now by produceState(LiveTvClock.nowMs()) {
         while (true) { value = LiveTvClock.nowMs(); delay(30_000) }
     }
@@ -147,6 +170,9 @@ internal fun LiveTvPlayerOverlay(
 
     var panelOpen by rememberSaveable { mutableStateOf(false) }
     var backupsView by rememberSaveable { mutableStateOf(false) }
+    var pluginTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var pluginCategoryKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var pluginOpeningKey by remember { mutableStateOf<String?>(null) }
     var groupId by rememberSaveable { mutableStateOf<String?>(null) }
     var showGuide by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var quickChannels by rememberSaveable { mutableStateOf(false) }
@@ -242,20 +268,18 @@ internal fun LiveTvPlayerOverlay(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
             ) {
-                if (!backups.isEmpty) {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(NuvioTokens.Radius.full))
-                            .background(Color.Black.copy(alpha = 0.55f))
-                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(NuvioTokens.Radius.full))
-                            .clickable { backupsView = true; panelOpen = true; onPanelOpened() }
-                            .padding(horizontal = NuvioTokens.Space.s14, vertical = NuvioTokens.Space.s10),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
-                    ) {
-                        Icon(Icons.Filled.SwapHoriz, contentDescription = null, tint = Color.White, modifier = Modifier.size(NuvioTokens.Icon.md))
-                        Text("Backups", style = MaterialTheme.typography.labelLarge, color = Color.White)
-                    }
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(NuvioTokens.Radius.full))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(NuvioTokens.Radius.full))
+                        .clickable { backupsView = true; panelOpen = true; onPanelOpened() }
+                        .padding(horizontal = NuvioTokens.Space.s14, vertical = NuvioTokens.Space.s10),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                ) {
+                    Icon(Icons.Filled.SwapHoriz, contentDescription = null, tint = Color.White, modifier = Modifier.size(NuvioTokens.Icon.md))
+                    Text("Backups", style = MaterialTheme.typography.labelLarge, color = Color.White)
                 }
                 Row(
                     modifier = Modifier
@@ -326,33 +350,41 @@ internal fun LiveTvPlayerOverlay(
                         horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
                     ) {
                         val allIndex = sections.indexOfFirst { it.group.id == ChannelGroup.ALL }
-                        if (allIndex < 0) {
-                            items(sections, key = { it.group.id }) { s ->
-                                PanelPill(s.group.title, selected = addonTarget == null && s.group.id == section?.group?.id) { addonTarget = null; groupId = s.group.id }
+                        val beforeAll = if (allIndex >= 0) sections.take(allIndex + 1) else emptyList()
+                        val afterAll = if (allIndex >= 0) sections.drop(allIndex + 1) else sections
+                        items(beforeAll, key = { it.group.id }) { groupSection ->
+                            PanelPill(
+                                groupSection.group.title,
+                                selected = addonTarget == null && pluginTarget == null &&
+                                    groupSection.group.id == section?.group?.id,
+                            ) { addonTarget = null; pluginTarget = null; groupId = groupSection.group.id }
+                        }
+                        items(livePluginProviders, key = { "plugin:" + it.id }) { provider ->
+                            PanelPill(
+                                provider.name,
+                                selected = pluginTarget == provider.id,
+                            ) {
+                                addonTarget = null
+                                pluginTarget = provider.id
+                                pluginCategoryKey = null
+                                pluginOpeningKey = null
                             }
-                            items(liveAddons, key = { "addon:" + it.manifestUrl }) { addon ->
-                                addon.manifest?.catalogs?.takeIf { it.isNotEmpty() }?.let {
-                                    PanelPill(addon.displayTitle, selected = addonTarget == addon.manifestUrl) {
-                                        addonTarget = addon.manifestUrl
-                                        addonCatalogId = null
-                                    }
+                        }
+                        items(liveAddons, key = { "addon:" + it.manifestUrl }) { addon ->
+                            addon.manifest?.catalogs?.takeIf { it.isNotEmpty() }?.let {
+                                PanelPill(addon.displayTitle, selected = addonTarget == addon.manifestUrl) {
+                                    pluginTarget = null
+                                    addonTarget = addon.manifestUrl
+                                    addonCatalogId = null
                                 }
                             }
-                        } else {
-                            items(sections.take(allIndex + 1), key = { it.group.id }) { s ->
-                                PanelPill(s.group.title, selected = addonTarget == null && s.group.id == section?.group?.id) { addonTarget = null; groupId = s.group.id }
-                            }
-                            items(liveAddons, key = { "addon:" + it.manifestUrl }) { addon ->
-                                addon.manifest?.catalogs?.takeIf { it.isNotEmpty() }?.let {
-                                    PanelPill(addon.displayTitle, selected = addonTarget == addon.manifestUrl) {
-                                        addonTarget = addon.manifestUrl
-                                        addonCatalogId = null
-                                    }
-                                }
-                            }
-                            items(sections.drop(allIndex + 1), key = { it.group.id }) { s ->
-                                PanelPill(s.group.title, selected = addonTarget == null && s.group.id == section?.group?.id) { addonTarget = null; groupId = s.group.id }
-                            }
+                        }
+                        items(afterAll, key = { it.group.id }) { groupSection ->
+                            PanelPill(
+                                groupSection.group.title,
+                                selected = addonTarget == null && pluginTarget == null &&
+                                    groupSection.group.id == section?.group?.id,
+                            ) { addonTarget = null; pluginTarget = null; groupId = groupSection.group.id }
                         }
                     }
                     Box(
@@ -364,7 +396,29 @@ internal fun LiveTvPlayerOverlay(
                     }
                 }
                 val selectedAddon = addonTarget?.let { url -> liveAddons.firstOrNull { it.manifestUrl == url } }
-                if (selectedAddon != null) {
+                val selectedPlugin = pluginTarget?.let { id -> livePluginProviders.firstOrNull { it.id == id } }
+                if (selectedPlugin != null) {
+                    PlayerPluginCatalogBrowser(
+                        scraper = selectedPlugin,
+                        selectedCategoryKey = pluginCategoryKey,
+                        openingItemKey = pluginOpeningKey,
+                        onSelectCategory = { pluginCategoryKey = it },
+                        onPlayItem = { item ->
+                            if (pluginOpeningKey == null) {
+                                pluginOpeningKey = "${item.apiIndex}:${item.url}"
+                                onPlayPluginCatalogItem(selectedPlugin, item) { started ->
+                                    pluginOpeningKey = null
+                                    if (started) panelOpen = false
+                                }
+                            }
+                        },
+                        onBack = {
+                            pluginTarget = null
+                            pluginCategoryKey = null
+                            pluginOpeningKey = null
+                        },
+                    )
+                } else if (selectedAddon != null) {
                     PlayerAddonCatalogBrowser(
                         addon = selectedAddon,
                         selectedCatalogId = addonCatalogId,
@@ -472,6 +526,16 @@ private fun BackupsPanel(
         ),
         verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
     ) {
+        if (backups.isEmpty) {
+            item(key = "h:none") {
+                Text(
+                    "No backups found for this stream.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.nuvio.colors.textMuted,
+                    modifier = Modifier.padding(NuvioTokens.Space.s10),
+                )
+            }
+        }
         if (backups.gameChannels.isNotEmpty()) {
             item(key = "h:game") {
                 BackupsHeading("Also showing " + (backups.gameTitle ?: "this game"))
@@ -887,6 +951,215 @@ private fun PlayerQuickChannelsPanel(
             }
         } else if (selectedQc != null && liveChannels.isNotEmpty()) {
             Text(stringResource(Res.string.livetv_no_matching_channels), style = MaterialTheme.typography.bodySmall, color = c.textMuted, modifier = Modifier.padding(NuvioTokens.Space.s8))
+        }
+    }
+}
+
+/**
+ * The CloudStream browser shown inside the player's channel panel. Categories and thumbnails
+ * come from the extension; picking an item switches playback without leaving the player.
+ */
+@Composable
+private fun PlayerPluginCatalogBrowser(
+    scraper: PluginScraper,
+    selectedCategoryKey: String?,
+    openingItemKey: String?,
+    onSelectCategory: (String?) -> Unit,
+    onPlayItem: (PluginBrowseItem) -> Unit,
+    onBack: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val c = tokens.colors
+    var categories by remember(scraper.id) { mutableStateOf<List<PluginBrowseCategory>>(emptyList()) }
+    var items by remember(scraper.id, selectedCategoryKey) { mutableStateOf<List<PluginBrowseItem>>(emptyList()) }
+    var loading by remember(scraper.id, selectedCategoryKey) { mutableStateOf(true) }
+    var message by remember(scraper.id, selectedCategoryKey) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(scraper.id, selectedCategoryKey) {
+        loading = true
+        message = null
+        items = emptyList()
+        val category = categories.firstOrNull { it.key == selectedCategoryKey }
+        runCatching { PluginRepository.browseLatest(scraper.id, 1, category) }
+            .onSuccess { feed ->
+                if (feed == null) {
+                    message = "This extension has no catalog."
+                } else {
+                    if (feed.categories.isNotEmpty()) categories = feed.categories
+                    items = feed.items
+                    if (category == null && feed.items.isEmpty()) {
+                        val next = feed.categories.firstOrNull {
+                            !it.tabName.equals("Latest", ignoreCase = true)
+                        }
+                        if (next != null) onSelectCategory(next.key)
+                    } else if (feed.items.isEmpty()) {
+                        message = "No items in this category."
+                    }
+                }
+            }
+            .onFailure { error ->
+                message = error.message ?: "Could not load this extension."
+            }
+        loading = false
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = NuvioTokens.Space.s10),
+        verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(c.surface)
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Back to channels",
+                    tint = c.textPrimary,
+                    modifier = Modifier.size(NuvioTokens.Icon.sm),
+                )
+            }
+            Text(
+                scraper.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = c.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (categories.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s6),
+                contentPadding = PaddingValues(vertical = NuvioTokens.Space.s2),
+            ) {
+                items(categories, key = { it.key }) { category ->
+                    PanelPill(
+                        label = category.label,
+                        selected = category.key == selectedCategoryKey ||
+                            (selectedCategoryKey == null && category == categories.firstOrNull()),
+                    ) { onSelectCategory(category.key) }
+                }
+            }
+        }
+        when {
+            loading -> Box(
+                modifier = Modifier.fillMaxWidth().padding(NuvioTokens.Space.s16),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp),
+                    color = c.accent,
+                    strokeWidth = 2.dp,
+                )
+            }
+            message != null -> Text(
+                message.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = c.textMuted,
+                modifier = Modifier.padding(NuvioTokens.Space.s8),
+            )
+            items.isEmpty() -> Text(
+                "No items",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.textMuted,
+                modifier = Modifier.padding(NuvioTokens.Space.s8),
+            )
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = NuvioTokens.Space.s12),
+                verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+            ) {
+                items(items, key = { "${it.apiIndex}:${it.url}" }) { item ->
+                    PlayerPluginCatalogItemRow(
+                        item = item,
+                        opening = "${item.apiIndex}:${item.url}" == openingItemKey,
+                        enabled = openingItemKey == null,
+                        onClick = { onPlayItem(item) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerPluginCatalogItemRow(
+    item: PluginBrowseItem,
+    opening: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(NuvioTokens.Radius.md))
+            .background(tokens.surfaceCard)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(NuvioTokens.Space.s6),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(44.dp)
+                .height(60.dp)
+                .clip(RoundedCornerShape(NuvioTokens.Radius.xs))
+                .background(tokens.surface),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!item.posterUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = item.posterUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    Icons.Filled.LiveTv,
+                    contentDescription = null,
+                    tint = tokens.textMuted,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                item.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                listOfNotNull(item.type.takeIf { it.isNotBlank() }, item.year?.toString())
+                    .joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.textMuted,
+                maxLines = 1,
+            )
+        }
+        if (opening) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                color = tokens.accent,
+                strokeWidth = 2.dp,
+            )
         }
     }
 }

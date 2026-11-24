@@ -38,6 +38,8 @@ data class PlayerLaunch(
     val pauseDescription: String? = null,
     val providerName: String,
     val providerAddonId: String? = null,
+    /** Opened from a Live TV folder/extension: the player keeps the channel panel and backups. */
+    val fromLiveTvSection: Boolean = false,
     val contentType: String? = null,
     val videoId: String? = null,
     val parentMetaId: String,

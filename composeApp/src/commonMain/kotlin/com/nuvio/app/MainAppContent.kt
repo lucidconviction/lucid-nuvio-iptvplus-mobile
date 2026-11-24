@@ -1252,6 +1252,7 @@ internal fun MainAppContent(
             manualSelection: Boolean,
             startFromBeginning: Boolean,
             forceAutoPlay: Boolean = false,
+            fromLiveTvSection: Boolean = false,
         ) {
             val targetResumePositionMs = if (startFromBeginning) 0L else (resumePositionMs ?: 0L)
             val targetResumeProgressFraction = if (startFromBeginning) null else resumeProgressFraction
@@ -1284,6 +1285,7 @@ internal fun MainAppContent(
                         pauseDescription = pauseDescription,
                         providerName = downloadedItem.providerName.ifBlank { downloadedProviderLabel },
                         providerAddonId = downloadedItem.providerAddonId,
+                        fromLiveTvSection = fromLiveTvSection,
                         contentType = type,
                         videoId = videoId,
                         parentMetaId = parentMetaId,
@@ -1328,6 +1330,7 @@ internal fun MainAppContent(
                     manualSelection = manualSelection,
                     startFromBeginning = startFromBeginning,
                     forceAutoPlay = forceAutoPlay,
+                    fromLiveTvSection = fromLiveTvSection,
                 ),
             )
             navController.navigate(
@@ -1398,6 +1401,7 @@ internal fun MainAppContent(
                     manualSelection = false,
                     startFromBeginning = false,
                     forceAutoPlay = true,
+                    fromLiveTvSection = true,
                 )
             }
         }
@@ -1515,6 +1519,7 @@ internal fun MainAppContent(
                     streamSubtitle = stream.streamSubtitle,
                     providerName = providerName,
                     providerAddonId = "plugin:${scraper.id}",
+                    fromLiveTvSection = true,
                     contentType = "movie",
                     videoId = contentId,
                     parentMetaId = contentId,
@@ -2189,6 +2194,7 @@ internal fun MainAppContent(
                                         PluginBrowseRoute(
                                             scraperId = scraper.id,
                                             scraperName = scraper.name,
+                                            fromLiveTvSection = true,
                                         ),
                                     )
                                 },

@@ -147,6 +147,8 @@ internal class PlayerScreenRuntime(
     var activeStreamFilename by mutableStateOf(sourceFilenameFromUrl(sourceUrl))
     var activeProviderName by mutableStateOf(providerName)
     var activeProviderAddonId by mutableStateOf(providerAddonId)
+    /** The current player was opened from Live TV, so it keeps the channel panel even for VOD. */
+    var activeFromLiveTvSection by mutableStateOf(args.fromLiveTvSection)
     var activeStream by mutableStateOf(args.stream)
     var currentStreamBingeGroup by mutableStateOf(initialBingeGroup)
     var currentStreamFilename by mutableStateOf(args.stream?.behaviorHints?.filename)
