@@ -6,6 +6,7 @@ import com.nuvio.app.features.autosync.AutoSyncPreferencesAndroid
 import com.nuvio.app.features.livetv.LiveTvPreferencesAndroid
 import com.nuvio.app.features.livetv.LiveTvStartup
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 
 import androidx.activity.enableEdgeToEdge
@@ -90,6 +91,9 @@ open class MainActivity : AppCompatActivity() {
         SentrySettingsStorage.initialize(applicationContext)
         SentryInitializer.start(application)
         super.onCreate(savedInstanceState)
+        // Keep the screen awake while the app is in front. The flag is tied to this window, so
+        // the system can still sleep the display when the app is in the background.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         AutoSyncPreferencesAndroid.initialize(applicationContext) // AutoSync hook
         LiveTvPreferencesAndroid.initialize(applicationContext) // Live TV hook
         com.nuvio.app.features.web.WebAppsStorage.initialize(applicationContext) // Web-Apps hook
@@ -158,6 +162,12 @@ open class MainActivity : AppCompatActivity() {
         setContent {
             App()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Web fullscreen players may clear this flag; the app itself always stays awake.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     override fun onNewIntent(intent: Intent) {
