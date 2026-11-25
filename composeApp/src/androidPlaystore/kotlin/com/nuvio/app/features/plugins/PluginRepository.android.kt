@@ -76,6 +76,10 @@ actual object PluginRepository {
         query: String,
     ): List<PluginBrowseItem> = emptyList()
 
+    internal actual suspend fun browseCategories(
+        scraperId: String,
+    ): List<com.nuvio.app.features.plugins.external.PluginBrowseCategory> = emptyList()
+
     internal actual suspend fun browseLatest(
         scraperId: String,
         page: Int,

@@ -30,8 +30,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -70,9 +72,15 @@ import com.nuvio.app.features.livetv.virtual.VirtualPoolRules
 import com.nuvio.app.features.livetv.virtual.VirtualSource
 import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.plugins.PluginRepositoryType
+import com.nuvio.app.features.plugins.PluginScraper
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
+import com.nuvio.app.features.plugins.external.PluginBrowseItem
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_cancel
 import nuvio.composeapp.generated.resources.lucid_tv_catalog_empty
+import nuvio.composeapp.generated.resources.lucid_tv_channel_details
 import nuvio.composeapp.generated.resources.lucid_tv_delete
 import nuvio.composeapp.generated.resources.lucid_tv_delete_confirm
 import nuvio.composeapp.generated.resources.lucid_tv_enabled
@@ -85,20 +93,35 @@ import nuvio.composeapp.generated.resources.lucid_tv_join
 import nuvio.composeapp.generated.resources.lucid_tv_join_cap
 import nuvio.composeapp.generated.resources.lucid_tv_join_full
 import nuvio.composeapp.generated.resources.lucid_tv_join_none
+import nuvio.composeapp.generated.resources.lucid_tv_load_more
 import nuvio.composeapp.generated.resources.lucid_tv_logo
 import nuvio.composeapp.generated.resources.lucid_tv_max_items
 import nuvio.composeapp.generated.resources.lucid_tv_name
 import nuvio.composeapp.generated.resources.lucid_tv_number
+import nuvio.composeapp.generated.resources.lucid_tv_order
 import nuvio.composeapp.generated.resources.lucid_tv_playout
+import nuvio.composeapp.generated.resources.lucid_tv_playout_description
 import nuvio.composeapp.generated.resources.lucid_tv_plugin_empty
+import nuvio.composeapp.generated.resources.lucid_tv_plugin_no_catalogs
+import nuvio.composeapp.generated.resources.lucid_tv_plugin_no_match
+import nuvio.composeapp.generated.resources.lucid_tv_plugin_catalogs_failed
+import nuvio.composeapp.generated.resources.lucid_tv_plugin_catalogs_loading
+import nuvio.composeapp.generated.resources.lucid_tv_plugin_select_live_catalog
+import nuvio.composeapp.generated.resources.lucid_tv_plugin_select_series_catalog
+import nuvio.composeapp.generated.resources.lucid_tv_plugin_catalog_subtitle
+import nuvio.composeapp.generated.resources.lucid_tv_pool
 import nuvio.composeapp.generated.resources.lucid_tv_pool_count
+import nuvio.composeapp.generated.resources.lucid_tv_pool_description
 import nuvio.composeapp.generated.resources.lucid_tv_pool_empty
 import nuvio.composeapp.generated.resources.lucid_tv_pool_loading
 import nuvio.composeapp.generated.resources.lucid_tv_refresh_hours
+import nuvio.composeapp.generated.resources.lucid_tv_refresh_plugins
 import nuvio.composeapp.generated.resources.lucid_tv_save
 import nuvio.composeapp.generated.resources.lucid_tv_search_items
 import nuvio.composeapp.generated.resources.lucid_tv_search_required
+import nuvio.composeapp.generated.resources.lucid_tv_series_empty
 import nuvio.composeapp.generated.resources.lucid_tv_select_catalog
+import nuvio.composeapp.generated.resources.lucid_tv_slot_description
 import nuvio.composeapp.generated.resources.lucid_tv_select_group
 import nuvio.composeapp.generated.resources.lucid_tv_select_item
 import nuvio.composeapp.generated.resources.lucid_tv_slot_minutes
@@ -204,7 +227,12 @@ fun VirtualChannelEditorScreen(
             verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s16),
         ) {
             item {
-                EditorSection(title = stringResource(Res.string.lucid_tv_name)) {
+                EditorSection(title = stringResource(Res.string.lucid_tv_channel_details)) {
+                    Text(
+                        text = stringResource(Res.string.lucid_tv_name),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = tokens.colors.textMuted,
+                    )
                     NuvioInputField(
                         value = name,
                         onValueChange = { name = it },
@@ -216,18 +244,38 @@ fun VirtualChannelEditorScreen(
                         color = tokens.colors.textMuted,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8)) {
-                        NuvioInputField(
-                            value = numberText,
-                            onValueChange = { numberText = it.filter(Char::isDigit).take(5) },
-                            placeholder = stringResource(Res.string.lucid_tv_number),
+                        Column(
                             modifier = Modifier.weight(1f),
-                        )
-                        NuvioInputField(
-                            value = logo,
-                            onValueChange = { logo = it },
-                            placeholder = stringResource(Res.string.lucid_tv_logo),
+                            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                        ) {
+                            Text(
+                                text = stringResource(Res.string.lucid_tv_number),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = tokens.colors.textMuted,
+                            )
+                            NuvioInputField(
+                                value = numberText,
+                                onValueChange = { numberText = it.filter(Char::isDigit).take(5) },
+                                placeholder = stringResource(Res.string.lucid_tv_number),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        Column(
                             modifier = Modifier.weight(2f),
-                        )
+                            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                        ) {
+                            Text(
+                                text = stringResource(Res.string.lucid_tv_logo),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = tokens.colors.textMuted,
+                            )
+                            NuvioInputField(
+                                value = logo,
+                                onValueChange = { logo = it },
+                                placeholder = stringResource(Res.string.lucid_tv_logo),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -303,7 +351,7 @@ fun VirtualChannelEditorScreen(
             item {
                 EditorSection(title = stringResource(Res.string.lucid_tv_playout)) {
                     Text(
-                        text = "Every Lucid TV channel runs as a 24/7 queue. The guide uses each film or episode's real runtime, so the programme changes exactly when the stream ends.",
+                        text = stringResource(Res.string.lucid_tv_playout_description),
                         style = MaterialTheme.typography.bodySmall,
                         color = tokens.colors.textMuted,
                     )
@@ -313,7 +361,7 @@ fun VirtualChannelEditorScreen(
                         color = tokens.colors.textMuted,
                     )
                     Text(
-                        text = "Fallback length when an item's runtime is unknown.",
+                        text = stringResource(Res.string.lucid_tv_slot_description),
                         style = MaterialTheme.typography.labelSmall,
                         color = tokens.colors.textMuted,
                     )
@@ -328,7 +376,7 @@ fun VirtualChannelEditorScreen(
                         }
                     }
                     Text(
-                        text = "Order",
+                        text = stringResource(Res.string.lucid_tv_order),
                         style = MaterialTheme.typography.labelMedium,
                         color = tokens.colors.textMuted,
                     )
@@ -365,20 +413,47 @@ fun VirtualChannelEditorScreen(
                 }
             }
             item {
-                EditorSection(title = "Pool") {
+                EditorSection(title = stringResource(Res.string.lucid_tv_pool)) {
+                    Text(
+                        text = stringResource(Res.string.lucid_tv_pool_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.nuvio.colors.textMuted,
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8)) {
-                        NuvioInputField(
-                            value = poolRules.maxItems.toString(),
-                            onValueChange = { text -> text.filter(Char::isDigit).take(5).toIntOrNull()?.let { poolRules = poolRules.copy(maxItems = it.coerceAtLeast(1)) } },
-                            placeholder = stringResource(Res.string.lucid_tv_max_items),
+                        Column(
                             modifier = Modifier.weight(1f),
-                        )
-                        NuvioInputField(
-                            value = poolRules.refreshHours.toString(),
-                            onValueChange = { text -> text.filter(Char::isDigit).take(3).toIntOrNull()?.let { poolRules = poolRules.copy(refreshHours = it) } },
-                            placeholder = stringResource(Res.string.lucid_tv_refresh_hours),
+                            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                        ) {
+                            Text(
+                                text = stringResource(Res.string.lucid_tv_max_items),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.nuvio.colors.textMuted,
+                            )
+                            NuvioInputField(
+                                value = poolRules.maxItems.toString(),
+                                onValueChange = { text -> text.filter(Char::isDigit).take(5).toIntOrNull()?.let { poolRules = poolRules.copy(maxItems = it.coerceAtLeast(1)) } },
+                                placeholder = stringResource(Res.string.lucid_tv_max_items),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        Column(
                             modifier = Modifier.weight(1f),
-                        )
+                            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                        ) {
+                            Text(
+                                text = stringResource(Res.string.lucid_tv_refresh_hours),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.nuvio.colors.textMuted,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            NuvioInputField(
+                                value = poolRules.refreshHours.toString(),
+                                onValueChange = { text -> text.filter(Char::isDigit).take(3).toIntOrNull()?.let { poolRules = poolRules.copy(refreshHours = it) } },
+                                placeholder = stringResource(Res.string.lucid_tv_refresh_hours),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }
@@ -469,7 +544,7 @@ fun VirtualChannelEditorScreen(
                 kind = VirtualChannelKind.ADDON_ROTATE
                 playout = playout.copy(mode = VirtualPlayoutMode.ROTATE, slotMinutes = 90)
                 join = join.copy(maxStartPercent = -1)
-                if (name.isBlank()) name = "${plugin.scraperName}: Latest"
+                if (name.isBlank()) name = "${plugin.scraperName}: ${plugin.categoryLabel ?: "Latest"}"
                 picker = null
             },
             onPluginSeries = { plugin ->
@@ -482,7 +557,7 @@ fun VirtualChannelEditorScreen(
                     order = VirtualOrder.AIR,
                 )
                 join = join.copy(maxStartPercent = -1)
-                if (name.isBlank()) name = "${plugin.scraperName}: Series"
+                if (name.isBlank()) name = "${plugin.scraperName}: ${plugin.seriesName ?: plugin.categoryLabel ?: "Series"}"
                 picker = null
             },
             onPluginRelay = { plugin ->
@@ -490,7 +565,7 @@ fun VirtualChannelEditorScreen(
                 kind = VirtualChannelKind.PLAYLIST_LOOP
                 playout = playout.copy(mode = VirtualPlayoutMode.LOOP, slotMinutes = 60)
                 join = join.copy(maxStartPercent = 0)
-                if (name.isBlank()) name = "${plugin.scraperName}: Live"
+                if (name.isBlank()) name = "${plugin.scraperName}: ${plugin.categoryLabel ?: "Live"}"
                 picker = null
             },
         )
@@ -518,7 +593,17 @@ fun VirtualChannelEditorScreen(
     }
 }
 
-private enum class PickerMode { SOURCE, CATALOG, SERIES, PLUGIN, PLUGIN_SERIES, PLUGIN_RELAY, PLAYLIST }
+private enum class PickerMode {
+    SOURCE,
+    CATALOG,
+    SERIES,
+    PLUGIN,
+    PLUGIN_SERIES,
+    PLUGIN_RELAY,
+    PLUGIN_CATEGORY,
+    PLUGIN_SERIES_ITEM,
+    PLAYLIST,
+}
 
 @Composable
 private fun EditorSection(title: String, content: @Composable () -> Unit) {
@@ -543,7 +628,10 @@ private fun sourceSummary(source: VirtualSource?): String = when (source) {
         (source.genre?.let { " · $it" } ?: "") +
         (source.search?.let { " · search: $it" } ?: "")
     is VirtualSource.AddonItem -> "Series · ${source.itemId}"
-    is VirtualSource.PluginCatalog -> "${source.scraperName} · Latest"
+    is VirtualSource.PluginCatalog -> listOfNotNull(
+        source.scraperName,
+        source.seriesName ?: source.categoryLabel ?: "Latest",
+    ).joinToString(" · ")
     is VirtualSource.ManualItems -> "Your list · ${source.items.size} items"
     is VirtualSource.PlaylistGroup -> "Playlist group"
     is VirtualSource.Rules -> "Smart channel"
@@ -560,15 +648,34 @@ private fun SourcePicker(
     onPluginRelay: (VirtualSource.PluginCatalog) -> Unit,
 ) {
     var step by remember(mode) { mutableStateOf(mode) }
+    var selectedPlugin by remember { mutableStateOf<PluginScraper?>(null) }
+    var pluginSearch by remember { mutableStateOf("") }
+    var pluginIntent by remember { mutableStateOf(PickerMode.PLUGIN) }
+    var selectedPluginCategory by remember { mutableStateOf<PluginBrowseCategory?>(null) }
+    var pluginSeriesItems by remember { mutableStateOf<List<PluginBrowseItem>>(emptyList()) }
+    var pluginSeriesPage by remember { mutableIntStateOf(1) }
+    var pluginSeriesHasNext by remember { mutableStateOf(false) }
+    var pluginSeriesLoading by remember { mutableStateOf(false) }
+    var pluginSeriesLoadingMore by remember { mutableStateOf(false) }
+    var pluginSeriesError by remember { mutableStateOf<String?>(null) }
+    var pluginSeriesSearch by remember { mutableStateOf("") }
+    var pluginCategories by remember { mutableStateOf<List<PluginBrowseCategory>>(emptyList()) }
+    var pluginCategoriesLoading by remember { mutableStateOf(false) }
+    var pluginCategoriesError by remember { mutableStateOf<String?>(null) }
     val addonState by AddonRepository.uiState.collectAsStateWithLifecycle()
     val pluginState by PluginRepository.uiState.collectAsStateWithLifecycle()
     val addons = addonState.addons.filter { it.enabled && it.manifest != null }
-    val plugins = pluginState.scrapers.filter { scraper ->
-        scraper.enabled &&
-            scraper.manifestEnabled &&
-            scraper.showInLucidTv &&
+    val allCloudStreamPlugins = pluginState.scrapers.filter { scraper ->
+        scraper.manifestEnabled &&
             scraper.type == PluginRepositoryType.EXTERNAL_DEX
     }
+    // Lucid TV extensions are opt-in, but the editor must still surface the extension source
+    // and its extensions so a user can enable one instead of wondering why CloudStream is gone.
+    val plugins = allCloudStreamPlugins.sortedWith(
+        compareByDescending<com.nuvio.app.features.plugins.PluginScraper> { it.showInLucidTv }
+            .thenByDescending { it.enabled }
+            .thenBy { it.name.lowercase() },
+    )
     var selectedAddon by remember { mutableStateOf<ManagedAddon?>(null) }
     var selectedCatalog by remember { mutableStateOf<AddonCatalog?>(null) }
     var selectedGenre by remember { mutableStateOf<String?>(null) }
@@ -577,10 +684,114 @@ private fun SourcePicker(
     var search by remember { mutableStateOf("") }
     var items by remember { mutableStateOf<List<MetaPreview>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var nextSkip by remember { mutableStateOf<Int?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     val listState by LiveTvViewState.list.collectAsStateWithLifecycle()
+    val pickerScope = rememberCoroutineScope()
+
+    val catalogsFailedText = stringResource(Res.string.lucid_tv_plugin_catalogs_failed)
+    val catalogsLoadingText = stringResource(Res.string.lucid_tv_plugin_catalogs_loading)
+    val pluginCatalogSubtitleText = stringResource(Res.string.lucid_tv_plugin_catalog_subtitle)
 
     LaunchedEffect(Unit) { runCatching { PluginRepository.initialize() } }
+
+    LaunchedEffect(step, selectedPlugin?.id) {
+        val plugin = selectedPlugin
+        if (step != PickerMode.PLUGIN_CATEGORY || plugin == null) return@LaunchedEffect
+        pluginCategoriesLoading = true
+        pluginCategoriesError = null
+        pluginCategories = try {
+            PluginRepository.browseCategories(plugin.id)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            pluginCategoriesError = error.message?.takeIf { it.isNotBlank() } ?: catalogsFailedText
+            emptyList()
+        }
+        pluginCategoriesLoading = false
+    }
+
+    LaunchedEffect(step, selectedPlugin?.id, selectedPluginCategory?.key) {
+        val plugin = selectedPlugin
+        val category = selectedPluginCategory
+        if (step != PickerMode.PLUGIN_SERIES_ITEM || plugin == null || category == null) {
+            return@LaunchedEffect
+        }
+        pluginSeriesLoading = true
+        pluginSeriesError = null
+        pluginSeriesItems = emptyList()
+        pluginSeriesSearch = ""
+        pluginSeriesPage = 1
+        pluginSeriesHasNext = false
+        try {
+            val feed = PluginRepository.browseLatest(plugin.id, 1, category)
+                ?: error(catalogsFailedText)
+            pluginSeriesItems = feed.items.filter { item ->
+                item.type.equals("series", true) || item.type.equals("tv", true)
+            }
+            pluginSeriesHasNext = feed.hasNext
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            pluginSeriesError = error.message?.takeIf { it.isNotBlank() } ?: catalogsFailedText
+        }
+        pluginSeriesLoading = false
+    }
+
+    fun loadMorePluginSeries() {
+        val plugin = selectedPlugin ?: return
+        val category = selectedPluginCategory ?: return
+        if (pluginSeriesLoadingMore || !pluginSeriesHasNext) return
+        pluginSeriesLoadingMore = true
+        pluginSeriesError = null
+        val nextPage = pluginSeriesPage + 1
+        pickerScope.launch {
+            try {
+                val feed = PluginRepository.browseLatest(plugin.id, nextPage, category)
+                    ?: error(catalogsFailedText)
+                pluginSeriesItems = (pluginSeriesItems + feed.items.filter { item ->
+                    item.type.equals("series", true) || item.type.equals("tv", true)
+                }).distinctBy { it.apiIndex to it.url }
+                pluginSeriesPage = nextPage
+                pluginSeriesHasNext = feed.hasNext
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                pluginSeriesError = error.message?.takeIf { it.isNotBlank() } ?: catalogsFailedText
+            }
+            pluginSeriesLoadingMore = false
+        }
+    }
+
+    fun loadMoreSeriesCatalog() {
+        val addon = selectedAddon ?: return
+        val catalog = selectedCatalog ?: return
+        val skip = nextSkip ?: return
+        if (loadingMore) return
+        loadingMore = true
+        loadError = null
+        pickerScope.launch {
+            runCatching {
+                fetchCatalogPage(
+                    manifestUrl = addon.manifestUrl,
+                    type = catalog.type,
+                    catalogId = catalog.id,
+                    genre = selectedGenre,
+                    search = selectedSearch.takeIf { it.isNotBlank() },
+                    skip = skip,
+                    maxItems = 150,
+                    extras = extraValues,
+                )
+            }.onSuccess { page ->
+                items = (items + page.items).distinctBy { it.id }
+                nextSkip = page.nextSkip?.takeIf { it > skip }
+            }.onFailure { error ->
+                loadError = error.message ?: "Could not load this catalog"
+            }
+            loadingMore = false
+        }
+    }
 
     if (step == PickerMode.CATALOG || step == PickerMode.SERIES) {
         val catalog = selectedCatalog
@@ -603,13 +814,15 @@ private fun SourcePicker(
             if (catalog == null || step != PickerMode.SERIES) return@LaunchedEffect
             if (!extrasReady) {
                 items = emptyList()
+                nextSkip = null
                 loading = false
                 loadError = null
                 return@LaunchedEffect
             }
             loading = true
             loadError = null
-            items = runCatching {
+            nextSkip = null
+            runCatching {
                 fetchCatalogPage(
                     manifestUrl = selectedAddon?.manifestUrl.orEmpty(),
                     type = catalog.type,
@@ -619,10 +832,13 @@ private fun SourcePicker(
                     skip = 0,
                     maxItems = 150,
                     extras = extraValues,
-                ).items
-            }.getOrElse { error ->
+                )
+            }.onSuccess { page ->
+                items = page.items
+                nextSkip = page.nextSkip
+            }.onFailure { error ->
                 loadError = error.message ?: "Could not load this catalog"
-                emptyList()
+                items = emptyList()
             }
             loading = false
         }
@@ -635,6 +851,22 @@ private fun SourcePicker(
             PickerMode.CATALOG, PickerMode.SERIES -> selectedAddon?.displayTitle ?: stringResource(Res.string.lucid_tv_select_catalog)
             PickerMode.PLUGIN, PickerMode.PLUGIN_SERIES, PickerMode.PLUGIN_RELAY ->
                 stringResource(Res.string.plugins_badge_cloudstream)
+            PickerMode.PLUGIN_CATEGORY -> {
+                val pluginName = selectedPlugin?.name ?: stringResource(Res.string.plugins_badge_cloudstream)
+                val action = when (pluginIntent) {
+                    PickerMode.PLUGIN_SERIES -> stringResource(Res.string.lucid_tv_plugin_select_series_catalog)
+                    PickerMode.PLUGIN_RELAY -> stringResource(Res.string.lucid_tv_plugin_select_live_catalog)
+                    else -> stringResource(Res.string.lucid_tv_select_catalog)
+                }
+                "$pluginName · $action"
+            }
+            PickerMode.PLUGIN_SERIES_ITEM -> {
+                val pluginName = selectedPlugin?.name ?: stringResource(Res.string.plugins_badge_cloudstream)
+                val categoryName = selectedPluginCategory?.label.orEmpty()
+                listOf(pluginName, categoryName)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" · ")
+            }
             PickerMode.PLAYLIST -> stringResource(Res.string.lucid_tv_select_group)
         },
     ) {
@@ -644,7 +876,7 @@ private fun SourcePicker(
                     title = stringResource(Res.string.lucid_tv_source_catalog),
                     description = stringResource(Res.string.lucid_tv_source_catalog_description),
                 ) { step = PickerMode.CATALOG }
-                if (plugins.isNotEmpty()) {
+                if (plugins.isNotEmpty() || pluginState.repositories.isNotEmpty()) {
                     SourceOption(
                         title = stringResource(Res.string.lucid_tv_source_plugin),
                         description = stringResource(Res.string.lucid_tv_source_plugin_description),
@@ -668,26 +900,120 @@ private fun SourcePicker(
                 ) { step = PickerMode.PLAYLIST }
             }
             PickerMode.PLUGIN, PickerMode.PLUGIN_SERIES, PickerMode.PLUGIN_RELAY -> {
-                PickerList(
-                    emptyText = stringResource(Res.string.lucid_tv_plugin_empty),
-                    rows = plugins.map { plugin ->
-                        PickerRow(
-                            title = plugin.name,
-                            subtitle = plugin.description,
-                            poster = plugin.logo,
-                        ) {
-                            val source = VirtualSource.PluginCatalog(
-                                scraperId = plugin.id,
-                                scraperName = plugin.name,
-                            )
-                            when (step) {
-                                PickerMode.PLUGIN_SERIES -> onPluginSeries(source)
-                                PickerMode.PLUGIN_RELAY -> onPluginRelay(source)
-                                else -> onPluginCatalog(source)
+                val filteredPlugins = plugins.filter { plugin ->
+                    pluginSearch.isBlank() ||
+                        plugin.name.contains(pluginSearch, ignoreCase = true) ||
+                        plugin.description.contains(pluginSearch, ignoreCase = true)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8)) {
+                    NuvioInputField(
+                        value = pluginSearch,
+                        onValueChange = { pluginSearch = it },
+                        placeholder = stringResource(Res.string.lucid_tv_search_items),
+                    )
+                    PickerList(
+                        emptyText = if (plugins.isEmpty()) {
+                            stringResource(Res.string.lucid_tv_plugin_empty)
+                        } else {
+                            stringResource(Res.string.lucid_tv_plugin_no_match)
+                        },
+                        rows = filteredPlugins.map { plugin ->
+                            PickerRow(
+                                title = plugin.name,
+                                subtitle = when {
+                                    !plugin.enabled -> "Disabled · tap to enable"
+                                    !plugin.showInLucidTv -> "Not enabled for Lucid TV · tap to enable"
+                                    else -> plugin.description
+                                },
+                                poster = plugin.logo,
+                            ) {
+                                if (!plugin.enabled) {
+                                    PluginRepository.toggleScraper(plugin.id, true)
+                                }
+                                if (!plugin.showInLucidTv) {
+                                    PluginRepository.setScraperShowInLucidTv(plugin.id, true)
+                                }
+                                selectedPlugin = plugin
+                                pluginIntent = step
+                                pluginCategories = emptyList()
+                                pluginCategoriesError = null
+                                step = PickerMode.PLUGIN_CATEGORY
                             }
+                        },
+                    )
+                    if (plugins.isEmpty() && pluginState.repositories.isNotEmpty()) {
+                        DialogButtons {
+                            DialogButton(
+                                text = stringResource(Res.string.lucid_tv_refresh_plugins),
+                                style = DialogButtonStyle.Primary,
+                                onClick = { PluginRepository.refreshAll() },
+                            )
+                            DialogButton(
+                                text = stringResource(Res.string.action_cancel),
+                                onClick = onDismiss,
+                            )
                         }
-                    },
-                )
+                    }
+                }
+            }
+            PickerMode.PLUGIN_CATEGORY -> {
+                selectedPlugin?.let { plugin ->
+                    fun choose(category: PluginBrowseCategory) {
+                        if (pluginIntent == PickerMode.PLUGIN_SERIES) {
+                            selectedPluginCategory = category
+                            pluginSeriesItems = emptyList()
+                            pluginSeriesError = null
+                            pluginSeriesSearch = ""
+                            step = PickerMode.PLUGIN_SERIES_ITEM
+                            return
+                        }
+                        val source = VirtualSource.PluginCatalog(
+                            scraperId = plugin.id,
+                            scraperName = plugin.name,
+                            categoryApiIndex = category.apiIndex,
+                            categoryTabName = category.tabName,
+                            categoryLabel = category.label,
+                        )
+                        when (pluginIntent) {
+                            PickerMode.PLUGIN_SERIES -> onPluginSeries(source)
+                            PickerMode.PLUGIN_RELAY -> onPluginRelay(source)
+                            else -> onPluginCatalog(source)
+                        }
+                    }
+                    when {
+                        pluginCategoriesLoading -> Text(
+                            text = catalogsLoadingText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.nuvio.colors.textMuted,
+                        )
+                        pluginCategoriesError != null -> Text(
+                            text = pluginCategoriesError.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.nuvio.colors.danger,
+                        )
+                        else -> PickerList(
+                            emptyText = stringResource(Res.string.lucid_tv_plugin_no_catalogs),
+                            rows = pluginCategories.map { category ->
+                                PickerRow(
+                                    title = category.label,
+                                    subtitle = category.apiName
+                                        .takeIf { !it.equals(plugin.name, ignoreCase = true) }
+                                        ?: pluginCatalogSubtitleText,
+                                ) { choose(category) }
+                            },
+                        )
+                    }
+                    DialogButtons {
+                        DialogButton(
+                            text = "Back",
+                            onClick = { step = pluginIntent },
+                        )
+                        DialogButton(
+                            text = stringResource(Res.string.action_cancel),
+                            onClick = onDismiss,
+                        )
+                    }
+                }
             }
             PickerMode.CATALOG, PickerMode.SERIES -> {
                 val addon = selectedAddon
@@ -959,6 +1285,82 @@ private fun SourcePicker(
                                         },
                                 )
                             }
+                            if (nextSkip != null || loadingMore) {
+                                DialogButton(
+                                    text = if (loadingMore) {
+                                        stringResource(Res.string.lucid_tv_pool_loading)
+                                    } else {
+                                        stringResource(Res.string.lucid_tv_load_more)
+                                    },
+                                    enabled = !loadingMore,
+                                    onClick = { loadMoreSeriesCatalog() },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            PickerMode.PLUGIN_SERIES_ITEM -> {
+                val plugin = selectedPlugin
+                val category = selectedPluginCategory
+                if (plugin != null && category != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8)) {
+                        NuvioInputField(
+                            value = pluginSeriesSearch,
+                            onValueChange = { pluginSeriesSearch = it },
+                            placeholder = stringResource(Res.string.lucid_tv_search_items),
+                        )
+                        when {
+                            pluginSeriesLoading -> Text(
+                                text = catalogsLoadingText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.nuvio.colors.textMuted,
+                            )
+                            pluginSeriesError != null -> Text(
+                                text = pluginSeriesError.orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.nuvio.colors.danger,
+                            )
+                            else -> PickerList(
+                                emptyText = stringResource(Res.string.lucid_tv_series_empty),
+                                rows = pluginSeriesItems
+                                    .filter { item ->
+                                        pluginSeriesSearch.isBlank() ||
+                                            item.name.contains(pluginSeriesSearch, ignoreCase = true)
+                                    }
+                                    .map { item ->
+                                        PickerRow(
+                                            title = item.name,
+                                            subtitle = listOfNotNull(item.year?.toString(), "series")
+                                                .joinToString(" · "),
+                                            poster = item.posterUrl,
+                                        ) {
+                                            onPluginSeries(
+                                                VirtualSource.PluginCatalog(
+                                                    scraperId = plugin.id,
+                                                    scraperName = plugin.name,
+                                                    categoryApiIndex = category.apiIndex,
+                                                    categoryTabName = category.tabName,
+                                                    categoryLabel = category.label,
+                                                    seriesApiIndex = item.apiIndex,
+                                                    seriesUrl = item.url,
+                                                    seriesName = item.name,
+                                                ),
+                                            )
+                                        }
+                                    },
+                            )
+                        }
+                        if (pluginSeriesHasNext || pluginSeriesLoadingMore) {
+                            DialogButton(
+                                text = if (pluginSeriesLoadingMore) {
+                                    stringResource(Res.string.lucid_tv_pool_loading)
+                                } else {
+                                    stringResource(Res.string.lucid_tv_load_more)
+                                },
+                                enabled = !pluginSeriesLoadingMore,
+                                onClick = { loadMorePluginSeries() },
+                            )
                         }
                     }
                 }

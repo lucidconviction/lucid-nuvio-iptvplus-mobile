@@ -71,6 +71,11 @@ expect object PluginRepository {
         query: String,
     ): List<PluginBrowseItem>
 
+    /** Catalogs/tabs exposed by a CloudStream extension, for the Lucid TV source picker. */
+    internal suspend fun browseCategories(
+        scraperId: String,
+    ): List<PluginBrowseCategory>
+
     /** Provider home/latest feed used by Discover and the plugin catalog pages. */
     internal suspend fun browseLatest(
         scraperId: String,

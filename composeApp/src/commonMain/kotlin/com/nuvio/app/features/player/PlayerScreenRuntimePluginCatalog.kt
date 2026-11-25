@@ -29,14 +29,16 @@ internal fun PlayerScreenRuntime.playPluginCatalogItem(
         val startingVideoId = activeVideoId
         try {
             val results: List<PluginRuntimeResult> = withTimeoutOrNull(PluginCatalogStreamTimeoutMs) {
-                PluginRepository.browseStreams(
-                    scraperId = scraper.id,
-                    apiIndex = item.apiIndex,
-                    url = item.url,
-                    season = null,
-                    episode = null,
-                    timeoutMs = 45_000L,
-                )
+                runCatching {
+                    PluginRepository.browseStreams(
+                        scraperId = scraper.id,
+                        apiIndex = item.apiIndex,
+                        url = item.url,
+                        season = null,
+                        episode = null,
+                        timeoutMs = 45_000L,
+                    )
+                }.getOrDefault(emptyList())
             } ?: emptyList()
             if (activeVideoId != startingVideoId) return@launch
 

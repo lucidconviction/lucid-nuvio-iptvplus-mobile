@@ -134,6 +134,12 @@ object VirtualChannelCodec {
                 put("type", "plugin_catalog")
                 put("scraperId", source.scraperId)
                 put("scraperName", source.scraperName)
+                put("categoryApiIndex", source.categoryApiIndex)
+                put("categoryTabName", source.categoryTabName ?: "")
+                put("categoryLabel", source.categoryLabel ?: "")
+                put("seriesApiIndex", source.seriesApiIndex ?: -1)
+                put("seriesUrl", source.seriesUrl ?: "")
+                put("seriesName", source.seriesName ?: "")
             }
             is VirtualSource.ManualItems -> {
                 put("type", "manual")
@@ -185,6 +191,12 @@ object VirtualChannelCodec {
         "plugin_catalog" -> VirtualSource.PluginCatalog(
             scraperId = o.optString("scraperId"),
             scraperName = o.optString("scraperName"),
+            categoryApiIndex = o.optInt("categoryApiIndex", 0),
+            categoryTabName = o.optString("categoryTabName").ifBlank { null },
+            categoryLabel = o.optString("categoryLabel").ifBlank { null },
+            seriesApiIndex = o.optInt("seriesApiIndex", -1).takeIf { it >= 0 },
+            seriesUrl = o.optString("seriesUrl").ifBlank { null },
+            seriesName = o.optString("seriesName").ifBlank { null },
         ).takeIf { it.scraperId.isNotBlank() }
 
         "manual" -> VirtualSource.ManualItems(
@@ -328,7 +340,7 @@ object VirtualChannelCodec {
     }
 
     private fun decodePoolRules(o: JsonObject): VirtualPoolRules = VirtualPoolRules(
-        maxItems = o.optInt("maxItems", 2000).coerceIn(1, 10_000),
+        maxItems = o.optInt("maxItems", 25).coerceIn(1, 10_000),
         refreshHours = o.optInt("refreshHours", 24).coerceAtLeast(0),
         minYear = o.optInt("minYear", 0).takeIf { it > 0 },
         maxYear = o.optInt("maxYear", 0).takeIf { it > 0 },

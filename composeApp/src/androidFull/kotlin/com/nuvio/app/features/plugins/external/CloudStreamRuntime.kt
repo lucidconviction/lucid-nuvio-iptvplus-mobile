@@ -15,14 +15,96 @@ import okhttp3.Cache
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Response
 import org.conscrypt.Conscrypt
+import java.io.IOException
 
 /**
  * Lazily initializes the CloudStream host runtime. Nothing here runs unless the
  * user installs/opens a CloudStream repository or provider, so the normal app
  * cold start is untouched.
  */
+/**
+ * CloudStream providers frequently burst several page/embed requests at once, and some hosts
+ * answer 429 before settling down. A short bounded retry saves otherwise healthy extensions
+ * from being reported as "no playable source".
+ */
+private class ExtensionRetryInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        var attempt = 0
+        var lastResponse: Response? = null
+        while (attempt < MAX_ATTEMPTS) {
+            val response = try {
+                chain.proceed(request)
+            } catch (error: IOException) {
+                if (request.method != "GET" || attempt >= MAX_ATTEMPTS - 1) throw error
+                Thread.sleep(RETRY_DELAYS_MS[attempt])
+                attempt++
+                continue
+            }
+            lastResponse = response
+            if (request.method != "GET" || (response.code != 429 && response.code != 503)) {
+                return response
+            }
+            if (attempt >= MAX_ATTEMPTS - 1) return response
+            val retryAfterMs = response.header("Retry-After")
+                ?.toLongOrNull()
+                ?.times(1_000L)
+                ?.coerceIn(500L, 5_000L)
+            response.close()
+            Thread.sleep(retryAfterMs ?: RETRY_DELAYS_MS[attempt])
+            attempt++
+        }
+        return lastResponse ?: error("Retry interceptor produced no response")
+    }
+
+    private companion object {
+        const val MAX_ATTEMPTS = 3
+        val RETRY_DELAYS_MS = longArrayOf(700L, 1_600L)
+    }
+}
+
+/**
+ * Some CloudStream extensions resolve every mirror at once. Hosts such as Goojara answer that
+ * burst with 429 even though a sequence of the same requests succeeds. Serialize the common
+ * redirect endpoint so the first mirrors can return their Location header.
+ */
+private class ExtensionRedirectThrottleInterceptor : Interceptor {
+    private val lock = Object()
+    private val semaphore = java.util.concurrent.Semaphore(1)
+    private var lastRequestAtMs = 0L
+
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        if (!needsThrottle(request.url)) return chain.proceed(request)
+        semaphore.acquire()
+        try {
+            synchronized(lock) {
+                val waitMs = MIN_INTERVAL_MS - (System.currentTimeMillis() - lastRequestAtMs)
+                if (waitMs > 0L) Thread.sleep(waitMs)
+            }
+            val response = chain.proceed(request)
+            synchronized(lock) { lastRequestAtMs = System.currentTimeMillis() }
+            return response
+        } finally {
+            semaphore.release()
+        }
+    }
+
+    private fun needsThrottle(url: HttpUrl): Boolean {
+        val host = url.host.lowercase()
+        val path = url.encodedPath.lowercase()
+        return path.endsWith("/go.php") || host.contains("goojara")
+    }
+
+    private companion object {
+        const val MIN_INTERVAL_MS = 750L
+    }
+}
+
 internal object CloudStreamRuntime {
     private const val TAG = "CloudStreamRuntime"
 
@@ -68,6 +150,8 @@ internal object CloudStreamRuntime {
                     .followRedirects(true)
                     .followSslRedirects(true)
                     .ignoreAllSSLErrors()
+                    .addInterceptor(ExtensionRetryInterceptor())
+                    .addInterceptor(ExtensionRedirectThrottleInterceptor())
                     .cache(Cache(File(hostApplication.cacheDir, "cs_http_cache"), 50L * 1024L * 1024L))
                     .build()
             }.onFailure { Log.w(TAG, "NiceHttp base client init failed: ${it.message}") }

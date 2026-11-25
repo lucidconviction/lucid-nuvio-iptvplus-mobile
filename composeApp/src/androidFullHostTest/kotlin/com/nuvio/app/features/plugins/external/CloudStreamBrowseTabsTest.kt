@@ -41,4 +41,16 @@ class CloudStreamBrowseTabsTest {
 
         assertEquals(1, cloudStreamBrowseTabs(api).size)
     }
+
+    @Test
+    fun aBrokenMainPageGetterDoesNotCrashTheCatalog() {
+        val api = object : MainAPI() {
+            override var name = "Broken extension"
+            override val hasMainPage = true
+            override val mainPage: List<MainPageData>
+                get() = throw IllegalStateException("provider hiccup")
+        }
+
+        assertTrue(cloudStreamBrowseTabs(api).isEmpty())
+    }
 }

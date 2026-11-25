@@ -146,6 +146,7 @@ android {
                 "../composeApp/proguard-rules.pro",
             )
             signingConfig = signingConfigs.getByName("release")
+            isDebuggable = providers.gradleProperty("nuvio.android.debuggable").orNull == "true"
             ndk {
                 debugSymbolLevel = "FULL"
             }

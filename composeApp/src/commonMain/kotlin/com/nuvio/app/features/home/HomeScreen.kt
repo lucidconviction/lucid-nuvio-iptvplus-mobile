@@ -153,12 +153,14 @@ fun HomeScreen(
     val pluginsUiState by PluginRepository.uiState.collectAsStateWithLifecycle()
     val pluginProviders = remember(pluginsUiState.pluginsEnabled, pluginsUiState.scrapers) {
         if (pluginsUiState.pluginsEnabled) {
-            pluginsUiState.scrapers.filter { scraper ->
-                scraper.enabled &&
+            pluginsUiState.scrapers
+                .filter { scraper ->
                     scraper.manifestEnabled &&
-                    scraper.showOnHome &&
-                    scraper.type == PluginRepositoryType.EXTERNAL_DEX
-            }
+                        scraper.type == PluginRepositoryType.EXTERNAL_DEX
+                }
+                .sortedBy { it.name.lowercase() }
+                // Home stays light: the first 15 installed extensions get a row.
+                .take(15)
         } else {
             emptyList()
         }

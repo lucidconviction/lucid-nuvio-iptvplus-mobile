@@ -53,9 +53,7 @@ internal object SportsAddonSearch {
         val addons = AddonRepository.uiState.value.addons.filter { it.enabled && it.manifest != null }
         val pluginProviders = PluginRepository.uiState.value.scrapers
             .filter { scraper ->
-                scraper.enabled &&
-                    scraper.manifestEnabled &&
-                    scraper.showInSports &&
+                scraper.manifestEnabled &&
                     scraper.type == PluginRepositoryType.EXTERNAL_DEX
             }
             .take(8)

@@ -353,7 +353,6 @@ internal fun PluginBrowseScreen(
             latestHasNext = false
         }
         scope.launch {
-            var fallbackCategory: PluginBrowseCategory? = null
             PluginBrowseRepository.latest(scraperId, page, category)
                 .onSuccess { feed ->
                     latestAttempted = true
@@ -375,13 +374,14 @@ internal fun PluginBrowseScreen(
                         }
                         latestHasNext = feed.hasNext
                         latestPage = page
-                        if (reset && category == null && feed.items.isEmpty()) {
-                            // "Latest" is optional: open the first real catalog category instead.
-                            fallbackCategory = feed.categories.firstOrNull {
-                                !it.tabName.equals("Latest", ignoreCase = true)
+                        // The loader may have used a different tab because "Latest" was
+                        // empty. Keep the chips and later pages on that same tab.
+                        if (reset && category == null) {
+                            feed.activeCategory?.let { active ->
+                                selectedCategoryKey = active.key
                             }
                         }
-                        if (latestItems.isEmpty() && fallbackCategory == null) {
+                        if (latestItems.isEmpty()) {
                             latestMessage = latestEmptyText
                         }
                     }
@@ -391,12 +391,6 @@ internal fun PluginBrowseScreen(
                     latestMessage = error.message ?: latestFailedText
                 }
             loadingLatest = false
-            fallbackCategory?.let { fallback ->
-                selectedCategoryKey = fallback.key
-                latestAttempted = true
-                latestMessage = null
-                loadLatest(reset = true, category = fallback)
-            }
         }
     }
 
@@ -493,9 +487,7 @@ internal fun PluginBrowseScreen(
     }
     val isEmpty = displayItems.isEmpty() && !searching && !loadingLatest
     val isBusyFirstLoad = displayItems.isEmpty() && (searching || loadingLatest)
-    val categoryChips = latestCategories.filterNot { category ->
-        category.tabName.equals("Latest", ignoreCase = true)
-    }
+    val categoryChips = latestCategories
     val heroItems = remember(latestItems) { latestItems.take(10) }
 
     BoxWithConstraints(
@@ -566,11 +558,6 @@ internal fun PluginBrowseScreen(
                                 .horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Chip(
-                                label = stringResource(Res.string.plugins_browse_latest),
-                                selected = selectedCategoryKey == null,
-                                onClick = { selectCategory(null) },
-                            )
                             categoryChips.forEach { category ->
                                 Chip(
                                     label = category.label,
@@ -1305,11 +1292,9 @@ private fun PluginDetailContent(
     suspend fun loadOtherSources(): List<PluginResolvedSource> {
         val extensions = PluginRepository.uiState.value.scrapers
             .filter { scraper ->
-                scraper.enabled &&
-                    scraper.manifestEnabled &&
+                scraper.manifestEnabled &&
                     scraper.id != scraperId &&
-                    scraper.type == PluginRepositoryType.EXTERNAL_DEX &&
-                    (scraper.showInLiveTv || scraper.showInSports || scraper.showInLucidTv)
+                    scraper.type == PluginRepositoryType.EXTERNAL_DEX
             }
             .take(6)
         if (extensions.isEmpty()) return emptyList()

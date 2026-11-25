@@ -195,9 +195,7 @@ private fun GameBody(ev: SportsEvent, actions: SportsActions) {
         } else {
             pluginUiState.scrapers
                 .filter { scraper ->
-                    scraper.enabled &&
-                        scraper.manifestEnabled &&
-                        scraper.showInSports &&
+                    scraper.manifestEnabled &&
                         scraper.type == PluginRepositoryType.EXTERNAL_DEX
                 }
                 .joinToString("|") { "${it.id}:${it.version}" }

@@ -69,8 +69,10 @@ internal object VirtualTuneResolver {
     private const val ADDON_WAIT_MS = 8_000L
     /** A cold start has to load the add-on manifests and the channel's catalog before it can
      *  even ask for sources. Give that first tune a realistic budget. */
-    private const val TUNE_BUDGET_MS = 40_000L
+    private const val TUNE_BUDGET_MS = 60_000L
     private const val PREFETCH_BUDGET_MS = 25_000L
+    /** CloudStream extensions often sniff a host page or open a WebView; 45 s matches Live TV. */
+    private const val PLUGIN_STREAM_TIMEOUT_MS = 45_000L
     private const val CANDIDATE_TTL_MS = 5L * 60_000L
 
     private data class CachedStream(
@@ -362,15 +364,18 @@ internal object VirtualTuneResolver {
             }
         }
 
-        awaitAddons()
         val started = epochMs()
         val pluginScraperId = tune.item.pluginScraperId
         // StreamsRepository exposes one global request state. Serialize Lucid TV lookups so a
         // prefetch of the next episode cannot cancel the item the viewer is tuning, and a
         // cancellation cannot leave another item's winner under the wrong key.
         val candidates = if (pluginScraperId != null) {
+            // Extensions do not use Stremio add-ons. Waiting for those manifests here only
+            // burned the first few seconds of the tuning budget.
             val scraper = PluginRepository.uiState.value.scrapers.firstOrNull { it.id == pluginScraperId }
-            val fetched = withTimeoutOrNull(budgetMs.coerceAtMost(15_000L)) {
+            val fetched = withTimeoutOrNull(
+                budgetMs.coerceAtMost(PLUGIN_STREAM_TIMEOUT_MS),
+            ) {
                 runCatching {
                     PluginRepository.browseStreams(
                         scraperId = pluginScraperId,
@@ -378,11 +383,13 @@ internal object VirtualTuneResolver {
                         url = tune.item.pluginUrl.orEmpty(),
                         season = tune.season,
                         episode = tune.episode,
+                        timeoutMs = PLUGIN_STREAM_TIMEOUT_MS,
                     )
                 }.getOrDefault(emptyList())
             }.orEmpty()
             if (scraper != null) fetched.map { it.toStreamItem(scraper) } else emptyList()
         } else {
+            awaitAddons()
             streamRequestMutex.withLock {
                 cachedCandidates(tune) ?: run {
                     var fetched = withTimeoutOrNull(budgetMs.coerceAtMost(10_000L)) {
@@ -631,6 +638,13 @@ internal object VirtualTuneResolver {
         tune: VirtualTune,
         settings: VirtualPlaybackSettings,
     ): StreamResult {
+        if (tune.item.pluginScraperId != null) {
+            return StreamResult(
+                null,
+                "The CloudStream extension returned no playable source for this item.",
+                skipItem = true,
+            )
+        }
         val addons = AddonRepository.uiState.value.addons
         if (addons.isWaitingForFirstEnabledManifest()) {
             return StreamResult(null, "Add-ons are still loading. Try again in a moment.")

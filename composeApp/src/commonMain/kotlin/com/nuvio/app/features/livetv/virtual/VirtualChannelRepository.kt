@@ -14,6 +14,7 @@ import com.nuvio.app.features.livetv.model.LiveChannel
 import com.nuvio.app.features.livetv.model.LiveTvClock
 import com.nuvio.app.features.livetv.player.VirtualChannelPlayback
 import com.nuvio.app.features.plugins.PluginRepository
+import com.nuvio.app.features.plugins.external.PluginBrowseCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -554,6 +555,17 @@ internal object VirtualChannelRepository {
         orderItems(filtered.distinctBy { it.id }, spec).take(spec.pool.maxItems.coerceIn(1, 10_000))
     }
 
+    private fun VirtualSource.PluginCatalog.chosenCategory(): PluginBrowseCategory? {
+        val tab = categoryTabName?.trim().orEmpty()
+        if (tab.isBlank()) return null
+        return PluginBrowseCategory(
+            apiIndex = categoryApiIndex,
+            apiName = scraperName,
+            tabName = tab,
+            label = categoryLabel?.takeIf { it.isNotBlank() } ?: tab,
+        )
+    }
+
     private suspend fun fetchPluginPool(
         source: VirtualSource.PluginCatalog,
         spec: VirtualChannelSpec,
@@ -562,11 +574,13 @@ internal object VirtualChannelRepository {
         val cap = spec.pool.maxItems.coerceIn(1, 10_000)
         val out = ArrayList<VirtualItem>()
         var page = 1
+        var category = source.chosenCategory()
         while (out.size < cap && page <= 4) {
             val feed = runCatching {
-                PluginRepository.browseLatest(source.scraperId, page)
+                PluginRepository.browseLatest(source.scraperId, page, category)
             }.getOrNull() ?: break
             if (feed.items.isEmpty()) break
+            if (category == null) category = feed.activeCategory
             feed.items.forEach { item ->
                 out += VirtualItem(
                     id = "plugin:${source.scraperId}:${item.apiIndex}:${item.url}",
@@ -592,13 +606,44 @@ internal object VirtualChannelRepository {
     ): List<VirtualItem> {
         runCatching { PluginRepository.initialize() }
         val cap = spec.pool.maxItems.coerceIn(1, 10_000)
+        val pinnedSeriesUrl = source.seriesUrl?.takeIf { it.isNotBlank() }
+        if (pinnedSeriesUrl != null) {
+            val apiIndex = source.seriesApiIndex ?: source.categoryApiIndex
+            val episodes = runCatching {
+                PluginRepository.browseEpisodes(
+                    scraperId = source.scraperId,
+                    apiIndex = apiIndex,
+                    url = pinnedSeriesUrl,
+                )
+            }.getOrDefault(emptyList())
+            val title = source.seriesName?.takeIf { it.isNotBlank() } ?: source.scraperName
+            return episodes.take(cap).map { episode ->
+                VirtualItem(
+                    id = "plugin:${source.scraperId}:$apiIndex:$pinnedSeriesUrl:${episode.season}:${episode.episode}",
+                    streamId = episode.data,
+                    type = "series",
+                    title = title,
+                    poster = episode.posterUrl,
+                    runtimeMs = episode.runtimeMinutes?.toLong()?.times(60_000L),
+                    season = episode.season,
+                    episode = episode.episode,
+                    episodeTitle = episode.name.takeIf { it.isNotBlank() },
+                    parentId = pinnedSeriesUrl,
+                    pluginScraperId = source.scraperId,
+                    pluginApiIndex = apiIndex,
+                    pluginUrl = pinnedSeriesUrl,
+                )
+            }
+        }
         val out = ArrayList<VirtualItem>()
         var page = 1
+        var category = source.chosenCategory()
         while (out.size < cap && page <= 3) {
             val feed = runCatching {
-                PluginRepository.browseLatest(source.scraperId, page)
+                PluginRepository.browseLatest(source.scraperId, page, category)
             }.getOrNull() ?: break
             if (feed.items.isEmpty()) break
+            if (category == null) category = feed.activeCategory
             for (item in feed.items) {
                 if (out.size >= cap) break
                 if (!item.type.equals("series", ignoreCase = true) &&
@@ -1357,5 +1402,5 @@ internal object VirtualChannelRepository {
     private const val MAX_RUNTIME_LOOKUPS = 24
     private const val META_CONCURRENCY = 3
     private const val UNPLAYABLE_TTL_MS = 60L * 60 * 1000
-    private const val POOL_WAIT_MS = 20_000L
+    private const val POOL_WAIT_MS = 40_000L
 }

@@ -325,17 +325,8 @@ fun PluginsSettingsPageContent(
             scraper = scraper,
             repositoryName = repositoryName,
             onSettings = { openProviderSettings(scraper) },
-            onHomeVisibilityChange = { show ->
-                PluginRepository.setScraperShowOnHome(scraper.id, show)
-            },
             onLiveTvVisibilityChange = { show ->
                 PluginRepository.setScraperShowInLiveTv(scraper.id, show)
-            },
-            onSportsVisibilityChange = { show ->
-                PluginRepository.setScraperShowInSports(scraper.id, show)
-            },
-            onLucidTvVisibilityChange = { show ->
-                PluginRepository.setScraperShowInLucidTv(scraper.id, show)
             },
             onToggle = { enabled -> PluginRepository.toggleScraper(scraper.id, enabled) },
         )
@@ -896,10 +887,7 @@ private fun PluginProviderCard(
     scraper: PluginScraper,
     repositoryName: String,
     onSettings: () -> Unit,
-    onHomeVisibilityChange: (Boolean) -> Unit,
     onLiveTvVisibilityChange: (Boolean) -> Unit,
-    onSportsVisibilityChange: (Boolean) -> Unit,
-    onLucidTvVisibilityChange: (Boolean) -> Unit,
     onToggle: (Boolean) -> Unit,
 ) {
     val isCloudStream = scraper.type == PluginRepositoryType.EXTERNAL_DEX
@@ -991,134 +979,23 @@ private fun PluginProviderCard(
 
         if (isCloudStream) {
             Spacer(modifier = Modifier.height(10.dp))
-            CatalogVisibilityDropdown(
-                scraper = scraper,
-                onHomeVisibilityChange = onHomeVisibilityChange,
-                onLiveTvVisibilityChange = onLiveTvVisibilityChange,
-                onSportsVisibilityChange = onSportsVisibilityChange,
-                onLucidTvVisibilityChange = onLucidTvVisibilityChange,
-            )
-        }
-    }
-}
-
-@Composable
-private fun CatalogVisibilityDropdown(
-    scraper: PluginScraper,
-    onHomeVisibilityChange: (Boolean) -> Unit,
-    onLiveTvVisibilityChange: (Boolean) -> Unit,
-    onSportsVisibilityChange: (Boolean) -> Unit,
-    onLucidTvVisibilityChange: (Boolean) -> Unit,
-) {
-    var expanded by rememberSaveable(scraper.id) { mutableStateOf(false) }
-    val homeLabel = stringResource(Res.string.plugins_show_on_home)
-    val liveTvLabel = stringResource(Res.string.plugins_show_in_live_tv)
-    val sportsLabel = stringResource(Res.string.plugins_show_in_sports)
-    val lucidTvLabel = stringResource(Res.string.plugins_show_in_lucid_tv)
-    val activeLabels = listOfNotNull(
-        homeLabel.takeIf { scraper.showOnHome },
-        liveTvLabel.takeIf { scraper.showInLiveTv },
-        sportsLabel.takeIf { scraper.showInSports },
-        lucidTvLabel.takeIf { scraper.showInLucidTv },
-    )
-
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { expanded = !expanded }
-                .padding(vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Visibility,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    text = stringResource(Res.string.plugins_catalog_visibility),
+                    text = stringResource(Res.string.plugins_show_in_live_tv),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                Text(
-                    text = activeLabels.takeIf { it.isNotEmpty() }?.joinToString(" · ")
-                        ?: stringResource(Res.string.plugins_catalog_visibility_none),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (activeLabels.isEmpty()) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Switch(
+                    checked = scraper.showInLiveTv,
+                    onCheckedChange = onLiveTvVisibilityChange,
+                    enabled = scraper.manifestEnabled,
                 )
             }
-            Icon(
-                imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
-        AnimatedVisibility(visible = expanded) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f),
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    CatalogVisibilityToggle(
-                        label = homeLabel,
-                        checked = scraper.showOnHome,
-                        onCheckedChange = onHomeVisibilityChange,
-                    )
-                    CatalogVisibilityToggle(
-                        label = liveTvLabel,
-                        checked = scraper.showInLiveTv,
-                        onCheckedChange = onLiveTvVisibilityChange,
-                    )
-                    CatalogVisibilityToggle(
-                        label = sportsLabel,
-                        checked = scraper.showInSports,
-                        onCheckedChange = onSportsVisibilityChange,
-                    )
-                    CatalogVisibilityToggle(
-                        label = lucidTvLabel,
-                        checked = scraper.showInLucidTv,
-                        onCheckedChange = onLucidTvVisibilityChange,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CatalogVisibilityToggle(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-        )
     }
 }
 

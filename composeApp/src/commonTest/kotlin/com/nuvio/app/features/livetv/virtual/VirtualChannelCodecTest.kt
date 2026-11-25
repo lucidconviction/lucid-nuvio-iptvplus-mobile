@@ -150,6 +150,66 @@ class VirtualChannelCodecTest {
     }
 
     @Test
+    fun pluginCatalogChoiceRoundTrips() {
+        val spec = VirtualChannelSpec(
+            id = "vc_plugin",
+            name = "FStream: En direct",
+            kind = VirtualChannelKind.ADDON_ROTATE,
+            source = VirtualSource.PluginCatalog(
+                scraperId = "https://example.com/repo.json:FStream",
+                scraperName = "FStream",
+                categoryApiIndex = 2,
+                categoryTabName = "En direct",
+                categoryLabel = "FStream · En direct",
+            ),
+        )
+        val decoded = VirtualChannelCodec.decodeSpecs(VirtualChannelCodec.encodeSpecs(listOf(spec))).single()
+        val source = decoded.source as VirtualSource.PluginCatalog
+        assertEquals("https://example.com/repo.json:FStream", source.scraperId)
+        assertEquals(2, source.categoryApiIndex)
+        assertEquals("En direct", source.categoryTabName)
+        assertEquals("FStream · En direct", source.categoryLabel)
+    }
+
+    @Test
+    fun newChannelsDefaultToA25ItemPool() {
+        assertEquals(25, VirtualPoolRules().maxItems)
+        val raw = """
+            {"id":"vc_fresh","name":"Fresh","kind":"ADDON_ROTATE","pool":{},
+             "source":{"type":"addon_catalog","manifestUrl":"https://example.com/manifest.json",
+                       "catalogId":"top","contentType":"movie"}}
+        """.trimIndent()
+        assertEquals(
+            25,
+            VirtualChannelCodec.decodeSpecs("[$raw]").single().pool.maxItems,
+        )
+    }
+
+    @Test
+    fun pinnedPluginSeriesRoundTrips() {
+        val spec = VirtualChannelSpec(
+            id = "vc_plugin_series",
+            name = "FStream: Dark Machine",
+            kind = VirtualChannelKind.SERIES_MARATHON,
+            source = VirtualSource.PluginCatalog(
+                scraperId = "repo:Goojara",
+                scraperName = "Goojara",
+                categoryApiIndex = 1,
+                categoryTabName = "Recently Updated Series",
+                categoryLabel = "Recently Updated Series",
+                seriesApiIndex = 2,
+                seriesUrl = "https://example.com/series/one",
+                seriesName = "Dark Machine",
+            ),
+        )
+        val decoded = VirtualChannelCodec.decodeSpecs(VirtualChannelCodec.encodeSpecs(listOf(spec))).single()
+        val source = decoded.source as VirtualSource.PluginCatalog
+        assertEquals(2, source.seriesApiIndex)
+        assertEquals("https://example.com/series/one", source.seriesUrl)
+        assertEquals("Dark Machine", source.seriesName)
+    }
+
+    @Test
     fun aPackCarriesEveryChannel() {
         val pack = VirtualChannelPack(
             schemaVersion = 1,

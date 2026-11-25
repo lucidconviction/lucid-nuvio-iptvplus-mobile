@@ -52,6 +52,12 @@ internal interface ExternalExtensionHost {
         query: String,
     ): List<PluginBrowseItem>
 
+    /** Catalogs/tabs the extension exposes. Does not fetch a page. */
+    suspend fun categories(
+        scraperId: String,
+        profileId: Int,
+    ): List<PluginBrowseCategory>
+
     /** Provider home/latest feed, one page at a time. */
     suspend fun latest(
         scraperId: String,

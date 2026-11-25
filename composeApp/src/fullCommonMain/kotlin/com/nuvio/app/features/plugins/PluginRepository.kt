@@ -957,12 +957,13 @@ actual object PluginRepository {
             )
             cached = scraperCached && cached
         }
-        if (!cached || snapshot.generation != persistenceGeneration.value) {
-            if (!cached) {
-                log.w { "Failed to persist plugin scraper cache for profile ${snapshot.profileId}" }
-            }
-            return
+        // Metadata is what makes installed CloudStream extensions and repositories survive a
+        // restart. A missing JavaScript code cache must never block that write, otherwise the
+        // next launch has no scrapers and Lucid TV shows an empty extension picker.
+        if (!cached) {
+            log.w { "Failed to persist plugin scraper cache for profile ${snapshot.profileId}" }
         }
+        if (snapshot.generation != persistenceGeneration.value) return
 
         synchronized(persistenceLock) {
             if (snapshot.generation != persistenceGeneration.value) return@synchronized
@@ -1085,6 +1086,13 @@ actual object PluginRepository {
         scraperId = scraperId,
         profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId),
         query = query,
+    )
+
+    internal actual suspend fun browseCategories(
+        scraperId: String,
+    ): List<PluginBrowseCategory> = externalExtensionHost.categories(
+        scraperId = scraperId,
+        profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId),
     )
 
     internal actual suspend fun browseLatest(

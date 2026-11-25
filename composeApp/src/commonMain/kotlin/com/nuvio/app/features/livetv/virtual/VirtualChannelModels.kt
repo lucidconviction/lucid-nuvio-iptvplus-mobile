@@ -68,6 +68,14 @@ sealed interface VirtualSource {
     data class PluginCatalog(
         val scraperId: String,
         val scraperName: String,
+        /** Chosen extension catalog/tab; null uses the extension's default latest feed. */
+        val categoryApiIndex: Int = 0,
+        val categoryTabName: String? = null,
+        val categoryLabel: String? = null,
+        /** Set when a series marathon is pinned to one series instead of a whole catalog. */
+        val seriesApiIndex: Int? = null,
+        val seriesUrl: String? = null,
+        val seriesName: String? = null,
     ) : VirtualSource
 
     data class ManualItems(val items: List<VirtualItem>) : VirtualSource
@@ -118,7 +126,7 @@ data class VirtualItem(
 )
 
 data class VirtualPoolRules(
-    val maxItems: Int = 2000,
+    val maxItems: Int = 25,
     val refreshHours: Int = 24,
     val minYear: Int? = null,
     val maxYear: Int? = null,

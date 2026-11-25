@@ -287,14 +287,16 @@ class CloudStreamExtensionLoader(
     }
 
     /**
-     * Settings can be registered late in a plugin's load(), after network setup or
-     * Activity-specific casts. If the callback is missing, inspect the DEX for the
-     * settings registration entry points so the gear still appears.
+     * Settings detection must stay cheap: probing every installed extension by loading its
+     * DEX at startup is what makes large repos slow and memory-hungry. Inspect the cached
+     * plugin when it is already loaded; otherwise scan the DEX for the settings entry points
+     * without executing the extension. The real callback is resolved on demand when the user
+     * taps the gear in [settingsCallback].
      */
     @Synchronized
     fun hasSettings(scraperId: String, profileId: Int): Boolean {
-        val callback = settingsCallback(scraperId, profileId)
-        if (callback != null) return true
+        val cached = (loaded[key(profileId, scraperId)]?.plugin as? Plugin)?.openSettings
+        if (cached != null) return true
         return extensionFile(scraperId, profileId).let { file ->
             file.isFile && dexMentionsSettings(file)
         }

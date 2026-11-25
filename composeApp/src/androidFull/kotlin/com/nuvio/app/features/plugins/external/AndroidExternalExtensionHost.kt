@@ -23,6 +23,20 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
 
     override val isSupported: Boolean = true
 
+    /**
+     * An extension is third-party DEX code. A failed provider must never take the app down;
+     * callers get an empty result and the cause is logged. Fatal VM errors still propagate.
+     */
+    private suspend fun <T> guarded(fallback: T, block: suspend () -> T): T = try {
+        block()
+    } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+    } catch (error: Throwable) {
+        if (error is VirtualMachineError || error is ThreadDeath) throw error
+        Log.e(TAG, "CloudStream host call failed: ${error.javaClass.simpleName}: ${error.message}", error)
+        fallback
+    }
+
     fun initialize(context: Context) {
         // Store only; Conscrypt/NiceHttp/Activity hooks initialize on first use.
         appContext = context.applicationContext
@@ -83,21 +97,23 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         // runtime's pause is a scheduling hint, not a correctness requirement.
         @Suppress("UNUSED_VARIABLE")
         val paused = searchPaused
-        return runner()?.execute(
-            scraperId = scraperId,
-            profileId = profileId,
-            tmdbId = tmdbId,
-            mediaType = mediaType,
-            season = season,
-            episode = episode,
-            contentTitle = contentTitle,
-            useFirstResult = useFirstResult,
-        ).orEmpty()
+        return guarded(emptyList()) {
+            runner()?.execute(
+                scraperId = scraperId,
+                profileId = profileId,
+                tmdbId = tmdbId,
+                mediaType = mediaType,
+                season = season,
+                episode = episode,
+                contentTitle = contentTitle,
+                useFirstResult = useFirstResult,
+            ).orEmpty()
+        }
     }
 
     override suspend fun hasSettings(scraperId: String, profileId: Int): Boolean =
         withContext(Dispatchers.IO) {
-            loader()?.hasSettings(scraperId, profileId) == true
+            guarded(false) { loader()?.hasSettings(scraperId, profileId) == true }
         }
 
     override fun openSettings(scraperId: String, profileId: Int) {
@@ -114,7 +130,14 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         profileId: Int,
         query: String,
     ): List<PluginBrowseItem> = withContext(Dispatchers.IO) {
-        runner()?.search(scraperId, profileId, query).orEmpty()
+        guarded(emptyList()) { runner()?.search(scraperId, profileId, query).orEmpty() }
+    }
+
+    override suspend fun categories(
+        scraperId: String,
+        profileId: Int,
+    ): List<PluginBrowseCategory> = withContext(Dispatchers.IO) {
+        guarded(emptyList()) { runner()?.categories(scraperId, profileId).orEmpty() }
     }
 
     override suspend fun latest(
@@ -123,7 +146,7 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         page: Int,
         category: PluginBrowseCategory?,
     ): PluginLatestPage? = withContext(Dispatchers.IO) {
-        runner()?.latest(scraperId, profileId, page, category)
+        guarded(null) { runner()?.latest(scraperId, profileId, page, category) }
     }
 
     override suspend fun loadDetail(
@@ -132,7 +155,7 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         apiIndex: Int,
         url: String,
     ): PluginBrowseDetail? = withContext(Dispatchers.IO) {
-        runner()?.loadDetail(scraperId, profileId, apiIndex, url)
+        guarded(null) { runner()?.loadDetail(scraperId, profileId, apiIndex, url) }
     }
 
     override suspend fun loadStreams(
@@ -144,7 +167,9 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         episode: Int?,
         timeoutMs: Long?,
     ): List<PluginRuntimeResult> = withContext(Dispatchers.IO) {
-        runner()?.loadStreams(scraperId, profileId, apiIndex, data, season, episode, timeoutMs).orEmpty()
+        guarded(emptyList()) {
+            runner()?.loadStreams(scraperId, profileId, apiIndex, data, season, episode, timeoutMs).orEmpty()
+        }
     }
 
     override fun isExtensionLoaded(scraperId: String, profileId: Int): Boolean =

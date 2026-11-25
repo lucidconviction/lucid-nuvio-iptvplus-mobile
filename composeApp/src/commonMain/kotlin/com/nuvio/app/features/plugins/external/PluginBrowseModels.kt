@@ -77,6 +77,12 @@ internal data class PluginLatestPage(
     val items: List<PluginBrowseItem>,
     val hasNext: Boolean,
     val categories: List<PluginBrowseCategory> = emptyList(),
+    /**
+     * The tab that actually produced these items. Several extensions leave their first
+     * "latest" tab empty, so the loader falls back to the first tab with results; callers
+     * must pass this category back when requesting page 2 and later.
+     */
+    val activeCategory: PluginBrowseCategory? = null,
 )
 
 /** Converts a provider result into the app's stream card model for the browse screen. */

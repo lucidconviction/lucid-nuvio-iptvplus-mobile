@@ -152,8 +152,7 @@ internal fun LiveTvPlayerOverlay(
         } else {
             pluginUiState.scrapers
                 .filter { scraper ->
-                    scraper.enabled &&
-                        scraper.manifestEnabled &&
+                    scraper.manifestEnabled &&
                         scraper.showInLiveTv &&
                         scraper.type == PluginRepositoryType.EXTERNAL_DEX
                 }

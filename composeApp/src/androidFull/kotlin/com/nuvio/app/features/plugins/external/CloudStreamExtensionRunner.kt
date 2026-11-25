@@ -25,6 +25,7 @@ import com.nuvio.app.features.tmdb.TmdbMetadataService
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
@@ -35,6 +36,30 @@ private const val EXECUTION_TIMEOUT_MS = 120_000L
 private const val LOAD_LINKS_TIMEOUT_MS = 60_000L
 private const val HOME_TIMEOUT_MS = 90_000L
 private const val MIN_TITLE_SIMILARITY = 0.5
+
+/**
+ * Some extensions resolve extractor links in detached coroutines and call the callback after
+ * loadLinks() has returned (Goojara does this). Keep the collector open until the link list has
+ * been quiet for a moment, otherwise those providers look like they returned zero links.
+ */
+private const val LATE_LINK_GRACE_MS = 3_500L
+private const val LATE_LINK_QUIET_AFTER_RESULT_MS = 600L
+private const val LATE_LINK_WAIT_CAP_MS = 12_000L
+
+/**
+ * Some extensions leave their "latest" tab empty (FStream's Tendances is one). When the
+ * default feed has no items, probe the remaining tabs for a few seconds each and use the
+ * first one that returns something. The budget stays small so Lucid TV's pool wait and the
+ * browse screen's first paint are not held up indefinitely.
+ */
+private const val TAB_FALLBACK_WINDOW_MS = 25_000L
+private const val TAB_PROBE_TIMEOUT_MS = 12_000L
+private const val MAX_TAB_FALLBACK_PROBES = 16
+
+private fun Throwable.isFatalExtensionError(): Boolean =
+    this is kotlinx.coroutines.CancellationException ||
+        this is VirtualMachineError ||
+        this is ThreadDeath
 
 /**
  * Bridges the app's TMDB-id model to CloudStream's text/URL provider API.
@@ -48,15 +73,72 @@ private const val MIN_TITLE_SIMILARITY = 0.5
  * `hasMainPage`, so honour real tabs instead of treating the provider as search-only.
  */
 internal fun cloudStreamBrowseTabs(api: MainAPI): List<MainPageData> {
-    val tabs = api.mainPage.orEmpty()
+    val tabs = try {
+        api.mainPage.orEmpty()
+    } catch (error: Throwable) {
+        if (error.isFatalExtensionError()) throw error
+        emptyList()
+    }
     val named = tabs.filter { it.name.isNotBlank() || it.data.isNotBlank() }
     if (named.isNotEmpty()) return named
-    return if (api.hasMainPage) tabs else emptyList()
+    return if (runCatching { api.hasMainPage }.getOrDefault(false)) tabs else emptyList()
 }
+
+private data class HomePage(
+    val apiIndex: Int,
+    val api: MainAPI,
+    val tab: MainPageData,
+    val items: List<PluginBrowseItem>,
+    val hasNext: Boolean,
+)
+
+private data class FallbackHome(
+    val category: PluginBrowseCategory,
+    val tab: MainPageData,
+    val items: List<PluginBrowseItem>,
+    val hasNext: Boolean,
+)
+
+private fun browseCategory(
+    apiIndex: Int,
+    api: MainAPI,
+    tab: MainPageData,
+    providerCount: Int,
+): PluginBrowseCategory {
+    val label = tab.name.ifBlank { tab.data }
+    return PluginBrowseCategory(
+        apiIndex = apiIndex,
+        apiName = api.name,
+        tabName = label,
+        label = if (providerCount > 1) "${api.name} · $label" else label,
+    )
+}
+
+private fun tabKey(tab: MainPageData): String = tab.name.ifBlank { tab.data }
+
+private fun buildBrowseCategories(
+    apis: List<MainAPI>,
+    tabsByApi: List<List<MainPageData>>,
+): List<PluginBrowseCategory> = buildList {
+    apis.forEachIndexed { index, api ->
+        tabsByApi.getOrNull(index).orEmpty().forEach { tab ->
+            if (tabKey(tab).isBlank()) return@forEach
+            add(browseCategory(index, api, tab, apis.size))
+        }
+    }
+}.distinctBy { it.key }
 
 internal class CloudStreamExtensionRunner(
     private val loader: CloudStreamExtensionLoader,
 ) {
+    /**
+     * The tab each provider used on its last successful page. Without this, page 2 of an
+     * extension whose "latest" tab is empty would silently switch back to that empty tab.
+     */
+    private val selectedTabs = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun tabCacheKey(profileId: Int, scraperId: String, apiIndex: Int): String =
+        "$profileId:$scraperId:$apiIndex"
     suspend fun execute(
         scraperId: String,
         profileId: Int,
@@ -79,13 +161,9 @@ internal class CloudStreamExtensionRunner(
                             withTimeoutOrNull(EXECUTION_TIMEOUT_MS) {
                                 executeApi(api, tmdbId, mediaType, season, episode, contentTitle, useFirstResult)
                             } ?: emptyList()
-                        } catch (e: Exception) {
+                        } catch (e: Throwable) {
+                            if (e.isFatalExtensionError()) throw e
                             Log.w(TAG, "Provider ${api.name} failed: ${e.javaClass.simpleName}: ${e.message}")
-                            emptyList()
-                        } catch (e: LinkageError) {
-                            Log.w(TAG, "Provider ${api.name} linkage error: ${e.javaClass.simpleName}: ${e.message}")
-                            emptyList()
-                        } catch (e: NotImplementedError) {
                             emptyList()
                         }
                     }
@@ -124,15 +202,9 @@ internal class CloudStreamExtensionRunner(
                     try {
                         api.search(query, 1)?.items.orEmpty()
                             .map { result -> result.toBrowseItem(index, api.name) }
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
+                    } catch (e: Throwable) {
+                        if (e.isFatalExtensionError()) throw e
                         Log.d(TAG, "${api.name}: browse search failed: ${e.javaClass.simpleName}")
-                        emptyList()
-                    } catch (e: LinkageError) {
-                        Log.d(TAG, "${api.name}: browse search linkage error")
-                        emptyList()
-                    } catch (e: NotImplementedError) {
                         emptyList()
                     }
                 }
@@ -141,8 +213,24 @@ internal class CloudStreamExtensionRunner(
     }
 
     /**
+     * Catalogs/tabs exposed by the extension. Loading the package is enough; no page is
+     * fetched, so the Lucid TV source picker can show a catalog list immediately.
+     */
+    suspend fun categories(
+        scraperId: String,
+        profileId: Int,
+    ): List<PluginBrowseCategory> {
+        val apis = loader.loadExtension(scraperId, profileId)
+        if (apis.isEmpty()) return emptyList()
+        return buildBrowseCategories(apis, apis.map { cloudStreamBrowseTabs(it) })
+    }
+
+    /**
      * Provider home/latest feed. Uses the first (or explicitly "latest") tab
      * exposed by the extension; returns null when the provider has no feed.
+     *
+     * When the default tab is empty, the loader probes the provider's other tabs so
+     * extensions that leave "latest" blank still populate Lucid TV and browse rows.
      */
     suspend fun latest(
         scraperId: String,
@@ -154,22 +242,7 @@ internal class CloudStreamExtensionRunner(
         if (apis.isEmpty()) return null
 
         val tabsByApi = apis.map { cloudStreamBrowseTabs(it) }
-        val categories = buildList {
-            apis.forEachIndexed { index, api ->
-                tabsByApi[index].forEach { tab ->
-                    val label = tab.name.ifBlank { tab.data }
-                    if (label.isBlank()) return@forEach
-                    add(
-                        PluginBrowseCategory(
-                            apiIndex = index,
-                            apiName = api.name,
-                            tabName = label,
-                            label = if (apis.size > 1) "${api.name} · $label" else label,
-                        ),
-                    )
-                }
-            }
-        }.distinctBy { it.key }
+        val categories = buildBrowseCategories(apis, tabsByApi)
 
         val targets = if (category != null) {
             val api = apis.getOrNull(category.apiIndex) ?: return null
@@ -180,10 +253,14 @@ internal class CloudStreamExtensionRunner(
         } else {
             apis.mapIndexedNotNull { index, api ->
                 val tabs = tabsByApi[index]
-                val tab = tabs.firstOrNull {
-                    it.name.contains("latest", ignoreCase = true) ||
-                        it.data.contains("latest", ignoreCase = true)
-                } ?: tabs.firstOrNull() ?: return@mapIndexedNotNull null
+                val remembered = selectedTabs[tabCacheKey(profileId, scraperId, index)]
+                val tab = tabs.firstOrNull { tabKey(it) == remembered }
+                    ?: tabs.firstOrNull {
+                        it.name.contains("latest", ignoreCase = true) ||
+                            it.data.contains("latest", ignoreCase = true)
+                    }
+                    ?: tabs.firstOrNull()
+                    ?: return@mapIndexedNotNull null
                 Triple(index, api, tab)
             }
         }
@@ -191,49 +268,120 @@ internal class CloudStreamExtensionRunner(
             Log.d(
                 TAG,
                 "browse tabs: " + apis.mapIndexed { index, api ->
-                    "${api.name}(has=${api.hasMainPage}, tabs=${tabsByApi[index].size})"
+                    "${api.name}(has=${runCatching { api.hasMainPage }.getOrDefault(false)}, tabs=${tabsByApi[index].size})"
                 }.joinToString(),
             )
         }
 
-        val homes = coroutineScope {
+        var homes = coroutineScope {
             targets.map { (index, api, tab) ->
-                async {
-                    try {
-                        val request = MainPageRequest(tab.name, tab.data, tab.horizontalImages)
-                        val response = withTimeoutOrNull(HOME_TIMEOUT_MS) {
-                            api.getMainPage(page, request)
-                        } ?: run {
-                            Log.d(TAG, "${api.name}/${tab.name}: home page $page timed out")
-                            return@async null
-                        }
-                        val items = response.items
-                            .flatMap { list -> list.list.map { it.toBrowseItem(index, api.name) } }
-                            .distinctBy { it.apiIndex to it.url }
-                        Log.d(
-                            TAG,
-                            "${api.name}/${tab.name}: home page $page -> ${items.size} items, next=${response.hasNext}",
-                        )
-                        items to response.hasNext
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.d(TAG, "${api.name}/${tab.name}: home page $page failed: ${e.javaClass.simpleName}: ${e.message}")
-                        null
-                    } catch (e: LinkageError) {
-                        Log.d(TAG, "${api.name}/${tab.name}: home page linkage error")
-                        null
-                    } catch (e: NotImplementedError) {
-                        null
-                    }
-                }
+                async { fetchHomePage(index, api, tab, page, HOME_TIMEOUT_MS) }
             }.awaitAll().filterNotNull()
         }
+        var activeCategory = if (apis.size == 1) {
+            homes
+                .filter { it.items.isNotEmpty() }
+                .takeIf { it.size == 1 }
+                ?.first()
+                ?.let { browseCategory(it.apiIndex, it.api, it.tab, apis.size) }
+        } else {
+            null
+        }
+
+        // "Latest" is optional. FStream, for example, returns zero items for Tendances.
+        // Probe the remaining tabs instead of leaving Lucid TV with an empty pool.
+        if (homes.none { it.items.isNotEmpty() } && category == null && page == 1) {
+            findFallbackHome(apis, tabsByApi, targets)?.let { fallback ->
+                homes = listOf(
+                    HomePage(
+                        apiIndex = fallback.category.apiIndex,
+                        api = apis[fallback.category.apiIndex],
+                        tab = fallback.tab,
+                        items = fallback.items,
+                        hasNext = fallback.hasNext,
+                    ),
+                )
+                activeCategory = fallback.category
+            }
+        }
+
+        homes
+            .filter { it.items.isNotEmpty() }
+            .forEach { home ->
+                selectedTabs[tabCacheKey(profileId, scraperId, home.apiIndex)] = tabKey(home.tab)
+            }
+
         return PluginLatestPage(
-            items = homes.flatMap { it.first }.distinctBy { it.apiIndex to it.url },
-            hasNext = homes.any { it.second },
+            items = homes.flatMap { it.items }.distinctBy { it.apiIndex to it.url },
+            hasNext = homes.any { it.hasNext },
             categories = categories,
+            activeCategory = activeCategory,
         )
+    }
+
+    private suspend fun fetchHomePage(
+        apiIndex: Int,
+        api: MainAPI,
+        tab: MainPageData,
+        page: Int,
+        timeoutMs: Long,
+    ): HomePage? {
+        return try {
+            val request = MainPageRequest(tab.name, tab.data, tab.horizontalImages)
+            val response = withTimeoutOrNull(timeoutMs) {
+                api.getMainPage(page, request)
+            } ?: run {
+                Log.d(TAG, "${api.name}/${tab.name}: home page $page timed out")
+                return null
+            }
+            val items = response.items
+                .flatMap { list -> list.list.map { it.toBrowseItem(apiIndex, api.name) } }
+                .distinctBy { it.apiIndex to it.url }
+            Log.d(
+                TAG,
+                "${api.name}/${tab.name}: home page $page -> ${items.size} items, next=${response.hasNext}",
+            )
+            HomePage(apiIndex, api, tab, items, response.hasNext)
+        } catch (e: Throwable) {
+            if (e.isFatalExtensionError()) throw e
+            Log.d(TAG, "${api.name}/${tab.name}: home page $page failed: ${e.javaClass.simpleName}: ${e.message}")
+            null
+        }
+    }
+
+    private suspend fun findFallbackHome(
+        apis: List<MainAPI>,
+        tabsByApi: List<List<MainPageData>>,
+        attempted: List<Triple<Int, MainAPI, MainPageData>>,
+    ): FallbackHome? {
+        val attemptedKeys = attempted.mapTo(HashSet()) { (index, _, tab) -> index to tabKey(tab) }
+        val deadline = System.currentTimeMillis() + TAB_FALLBACK_WINDOW_MS
+        var probes = 0
+        for ((index, api) in apis.withIndex()) {
+            for (tab in tabsByApi.getOrNull(index).orEmpty()) {
+                val key = tabKey(tab)
+                if (key.isBlank() || !attemptedKeys.add(index to key)) continue
+                if (probes++ >= MAX_TAB_FALLBACK_PROBES) return null
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0L) return null
+                val home = fetchHomePage(
+                    apiIndex = index,
+                    api = api,
+                    tab = tab,
+                    page = 1,
+                    timeoutMs = minOf(remaining, TAB_PROBE_TIMEOUT_MS),
+                ) ?: continue
+                if (home.items.isNotEmpty()) {
+                    return FallbackHome(
+                        category = browseCategory(index, api, tab, apis.size),
+                        tab = tab,
+                        items = home.items,
+                        hasNext = home.hasNext,
+                    )
+                }
+            }
+        }
+        return null
     }
 
     private fun SearchResponse.toBrowseItem(apiIndex: Int, apiName: String): PluginBrowseItem =
@@ -257,12 +405,9 @@ internal class CloudStreamExtensionRunner(
         val api = loader.loadExtension(scraperId, profileId).getOrNull(apiIndex) ?: return null
         val response = try {
             api.load(url)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            if (e.isFatalExtensionError()) throw e
             Log.d(TAG, "${api.name}: browse load failed: ${e.javaClass.simpleName}")
-            null
-        } catch (e: LinkageError) {
             null
         } ?: return null
 
@@ -373,7 +518,35 @@ internal class CloudStreamExtensionRunner(
         timeoutMs: Long? = null,
     ): List<PluginRuntimeResult> {
         val api = loader.loadExtension(scraperId, profileId).getOrNull(apiIndex) ?: return emptyList()
-        return loadLinks(api, data, timeoutMs ?: LOAD_LINKS_TIMEOUT_MS)
+        val links = loadLinks(api, data, timeoutMs ?: LOAD_LINKS_TIMEOUT_MS)
+        if (links.isNotEmpty()) return links
+        // Live providers often return the playable HLS/DASH URL as the load() data and rely
+        // on an extractor to echo it back. If that extractor is missing or fails, keep the
+        // direct URL instead of reporting a dead channel.
+        return listOfNotNull(directMediaResult(api.name, data))
+    }
+
+    private fun directMediaResult(provider: String, data: String): PluginRuntimeResult? {
+        val url = data.trim()
+        if (!url.startsWith("http://", ignoreCase = true) &&
+            !url.startsWith("https://", ignoreCase = true)
+        ) {
+            return null
+        }
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        val type = when {
+            path.endsWith(".m3u8") -> "hls"
+            path.endsWith(".mpd") -> "dash"
+            listOf(".mp4", ".mkv", ".ts", ".flv", ".webm", ".mp3").any { path.endsWith(it) } -> null
+            else -> return null
+        }
+        return PluginRuntimeResult(
+            title = "Direct",
+            name = "Direct",
+            url = url,
+            type = type,
+            provider = provider,
+        )
     }
 
     private fun SearchResponse.browseType(): String = when (type?.name) {
@@ -472,12 +645,9 @@ internal class CloudStreamExtensionRunner(
 
     private suspend fun trySearch(api: MainAPI, query: String): List<SearchResponse>? = try {
         api.search(query, 1)?.items
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
+        if (e.isFatalExtensionError()) throw e
         Log.d(TAG, "search(\"$query\") failed: ${e.javaClass.simpleName}: ${e.message}")
-        null
-    } catch (e: LinkageError) {
-        null
-    } catch (e: NotImplementedError) {
         null
     }
 
@@ -510,6 +680,7 @@ internal class CloudStreamExtensionRunner(
         val subtitles = Collections.synchronizedList(mutableListOf<SubtitleFile>())
 
         val completed = withTimeoutOrNull(timeoutMs) {
+            var callCompleted = false
             try {
                 api.loadLinks(
                     data = data,
@@ -517,20 +688,47 @@ internal class CloudStreamExtensionRunner(
                     subtitleCallback = { subtitles.add(it) },
                     callback = { links.add(it) },
                 )
-                true
-            } catch (e: Exception) {
+                callCompleted = true
+            } catch (e: Throwable) {
+                if (e.isFatalExtensionError()) throw e
                 Log.w(TAG, "loadLinks failed: ${e.javaClass.simpleName}: ${e.message} (${links.size} links)")
-                false
-            } catch (e: LinkageError) {
-                Log.w(TAG, "loadLinks linkage error: ${e.javaClass.simpleName}: ${e.message} (${links.size} links)")
-                false
             }
+
+            // Keep collecting detached extractor callbacks for a short window. If the
+            // provider already produced links, wait only for a quiet beat; if it produced
+            // none, give detached resolvers more time before declaring the item dead.
+            val quietMs = if (links.isNotEmpty()) {
+                LATE_LINK_QUIET_AFTER_RESULT_MS
+            } else {
+                LATE_LINK_GRACE_MS
+            }
+            val capAt = System.currentTimeMillis() + LATE_LINK_WAIT_CAP_MS
+            var lastCount = links.size + subtitles.size
+            var lastChangeAt = System.currentTimeMillis()
+            while (true) {
+                delay(100)
+                val now = System.currentTimeMillis()
+                val count = links.size + subtitles.size
+                if (count != lastCount) {
+                    lastCount = count
+                    lastChangeAt = now
+                } else if (now - lastChangeAt >= quietMs) {
+                    break
+                }
+                if (now >= capAt) break
+            }
+            if (links.isNotEmpty() || !callCompleted) {
+                Log.d(
+                    TAG,
+                    "${api.name}: collected ${links.size} links after loadLinks returned (completed=$callCompleted)",
+                )
+            }
+            callCompleted
         }
         if (completed == null) {
             Log.w(TAG, "loadLinks timed out after ${timeoutMs}ms (${links.size} links collected)")
         }
-        Log.d(TAG, "${api.name}: ${links.size} links, ${subtitles.size} subtitles")
-
+        Log.d(TAG, "${api.name}: ${links.size} links, ${subtitles.size} subtitles completed=$completed")
         val domainSubtitles = subtitles.mapNotNull { file ->
             val url = file.url.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val language = file.lang.takeIf { it.isNotBlank() } ?: "Unknown"

@@ -1112,8 +1112,7 @@ private fun AddonsCatalogInlineSection(
         } else {
             pluginsUiState.scrapers
                 .filter { scraper ->
-                    scraper.enabled &&
-                        scraper.manifestEnabled &&
+                    scraper.manifestEnabled &&
                         scraper.showInLiveTv &&
                         scraper.type == PluginRepositoryType.EXTERNAL_DEX
                 }
