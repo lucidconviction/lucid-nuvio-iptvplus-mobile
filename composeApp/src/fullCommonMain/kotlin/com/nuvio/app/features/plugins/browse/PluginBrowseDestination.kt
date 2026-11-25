@@ -8,6 +8,8 @@ import com.nuvio.app.openPreview
 import com.nuvio.app.core.ui.NuvioToastController
 import com.nuvio.app.features.player.PlayerLaunch
 import com.nuvio.app.features.player.PlayerLaunchStore
+import com.nuvio.app.features.player.PluginPlaybackQueue
+import com.nuvio.app.features.player.PluginPlaybackSession
 import com.nuvio.app.features.player.sanitizePlaybackHeaders
 import com.nuvio.app.features.player.sanitizePlaybackResponseHeaders
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
@@ -84,10 +86,32 @@ internal actual fun PluginBrowseDestination(
                 }
 
                 val contentId = "pluginbrowse:$providerAddonId:${item.apiIndex}:${item.url.hashCode()}"
-                val contentType = if (detail.isSeries) "tv" else "movie"
+                val contentType = if (detail.isSeries) "series" else "movie"
+                val episodeVideoId = episode?.let { selected ->
+                    val season = selected.season
+                    val number = selected.episode
+                    if (season != null && number != null) {
+                        "$contentId:$season:$number"
+                    } else {
+                        contentId
+                    }
+                } ?: contentId
+                if (detail.isSeries && episode != null && providerAddonId == "plugin:${route.scraperId}") {
+                    PluginPlaybackQueue.put(
+                        PluginPlaybackSession(
+                            seriesId = contentId,
+                            scraperId = route.scraperId,
+                            scraperName = route.scraperName,
+                            providerName = providerName,
+                            providerId = providerAddonId,
+                            item = item,
+                            detail = detail,
+                        ),
+                    )
+                }
                 val contentKey = StreamLinkCacheRepository.contentKey(
                     type = contentType,
-                    videoId = contentId,
+                    videoId = episodeVideoId,
                     parentMetaId = contentId,
                     season = episode?.season,
                     episode = episode?.episode,
@@ -126,7 +150,7 @@ internal actual fun PluginBrowseDestination(
                     providerAddonId = providerAddonId,
                     fromLiveTvSection = route.fromLiveTvSection,
                     contentType = contentType,
-                    videoId = contentId,
+                    videoId = episodeVideoId,
                     parentMetaId = contentId,
                     parentMetaType = contentType,
                     bingeGroup = stream.behaviorHints.bingeGroup,

@@ -80,7 +80,8 @@ class HomeScreenTest {
     @Test
     fun `home trakt continue watching candidate limits match TV`() {
         assertEquals(300, HomeContinueWatchingMaxRecentProgressItems)
-        assertEquals(32, HomeNextUpInitialResolutionLimit)
+        assertEquals(10, HomeNextUpInitialResolutionLimit)
+        assertEquals(2, HomeNextUpDeferredResolutionLimit)
     }
 
     @Test
@@ -90,9 +91,9 @@ class HomeScreenTest {
         val plan = planHomeNextUpResolutionCandidates(candidates)
 
         assertEquals(HomeNextUpInitialResolutionLimit, plan.initialCandidates.size)
-        assertEquals(3, plan.deferredCandidates.size)
+        assertEquals(HomeNextUpDeferredResolutionLimit, plan.deferredCandidates.size)
         assertEquals("show-1", plan.initialCandidates.first().content.id)
-        assertEquals("show-33", plan.deferredCandidates.first().content.id)
+        assertEquals("show-11", plan.deferredCandidates.first().content.id)
     }
 
     @Test

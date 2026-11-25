@@ -28,6 +28,7 @@ import org.json.JSONObject
 
 private const val TAG = "CloudStreamLoader"
 private const val MAX_DEX_SIZE = 10L * 1024 * 1024
+private const val MAX_LOADED_EXTENSIONS = 12
 
 /** Legacy entry points occasionally expose the registration API without extending BasePlugin. */
 private fun looksLikePlugin(instance: Any): Boolean = instance.javaClass.methods.any { method ->
@@ -114,7 +115,7 @@ class CloudStreamExtensionLoader(
         .followRedirects(true)
         .build()
 
-    private val loaded = mutableMapOf<String, LoadedExtension>()
+    private val loaded = LinkedHashMap<String, LoadedExtension>(16, 0.75f, true)
     private val preloaded = mutableSetOf<String>()
 
     private fun key(profileId: Int, scraperId: String) = "$profileId:$scraperId"
@@ -251,6 +252,7 @@ class CloudStreamExtensionLoader(
             extractorRegistry.registerAll(extractors)
             if (providers.isNotEmpty() || extractors.isNotEmpty() || (plugin as? Plugin)?.openSettings != null) {
                 loaded[cacheKey] = LoadedExtension(plugin, providers.toList(), extractors)
+                trimLoadedCache(keepKey = cacheKey)
             }
             Log.d(
                 TAG,
@@ -341,10 +343,37 @@ class CloudStreamExtensionLoader(
         evictCache(scraperId, profileId)
     }
 
+    /** Drop every cached extension under memory pressure. */
+    @Synchronized
+    fun releaseAll() {
+        preloaded.clear()
+        val keys = loaded.keys.toList()
+        keys.forEach { key ->
+            loaded.remove(key)?.let(::unloadExtension)
+        }
+    }
+
     @Synchronized
     private fun evictCache(scraperId: String, profileId: Int) {
         preloaded.remove(key(profileId, scraperId))
         val extension = loaded.remove(key(profileId, scraperId)) ?: return
+        unloadExtension(extension)
+    }
+
+    /**
+     * Large CloudStream installs can hold hundreds of packages. Keeping every DexClassLoader
+     * alive is a major heap cost, so retain only a small working set.
+     */
+    private fun trimLoadedCache(keepKey: String) {
+        while (loaded.size > MAX_LOADED_EXTENSIONS) {
+            val victim = loaded.entries.firstOrNull { it.key != keepKey } ?: break
+            loaded.remove(victim.key)
+            preloaded.remove(victim.key)
+            unloadExtension(victim.value)
+        }
+    }
+
+    private fun unloadExtension(extension: LoadedExtension) {
         try {
             extension.plugin?.beforeUnload()
         } catch (failure: Throwable) {

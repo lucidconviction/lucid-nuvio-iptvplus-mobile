@@ -98,8 +98,14 @@ internal object LiveTvRepository {
     val displayChannels: StateFlow<List<LiveChannel>> = combine(
         combine(
             combine(_channels, VirtualChannelRepository.channels) { playlistChannels, virtualChannels ->
-                if (virtualChannels.isEmpty()) playlistChannels
-                else (playlistChannels + virtualChannels).distinctBy { it.key }
+                if (virtualChannels.isEmpty()) {
+                    playlistChannels
+                } else {
+                    // Avoid a 170k-entry hash set on every rebuild: virtual channels are a
+                    // small overlay, so remove only their key collisions from the playlist.
+                    val virtualKeys = virtualChannels.mapTo(HashSet(virtualChannels.size)) { it.key }
+                    playlistChannels.filterNot { it.key in virtualKeys } + virtualChannels
+                }
             },
             prefs.userState, prefs.settings, _epgLogos,
             prefs.playlists.map { list -> list.filter { it.logoSource == "epg" }.mapTo(HashSet()) { it.id } }.distinctUntilChanged()
@@ -1035,11 +1041,14 @@ internal object LiveTvRepository {
         return channels.map { c ->
             val id = stableId(c.key)
             val cleaned = if (terms.isEmpty()) null else ChannelNameEditor.clean(c.name, terms, spaced[c.sourceId].orEmpty()).takeIf { it != c.name }
-            c.copy(
-                name = user.channelNames[c.key] ?: id?.let { namesById[it] } ?: cleaned ?: c.name,
-                number = user.channelNumbers[c.key] ?: id?.let { numbersById[it] } ?: c.number,
-                group = user.groupNames[c.groupId] ?: c.group
-            )
+            val newName = user.channelNames[c.key] ?: id?.let { namesById[it] } ?: cleaned ?: c.name
+            val newNumber = user.channelNumbers[c.key] ?: id?.let { numbersById[it] } ?: c.number
+            val newGroup = user.groupNames[c.groupId] ?: c.group
+            if (newName == c.name && newNumber == c.number && newGroup == c.group) {
+                c
+            } else {
+                c.copy(name = newName, number = newNumber, group = newGroup)
+            }
         }
     }
 

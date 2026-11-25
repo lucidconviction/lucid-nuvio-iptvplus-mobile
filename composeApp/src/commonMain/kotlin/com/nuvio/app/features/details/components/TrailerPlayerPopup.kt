@@ -54,6 +54,7 @@ fun TrailerPlayerPopup(
     errorMessage: String?,
     onDismiss: () -> Unit,
     onRetry: (() -> Unit)? = null,
+    onOpenExternal: (() -> Unit)? = null,
 ) {
     if (!visible) return
 
@@ -94,6 +95,7 @@ fun TrailerPlayerPopup(
                 isLoading = isLoading,
                 errorMessage = errorMessage,
                 onRetry = onRetry,
+                onOpenExternal = onOpenExternal,
                 modifier = Modifier.fillMaxSize(),
                 title = headerSubtitle.ifBlank { headerType },
                 onExitFullscreen = exitFullscreen,
@@ -168,6 +170,7 @@ fun TrailerPlayerPopup(
                 isLoading = isLoading,
                 errorMessage = errorMessage,
                 onRetry = onRetry,
+                onOpenExternal = onOpenExternal,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))

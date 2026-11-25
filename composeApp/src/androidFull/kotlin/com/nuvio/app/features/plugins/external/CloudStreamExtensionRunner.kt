@@ -496,7 +496,9 @@ internal class CloudStreamExtensionRunner(
             }
         },
         trailers = trailers.orEmpty().mapNotNull { trailer ->
-            trailer.extractorUrl?.takeIf { it.isNotBlank() }?.let(::PluginBrowseTrailer)
+            trailer.extractorUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                PluginBrowseTrailer(url = url, headers = trailer.headers.orEmpty())
+            }
         },
         recommendations = recommendations.orEmpty()
             .filter { it.url != url }

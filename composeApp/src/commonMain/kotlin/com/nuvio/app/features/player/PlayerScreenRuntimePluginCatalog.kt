@@ -7,6 +7,7 @@ import com.nuvio.app.features.plugins.PluginRuntimeResult
 import com.nuvio.app.features.plugins.PluginScraper
 import com.nuvio.app.features.plugins.external.PluginBrowseItem
 import com.nuvio.app.features.plugins.external.toBrowseStreamItem
+import com.nuvio.app.features.streams.StreamItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -44,30 +45,7 @@ internal fun PlayerScreenRuntime.playPluginCatalogItem(
 
             val providerName = "CloudStream · ${scraper.name}"
             val providerId = "plugin:${scraper.id}"
-            val stream = results
-                .asSequence()
-                .filter { it.url.isNotBlank() }
-                .sortedWith(
-                    compareByDescending<PluginRuntimeResult> { pluginQualityRank(it.quality) }
-                        .thenByDescending { it.seeders ?: 0 },
-                )
-                .mapNotNull { result ->
-                    result.toBrowseStreamItem(providerName = providerName, providerId = providerId)
-                        .takeIf { it.playableDirectUrl != null }
-                }
-                .firstOrNull { candidate ->
-                    val url = candidate.playableDirectUrl ?: return@firstOrNull false
-                    runCatching {
-                        QuickStreamChecker.isHlsManifestUsable(
-                            url = url,
-                            headers = candidate.behaviorHints.proxyHeaders?.request.orEmpty(),
-                        )
-                    }.getOrDefault(true)
-                }
-                ?: results.firstNotNullOfOrNull { result ->
-                    result.toBrowseStreamItem(providerName = providerName, providerId = providerId)
-                        .takeIf { it.playableDirectUrl != null }
-                }
+            val stream = selectPluginPlaybackStream(results, providerName, providerId)
 
             if (stream == null) {
                 NuvioToastController.show("No streams found for ${item.name}")
@@ -136,6 +114,45 @@ internal fun PlayerScreenRuntime.playPluginCatalogItem(
             onFinished(started)
         }
     }
+}
+
+/**
+ * Picks the best playable link returned by an extension, preferring the current binge group
+ * when requested. HLS results are probed so a dead manifest does not take over playback.
+ */
+internal suspend fun selectPluginPlaybackStream(
+    results: List<PluginRuntimeResult>,
+    providerName: String,
+    providerId: String,
+    preferredBingeGroup: String? = null,
+): StreamItem? {
+    val candidates = results
+        .asSequence()
+        .filter { it.url.isNotBlank() }
+        .sortedWith(
+            compareByDescending<PluginRuntimeResult> { pluginQualityRank(it.quality) }
+                .thenByDescending { it.seeders ?: 0 },
+        )
+        .mapNotNull { result ->
+            result.toBrowseStreamItem(providerName = providerName, providerId = providerId)
+                .takeIf { it.playableDirectUrl != null }
+        }
+        .toList()
+    if (preferredBingeGroup != null) {
+        candidates
+            .firstOrNull { it.behaviorHints.bingeGroup == preferredBingeGroup }
+            ?.let { return it }
+    }
+    val verified = candidates.firstOrNull { candidate ->
+        val url = candidate.playableDirectUrl ?: return@firstOrNull false
+        runCatching {
+            QuickStreamChecker.isHlsManifestUsable(
+                url = url,
+                headers = candidate.behaviorHints.proxyHeaders?.request.orEmpty(),
+            )
+        }.getOrDefault(true)
+    }
+    return verified ?: candidates.firstOrNull()
 }
 
 private fun pluginQualityRank(quality: String?): Int {

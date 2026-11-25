@@ -224,17 +224,6 @@ private fun CloudStreamProviderTile(
                     )
                 }
             }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Black.copy(alpha = 0.10f),
-                            0.42f to Color.Black.copy(alpha = 0.50f),
-                            1f to Color.Black.copy(alpha = 0.92f),
-                        ),
-                    ),
-            )
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)

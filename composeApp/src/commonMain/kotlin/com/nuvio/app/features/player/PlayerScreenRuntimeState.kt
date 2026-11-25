@@ -212,6 +212,8 @@ internal class PlayerScreenRuntime(
     var episodeStreamsPanelState by mutableStateOf(EpisodeStreamsPanelState())
     var playerMetaVideos by mutableStateOf<List<MetaVideo>>(emptyList())
     var playerMeta by mutableStateOf<MetaDetails?>(null)
+    /** CloudStream extension series episode queue; null for regular catalog playback. */
+    var pluginPlaybackSession by mutableStateOf<PluginPlaybackSession?>(null)
     var skipIntervals by mutableStateOf<List<SkipInterval>>(emptyList())
     var chapterSkipIntervals: List<SkipInterval> = emptyList()
     var apiSkipIntervals: List<SkipInterval> = emptyList()

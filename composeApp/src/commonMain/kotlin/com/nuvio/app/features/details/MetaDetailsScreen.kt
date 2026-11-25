@@ -1500,6 +1500,9 @@ fun MetaDetailsScreen(
                                 onRetry = selectedTrailer?.let { trailer ->
                                     { resolveTrailer(trailer) }
                                 },
+                                onOpenExternal = selectedTrailer?.let { trailer ->
+                                    { runCatching { uriHandler.openUri(trailer.youtubePlaybackUrl()) } }
+                                },
                             )
                         }
 

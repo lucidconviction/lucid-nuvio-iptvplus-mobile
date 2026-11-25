@@ -181,6 +181,8 @@ import nuvio.composeapp.generated.resources.livetv_quick_channels_section
 import nuvio.composeapp.generated.resources.livetv_quick_channels_open
 import nuvio.composeapp.generated.resources.livetv_no_matching_channels
 import nuvio.composeapp.generated.resources.livetv_addons_section
+import nuvio.composeapp.generated.resources.livetv_addons_extensions_folder
+import nuvio.composeapp.generated.resources.livetv_addons_folder_count
 import nuvio.composeapp.generated.resources.livetv_addons_open
 import nuvio.composeapp.generated.resources.livetv_no_addons_installed
 import nuvio.composeapp.generated.resources.livetv_remove_addon
@@ -281,6 +283,7 @@ internal fun LiveTvScreen(
         }
     }
     val state by remember {
+        OnDemandRepository.start()
         LiveTvRepository.ensureLoaded()
         LiveTvViewState.list
     }.collectAsStateWithLifecycle()
@@ -1121,6 +1124,54 @@ private fun AddonsCatalogInlineSection(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4)) {
+        var folderExpanded by rememberSaveable(onlyManifestUrl) {
+            mutableStateOf(onlyManifestUrl != null)
+        }
+        val folderCount = addons.size + livePluginProviders.size
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(NuvioTokens.Radius.xl))
+                .background(tokens.surface)
+                .clickable { folderExpanded = !folderExpanded }
+                .padding(NuvioTokens.Space.s12),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(NuvioTokens.Radius.lg))
+                    .background(tokens.surfaceCard),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Extension,
+                    contentDescription = null,
+                    tint = tokens.accent,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(Res.string.livetv_addons_extensions_folder),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = tokens.textPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = stringResource(Res.string.livetv_addons_folder_count, folderCount),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = tokens.textMuted,
+                )
+            }
+            Icon(
+                imageVector = if (folderExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                tint = tokens.textMuted,
+            )
+        }
+        if (!folderExpanded) return@Column
         if (addons.isEmpty() && livePluginProviders.isEmpty()) {
             AddonEmptyStateCard(tokens = tokens)
         } else {

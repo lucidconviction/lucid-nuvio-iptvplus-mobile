@@ -29,6 +29,7 @@ import com.nuvio.app.features.player.PlayerPlaybackSnapshot
 import com.nuvio.app.features.player.PlayerResizeMode
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_retry
+import nuvio.composeapp.generated.resources.trailer_open_in_youtube
 import nuvio.composeapp.generated.resources.trailer_unable_to_play
 import org.jetbrains.compose.resources.stringResource
 
@@ -39,6 +40,7 @@ internal fun TrailerPlayer(
     isLoading: Boolean,
     errorMessage: String?,
     onRetry: (() -> Unit)?,
+    onOpenExternal: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     title: String = "",
     onExitFullscreen: (() -> Unit)? = null,
@@ -77,6 +79,11 @@ internal fun TrailerPlayer(
                 if (onRetry != null) {
                     TextButton(onClick = onRetry) { Text(stringResource(Res.string.action_retry)) }
                 }
+                if (onOpenExternal != null) {
+                    TextButton(onClick = onOpenExternal) {
+                        Text(stringResource(Res.string.trailer_open_in_youtube))
+                    }
+                }
             }
         }
         TrailerPlayerControls(
@@ -114,10 +121,15 @@ private fun TrailerPlaybackSurface(
             if (state.controller === controller) state.controller = null
         }
     }
+    val isHls = source.videoUrl.contains(".m3u8", ignoreCase = true)
     PlatformPlayerSurface(
         sourceUrl = source.videoUrl,
         sourceAudioUrl = source.audioUrl,
-        useYoutubeChunkedPlayback = true,
+        sourceHeaders = source.headers,
+        streamType = if (isHls) "hls" else null,
+        // HLS playlists must be requested as-is; the chunked range parameter is for
+        // progressive googlevideo files.
+        useYoutubeChunkedPlayback = !isHls,
         modifier = Modifier.fillMaxSize(),
         playWhenReady = state.playWhenReady && !restoringPosition && !state.snapshot.isEnded &&
             presentationId == state.presentationId,

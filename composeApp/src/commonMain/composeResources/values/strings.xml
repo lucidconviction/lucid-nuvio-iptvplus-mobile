@@ -1738,6 +1738,7 @@
     <string name="external_player_unavailable">No external player is available</string>
     <string name="trailer_close">Close trailer</string>
     <string name="trailer_unable_to_play">Unable to play trailer</string>
+    <string name="trailer_open_in_youtube">Open in YouTube</string>
     <string name="trakt_lists_load_failed">Failed to load Trakt lists</string>
     <string name="trakt_lists_update_failed">Failed to update Trakt lists</string>
     <string name="tracking_lists_update_failed">Failed to update tracking lists</string>
@@ -2693,6 +2694,8 @@
     <string name="livetv_addons_open">Open Add-ons Browser</string>
     <string name="livetv_quick_channels_section">Quick Channels</string>
     <string name="livetv_addons_section">Add-ons Catalog</string>
+    <string name="livetv_addons_extensions_folder">Add-ons &amp; CloudStream</string>
+    <string name="livetv_addons_folder_count">%1$d installed</string>
     <string name="livetv_remove_addon">Remove Add-on</string>
     <string name="livetv_no_matching_channels">No matching channels</string>
     <string name="livetv_no_addons_installed">No add-ons installed</string>

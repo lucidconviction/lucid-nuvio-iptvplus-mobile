@@ -53,7 +53,44 @@ object MetaDetailsRepository {
     private val _uiState = MutableStateFlow(MetaDetailsUiState())
     val uiState: StateFlow<MetaDetailsUiState> = _uiState.asStateFlow()
     private var activeRequestKey: String? = null
-    private val cachedMetaByRequestKey = mutableMapOf<String, CachedMetaEntry>()
+    private val cacheLock = Any()
+    private val cachedMetaByRequestKey = LinkedHashMap<String, CachedMetaEntry>()
+
+    /**
+     * Metas can be very large (hundreds of episodes), so the cache is deliberately small.
+     * Bulk Home prefetching loads dozens of series; keeping them all has caused OOM
+     * force-closes. The currently displayed meta is still held by [uiState].
+     */
+    private fun cachedMeta(requestKey: String): CachedMetaEntry? =
+        synchronized(cacheLock) { cachedMetaByRequestKey[requestKey] }
+
+    private fun cacheMeta(requestKey: String, entry: CachedMetaEntry) {
+        synchronized(cacheLock) {
+            cachedMetaByRequestKey.remove(requestKey)
+            cachedMetaByRequestKey[requestKey] = entry
+            while (cachedMetaByRequestKey.size > MAX_CACHED_META_ENTRIES) {
+                val oldestKey = cachedMetaByRequestKey.keys.firstOrNull() ?: break
+                cachedMetaByRequestKey.remove(oldestKey)
+            }
+        }
+    }
+
+    private fun updateCachedMeta(
+        requestKey: String,
+        transform: (CachedMetaEntry?) -> CachedMetaEntry,
+    ): CachedMetaEntry {
+        val entry = synchronized(cacheLock) {
+            val updated = transform(cachedMetaByRequestKey[requestKey])
+            cachedMetaByRequestKey.remove(requestKey)
+            cachedMetaByRequestKey[requestKey] = updated
+            while (cachedMetaByRequestKey.size > MAX_CACHED_META_ENTRIES) {
+                val oldestKey = cachedMetaByRequestKey.keys.firstOrNull() ?: break
+                cachedMetaByRequestKey.remove(oldestKey)
+            }
+            updated
+        }
+        return entry
+    }
 
     fun load(type: String, id: String) {
         log.d { "load() called — type=$type id=$id" }
@@ -66,7 +103,7 @@ object MetaDetailsRepository {
         val mdbListSettings = MdbListSettingsRepository.snapshot()
         val metaScreenSettingsFingerprint = buildMetaScreenSettingsFingerprint(mdbListSettings)
 
-        cachedMetaByRequestKey[requestKey]?.let { cachedEntry ->
+        cachedMeta(requestKey)?.let { cachedEntry ->
             cachedEntry.metaScreenMeta
                 ?.takeIf { cachedEntry.metaScreenSettingsFingerprint == metaScreenSettingsFingerprint }
                 ?.let { cachedMeta ->
@@ -193,7 +230,7 @@ object MetaDetailsRepository {
         if (currentMeta != null) return currentMeta
 
         val metaScreenSettingsFingerprint = buildMetaScreenSettingsFingerprint(MdbListSettingsRepository.snapshot())
-        val cachedEntry = cachedMetaByRequestKey[requestKey] ?: return null
+        val cachedEntry = cachedMeta(requestKey) ?: return null
         val cachedMeta = cachedEntry.metaScreenMeta
             ?.takeIf { cachedEntry.metaScreenSettingsFingerprint == metaScreenSettingsFingerprint }
             ?: cachedEntry.baseMeta
@@ -202,18 +239,18 @@ object MetaDetailsRepository {
 
     fun clear() {
         activeRequestKey = null
-        cachedMetaByRequestKey.clear()
+        synchronized(cacheLock) { cachedMetaByRequestKey.clear() }
         _uiState.value = MetaDetailsUiState()
     }
 
     suspend fun fetch(type: String, id: String, cacheResult: Boolean = true): MetaDetails? {
         val requestKey = "$type:$id"
-        cachedMetaByRequestKey[requestKey]?.let { return it.baseMeta }
+        cachedMeta(requestKey)?.let { return it.baseMeta }
         ServerItemRef.parse(id)?.let { ref ->
             return runCatching { ServerCatalog.details(ref).meta }
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrNull()
-                ?.also { if (cacheResult) cachedMetaByRequestKey[requestKey] = CachedMetaEntry(baseMeta = it) }
+                ?.also { if (cacheResult) cacheMeta(requestKey, CachedMetaEntry(baseMeta = it)) }
         }
 
         val metaLookupId = resolveMetaLookupId(itemId = id, itemType = type)
@@ -225,7 +262,7 @@ object MetaDetailsRepository {
             }
             if (result != null) {
                 if (cacheResult) {
-                    cachedMetaByRequestKey[requestKey] = CachedMetaEntry(baseMeta = result)
+                    cacheMeta(requestKey, CachedMetaEntry(baseMeta = result))
                 }
                 return result
             }
@@ -233,7 +270,7 @@ object MetaDetailsRepository {
 
         return tryFetchTmdbFallbackMeta(type = type, id = id)?.also { result ->
             if (cacheResult) {
-                cachedMetaByRequestKey[requestKey] = CachedMetaEntry(baseMeta = result)
+                cacheMeta(requestKey, CachedMetaEntry(baseMeta = result))
             }
         }
     }
@@ -243,7 +280,7 @@ object MetaDetailsRepository {
         activeRequestKey = requestKey
         _uiState.value = MetaDetailsUiState(
             isLoading = true,
-            meta = cachedMetaByRequestKey[requestKey]?.baseMeta,
+            meta = cachedMeta(requestKey)?.baseMeta,
         )
         scope.launch {
             val result = runCatching { ServerCatalog.details(ref) }
@@ -252,13 +289,13 @@ object MetaDetailsRepository {
                 onSuccess = { details ->
                     val meta = details.meta
                     ServerUserStateProjection.apply(details)
-                    cachedMetaByRequestKey[requestKey] = CachedMetaEntry(baseMeta = meta)
+                    cacheMeta(requestKey, CachedMetaEntry(baseMeta = meta))
                     _uiState.value = MetaDetailsUiState(meta = meta)
                 },
                 onFailure = { error ->
                     if (error is CancellationException) throw error
                     log.w { "Server details failed: ${error.serverFailure()}" }
-                    val cached = cachedMetaByRequestKey[requestKey]?.baseMeta
+                    val cached = cachedMeta(requestKey)?.baseMeta
                     _uiState.value = MetaDetailsUiState(
                         meta = cached,
                         errorMessage = if (cached == null) getString(error.serverFailure().message()) else null,
@@ -269,6 +306,8 @@ object MetaDetailsRepository {
         }
     }
 
+    /** Large metas (e.g. a 900-episode series) must not accumulate in memory. */
+    private const val MAX_CACHED_META_ENTRIES = 24
     private const val FETCH_TIMEOUT_MS = 5_000L
     private const val METADATA_PROVIDER_READY_TIMEOUT_MS = 10_000L
     private const val TMDB_ENRICH_TIMEOUT_MS = 5_000L
@@ -386,7 +425,7 @@ object MetaDetailsRepository {
         metaScreenSettingsFingerprint: String,
     ) {
         val cachedEntry = CachedMetaEntry(baseMeta = meta)
-        cachedMetaByRequestKey[requestKey] = cachedEntry
+        cacheMeta(requestKey, cachedEntry)
 
         if (!shouldEnrichForMetaScreen(meta, fallbackItemId, mdbListSettings)) {
             _uiState.value = MetaDetailsUiState(meta = meta.withUnreleasedFilter())
@@ -408,10 +447,12 @@ object MetaDetailsRepository {
                 settingsFingerprint = metaScreenSettingsFingerprint,
             )
         }
-        cachedMetaByRequestKey[requestKey] = cachedEntry.copy(
-            metaScreenMeta = enrichedMeta,
-            metaScreenSettingsFingerprint = metaScreenSettingsFingerprint,
-        )
+        updateCachedMeta(requestKey) {
+            cachedEntry.copy(
+                metaScreenMeta = enrichedMeta,
+                metaScreenSettingsFingerprint = metaScreenSettingsFingerprint,
+            )
+        }
         _uiState.value = MetaDetailsUiState(meta = enrichedMeta.withUnreleasedFilter())
         activeRequestKey = requestKey
     }
@@ -437,16 +478,16 @@ object MetaDetailsRepository {
             fallbackItemType = fallbackItemType,
         )
 
-        cachedMetaByRequestKey[requestKey] = cachedMetaByRequestKey[requestKey]
-            ?.copy(
+        updateCachedMeta(requestKey) { existing ->
+            existing?.copy(
                 metaScreenMeta = enrichedMeta,
                 metaScreenSettingsFingerprint = settingsFingerprint,
-            )
-            ?: CachedMetaEntry(
+            ) ?: CachedMetaEntry(
                 baseMeta = meta,
                 metaScreenMeta = enrichedMeta,
                 metaScreenSettingsFingerprint = settingsFingerprint,
             )
+        }
 
         return enrichedMeta
     }

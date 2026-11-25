@@ -88,6 +88,15 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     }
 
     LaunchedEffect(parentMetaType, parentMetaId) {
+        // CloudStream catalog series have synthetic ids and no MetaDetails. Their episode list
+        // comes from the playback session registered by the plugin browse screen.
+        val pluginSession = PluginPlaybackQueue.get(parentMetaId)
+        pluginPlaybackSession = pluginSession
+        if (pluginSession != null) {
+            playerMeta = null
+            playerMetaVideos = pluginSession.metaVideos()
+            return@LaunchedEffect
+        }
         playerMeta = MetaDetailsRepository.peek(parentMetaType, parentMetaId)
         playerMetaVideos = playerMeta?.videos.orEmpty()
         if (playerMetaVideos.isEmpty()) {
@@ -99,6 +108,7 @@ internal fun PlayerScreenRuntime.BindPlayerRuntimeEffects() {
     }
 
     LaunchedEffect(metaUiState.meta, parentMetaType, parentMetaId) {
+        if (pluginPlaybackSession != null) return@LaunchedEffect
         val currentMeta = metaUiState.meta ?: return@LaunchedEffect
         if (currentMeta.type == parentMetaType && currentMeta.id == parentMetaId) {
             playerMeta = currentMeta

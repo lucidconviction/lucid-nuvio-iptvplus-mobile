@@ -16,94 +16,148 @@ import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 
-private const val BADGE_RESOLUTION_CONCURRENCY = 2
+private const val BADGE_RESOLUTION_CONCURRENCY = 4
+
+/**
+ * Only the most recent series are checked. A large library can have hundreds of completed
+ * series; resolving all of them means hundreds of metadata downloads on every launch.
+ */
+private const val BADGE_RESOLUTION_BATCH = 32
 private const val AMBIGUOUS_MARKER = "__ambiguous__"
 
 private val log = Logger.withTag("WatchedBadgeBulk")
+private val resolutionMutex = Mutex()
+
+/**
+ * Fingerprint of the watched/progress data each series' badge depends on. A state publish from
+ * [WatchedRepository.updateFullyWatchedSeriesStates] must not start another full scan.
+ */
+private val resolvedSignatures = mutableMapOf<String, Int>()
 
 suspend fun resolveWatchedBadgesBulk(
     watchedItems: List<WatchedItem>,
     progressEntries: List<WatchProgressEntry>,
     todayIsoDate: String = CurrentDateProvider.todayIsoDate(),
 ): Boolean = withContext(Dispatchers.Default) {
-    val touchedSeriesIds = buildSet {
-        watchedItems.forEach { item ->
-            if (item.type.isSeriesLikeWatchedType() && item.season != null && item.episode != null) {
-                add(item.id)
-            }
-        }
-        progressEntries.forEach { entry ->
-            if (entry.parentMetaType.isSeriesLikeWatchedType() && entry.isEpisode && entry.isEffectivelyCompleted) {
-                add(entry.parentMetaId)
-            }
-        }
-        WatchedRepository.baseFullyWatchedSeriesKeys().mapNotNullTo(this, ::extractContentIdFromWatchedKey)
-    }
-    if (touchedSeriesIds.isEmpty()) return@withContext true
-
-    // Use the full watchedKeys from UI state which includes extra keys from
-    // provider alternate IDs (e.g. Simkl anime alternate MAL/Kitsu keys).
-    val watchedKeys = WatchedRepository.uiState.value.watchedKeys
-
-    log.i { "Bulk badge resolution starting: ${touchedSeriesIds.size} series candidates" }
-
-    val semaphore = Semaphore(BADGE_RESOLUTION_CONCURRENCY)
-    val resolvedIds = mutableSetOf<String>()
-    val resolvedStates = linkedMapOf<String, Boolean>()
-
-    for (contentId in touchedSeriesIds) {
-        semaphore.withPermit {
-            val meta = try {
-                MetaDetailsRepository.fetch(type = "series", id = contentId, cacheResult = false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                null
-            }
-            if (meta != null) {
-                val isFullyWatched = WatchedRepository.calculateFullyWatchedSeriesState(
-                    meta = meta,
-                    todayIsoDate = todayIsoDate,
-                    isEpisodeWatched = { episode ->
-                        val keys = watchedItemKeys(meta.type, meta.id, episode.season, episode.episode)
-                        if (keys.any(watchedKeys::contains)) {
-                            true
-                        } else {
-                            val episodeNumber = episode.episode
-                            if (episodeNumber != null) {
-                                com.nuvio.app.features.simkl.SimklAnimeWatchedFallback.isWatched(episode.id, episodeNumber)
-                            } else {
-                                false
-                            }
-                        }
-                    },
-                    isEpisodeCompleted = { episode ->
-                        val playbackId = meta.episodePlaybackId(episode)
-                        progressEntries.any { entry ->
-                            entry.videoId == playbackId && entry.isEffectivelyCompleted
-                        }
-                    },
-                )
-                resolvedStates[watchedItemKey(meta.type, meta.id)] = isFullyWatched
-                if (meta.type.isSeriesLikeWatchedType() && meta.videos.isNotEmpty()) {
-                    resolvedIds.add(contentId)
+    // Badge calculation publishes watched state, which re-enters this function. Never run
+    // two scans at once and never rescan inputs that were already resolved.
+    if (!resolutionMutex.tryLock()) return@withContext false
+    try {
+        val touchedSeriesIds = buildSet {
+            watchedItems.forEach { item ->
+                if (item.type.isSeriesLikeWatchedType() && item.season != null && item.episode != null) {
+                    add(item.id)
                 }
             }
+            progressEntries.forEach { entry ->
+                if (entry.parentMetaType.isSeriesLikeWatchedType() && entry.isEpisode && entry.isEffectivelyCompleted) {
+                    add(entry.parentMetaId)
+                }
+            }
+            WatchedRepository.baseFullyWatchedSeriesKeys().mapNotNullTo(this, ::extractContentIdFromWatchedKey)
         }
-        yield()
+        if (touchedSeriesIds.isEmpty()) return@withContext true
+
+        // Use the full watchedKeys from UI state which includes extra keys from
+        // provider alternate IDs (e.g. Simkl anime alternate MAL/Kitsu keys).
+        val watchedKeys = WatchedRepository.uiState.value.watchedKeys
+        val watchedById = watchedItems.groupBy { it.id }
+        val progressById = progressEntries.groupBy { it.parentMetaId }
+
+        fun signature(contentId: String): Int {
+            var hash = 17
+            watchedById[contentId].orEmpty().forEach { item ->
+                hash = 31 * hash + (item.season ?: -1)
+                hash = 31 * hash + (item.episode ?: -1)
+                hash = 31 * hash + item.markedAtEpochMs.hashCode()
+            }
+            progressById[contentId].orEmpty().forEach { entry ->
+                hash = 31 * hash + (entry.seasonNumber ?: -1)
+                hash = 31 * hash + (entry.episodeNumber ?: -1)
+                hash = 31 * hash + entry.lastUpdatedEpochMs.hashCode()
+                hash = 31 * hash + entry.lastPositionMs.hashCode()
+            }
+            return hash
+        }
+
+        val pending = touchedSeriesIds.filter { resolvedSignatures[it] != signature(it) }
+        if (pending.isEmpty()) return@withContext true
+
+        val batch = pending
+            .sortedByDescending { contentId ->
+                progressById[contentId].orEmpty().maxOfOrNull { it.lastUpdatedEpochMs } ?: 0L
+            }
+            .take(BADGE_RESOLUTION_BATCH)
+        log.i { "Bulk badge resolution starting: ${batch.size}/${touchedSeriesIds.size} series candidates" }
+
+        val completedVideoIds = progressEntries
+            .asSequence()
+            .filter { it.isEffectivelyCompleted }
+            .mapTo(HashSet()) { it.videoId }
+        val semaphore = Semaphore(BADGE_RESOLUTION_CONCURRENCY)
+        val resolvedStates = linkedMapOf<String, Boolean>()
+
+        for (contentId in batch) {
+            semaphore.withPermit {
+                val meta = try {
+                    MetaDetailsRepository.fetch(type = "series", id = contentId, cacheResult = false)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    null
+                }
+                if (meta != null) {
+                    val isFullyWatched = WatchedRepository.calculateFullyWatchedSeriesState(
+                        meta = meta,
+                        todayIsoDate = todayIsoDate,
+                        isEpisodeWatched = { episode ->
+                            val keys = watchedItemKeys(meta.type, meta.id, episode.season, episode.episode)
+                            if (keys.any(watchedKeys::contains)) {
+                                true
+                            } else {
+                                val episodeNumber = episode.episode
+                                if (episodeNumber != null) {
+                                    com.nuvio.app.features.simkl.SimklAnimeWatchedFallback.isWatched(episode.id, episodeNumber)
+                                } else {
+                                    false
+                                }
+                            }
+                        },
+                        isEpisodeCompleted = { episode ->
+                            completedVideoIds.contains(meta.episodePlaybackId(episode))
+                        },
+                    )
+                    resolvedStates[watchedItemKey(meta.type, meta.id)] = isFullyWatched
+                }
+            }
+            yield()
+        }
+
+        // The update can add new fully-watched series keys. Mark those too, so the publish
+        // below cannot enqueue another scan for them.
+        resolvedStates.keys.forEach { key ->
+            extractContentIdFromWatchedKey(key)?.let { id -> resolvedSignatures[id] = signature(id) }
+        }
+        WatchedRepository.updateFullyWatchedSeriesStates(resolvedStates)
+
+        // Mark every candidate, including the deferred ones and ones whose metadata failed.
+        // Otherwise the update above would immediately trigger another full scan.
+        touchedSeriesIds.forEach { resolvedSignatures[it] = signature(it) }
+        resolvedSignatures.keys.retainAll(touchedSeriesIds)
+        log.i { "Bulk badge resolution complete: ${batch.size}/${touchedSeriesIds.size}" }
+
+        // Sibling expansion
+        expandFullyWatchedWithSiblings()
+        true
+    } finally {
+        resolutionMutex.unlock()
     }
-
-    WatchedRepository.updateFullyWatchedSeriesStates(resolvedStates)
-    log.i { "Bulk badge resolution complete: resolved ${resolvedIds.size}/${touchedSeriesIds.size}" }
-
-    // Sibling expansion
-    expandFullyWatchedWithSiblings()
-    resolvedIds.size == touchedSeriesIds.size
 }
 
 fun expandFullyWatchedWithSiblings() {

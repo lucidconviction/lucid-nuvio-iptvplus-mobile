@@ -301,12 +301,27 @@ actual object PluginRepository {
                     if (state.repositories.none { it.manifestUrl == manifestUrl }) return@update state
                     result.fold(
                         onSuccess = { (repo, scrapers) ->
+                            val currentById = state.scrapers.associateBy { it.id }
+                            val mergedScrapers = scrapers.map { refreshed ->
+                                val current = currentById[refreshed.id]
+                                if (current == null) {
+                                    refreshed
+                                } else {
+                                    refreshed.copy(
+                                        enabled = if (refreshed.manifestEnabled) current.enabled else false,
+                                        showOnHome = current.showOnHome,
+                                        showInLiveTv = current.showInLiveTv,
+                                        showInSports = current.showInSports,
+                                        showInLucidTv = current.showInLucidTv,
+                                    )
+                                }
+                            }
                             val updatedRepos = state.repositories.map { existing ->
                                 if (existing.manifestUrl == manifestUrl) repo else existing
                             }
                             state.copy(
                                 repositories = updatedRepos,
-                                scrapers = state.scrapers.filterNot { it.repositoryUrl == manifestUrl } + scrapers,
+                                scrapers = state.scrapers.filterNot { it.repositoryUrl == manifestUrl } + mergedScrapers,
                             )
                         },
                         onFailure = { error ->
@@ -1123,21 +1138,25 @@ actual object PluginRepository {
         season: Int?,
         episode: Int?,
         timeoutMs: Long?,
+        data: String?,
     ): List<PluginRuntimeResult> {
         val profileId = resolveEffectiveProfileId(ProfileRepository.activeProfileId)
-        val detail = externalExtensionHost.loadDetail(scraperId, profileId, apiIndex, url) ?: return emptyList()
-        val data = if (detail.isSeries) {
-            detail.episodes.firstOrNull { it.season == season && it.episode == episode }?.data
-                ?: detail.episodes.firstOrNull()?.data
-        } else {
-            detail.movieData
+        val episodeData = data?.takeIf { it.isNotBlank() } ?: run {
+            val detail = externalExtensionHost.loadDetail(scraperId, profileId, apiIndex, url)
+                ?: return emptyList()
+            if (detail.isSeries) {
+                detail.episodes.firstOrNull { it.season == season && it.episode == episode }?.data
+                    ?: detail.episodes.firstOrNull()?.data
+            } else {
+                detail.movieData
+            }
         }
-        if (data.isNullOrBlank()) return emptyList()
+        if (episodeData.isNullOrBlank()) return emptyList()
         return externalExtensionHost.loadStreams(
             scraperId = scraperId,
             profileId = profileId,
             apiIndex = apiIndex,
-            data = data,
+            data = episodeData,
             season = season,
             episode = episode,
             timeoutMs = timeoutMs,

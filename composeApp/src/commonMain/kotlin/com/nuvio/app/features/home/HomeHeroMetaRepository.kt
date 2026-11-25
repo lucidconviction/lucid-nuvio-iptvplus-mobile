@@ -80,7 +80,8 @@ internal object HomeHeroMetaRepository {
 
     private suspend fun fetchDetails(item: MetaPreview): MetaDetails? =
         try {
-            MetaDetailsRepository.fetch(type = item.type, id = item.id)
+            // Hero prefetch is transient: keep the shared cache for screens the user opens.
+            MetaDetailsRepository.fetch(type = item.type, id = item.id, cacheResult = false)
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             null

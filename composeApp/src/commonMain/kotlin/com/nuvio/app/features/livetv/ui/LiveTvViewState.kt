@@ -134,9 +134,23 @@ internal object LiveTvViewState {
             sections += LiveGroupSection(ChannelGroup(ChannelGroup.RECENT, "Recently watched", recent.size, special = true), recent)
         }
         // "All Groups": every channel across all groups, deduplicated, in the channel sort order.
-        val allChannels = visible.distinctBy { it.key }
+        // Deduplicating 170k+ channels allocates a large hash set on every rebuild, which has
+        // caused OOM force-closes. Playlist channels are already keyed; skip the extra set for
+        // very large playlists.
+        val displayVisible = sorted(
+            if (parental && s.lockAdultContent) {
+                visible.filterNot { ParentalControls.isAdultChannel(it) }
+            } else {
+                visible
+            },
+        )
+        val allChannels = if (displayVisible.size > MAX_ALL_GROUPS_DEDUPE) {
+            displayVisible
+        } else {
+            displayVisible.distinctBy { it.key }
+        }
         if (allChannels.isNotEmpty()) {
-            sections += LiveGroupSection(ChannelGroup(ChannelGroup.ALL, "All Groups", allChannels.size, special = true), sorted(allChannels))
+            sections += LiveGroupSection(ChannelGroup(ChannelGroup.ALL, "All Groups", allChannels.size, special = true), allChannels)
         }
 
         val regular = ArrayList<LiveGroupSection>()
@@ -193,13 +207,13 @@ internal object LiveTvViewState {
             }
         }
         sections += lucidGroups + orderedRest
-        val numbered = if (s.sequentialNumbers) {
+        val numbered = if (s.sequentialNumbers && channels.size <= MAX_SEQUENTIAL_NUMBERING) {
             sections.map { sec -> sec.copy(channels = sec.channels.mapIndexed { i, c -> c.copy(number = i + 1) }) }
         } else sections
         return LiveTvListState(
             sections = numbered,
             // Adult channels stay out of search while adult content is locked.
-            visible = sorted(if (parental && s.lockAdultContent) visible.filterNot { ParentalControls.isAdultChannel(it) } else visible),
+            visible = displayVisible,
             favoriteKeys = user.favorites.toHashSet(),
             customGroups = custom,
             hasSources = hasSources,
@@ -226,4 +240,10 @@ internal object LiveTvViewState {
         }
         return out
     }
+
+    /** Above this size the "All Groups" dedupe set is skipped to avoid rebuild OOMs. */
+    private const val MAX_ALL_GROUPS_DEDUPE = 20_000
+
+    /** Sequential numbering copies every channel; skip it for very large playlists. */
+    private const val MAX_SEQUENTIAL_NUMBERING = 20_000
 }

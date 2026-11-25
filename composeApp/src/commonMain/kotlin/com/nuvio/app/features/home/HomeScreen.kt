@@ -697,6 +697,8 @@ fun HomeScreen(
             return@ScreenActivityEffect
         }
 
+        // Let the first Continue Watching frame render before metadata for the rows.
+        delay(1_000)
         withContext(Dispatchers.Default) {
             val cachedResolvedNextUpItems = completedSeriesCandidates.mapNotNull { candidate ->
                 val cached = cachedNextUpItems[candidate.content.id] ?: return@mapNotNull null
@@ -873,7 +875,9 @@ fun HomeScreen(
                 )
             }
 
-            val transientContentIds = candidatesToResolve
+            // Only retry the candidates this pass actually attempted. Older deferred
+            // candidates are not attempts, so they must not keep the retry loop alive.
+            val transientContentIds = (resolutionCandidates + deferredResolutionCandidates)
                 .asSequence()
                 .map { candidate -> candidate.content.id }
                 .filterNot { contentId -> contentId in processedFreshContentIds }
@@ -928,14 +932,24 @@ fun HomeScreen(
     val resolvedBadgeInputs = remember(activeProfileId, effectiveWatchProgressSource) {
         mutableStateOf<Triple<WatchedUiState, List<WatchProgressEntry>, String>?>(null)
     }
+    var badgeScanCompleted by remember(activeProfileId, effectiveWatchProgressSource) {
+        mutableStateOf(false)
+    }
     ScreenActivityEffect(
         activeProfileId,
         effectiveWatchProgressSource,
         watchedUiState,
         watchProgressUiState.entries,
     ) { active ->
-        if (!active) return@ScreenActivityEffect
+        if (!active || badgeScanCompleted) return@ScreenActivityEffect
+        if (watchedUiState.items.isEmpty() && watchProgressUiState.entries.isEmpty()) {
+            return@ScreenActivityEffect
+        }
         val inputs = Triple(watchedUiState, watchProgressUiState.entries, CurrentDateProvider.todayIsoDate())
+        if (resolvedBadgeInputs.value == inputs) return@ScreenActivityEffect
+        // Badges are cosmetic. Let the first Home frame and high-priority metadata finish
+        // before starting any network scans.
+        delay(2_000)
         if (resolvedBadgeInputs.value == inputs) return@ScreenActivityEffect
         if (
             resolveWatchedBadgesBulk(
@@ -945,6 +959,7 @@ fun HomeScreen(
             )
         ) {
             resolvedBadgeInputs.value = inputs
+            badgeScanCompleted = true
         }
     }
     val hasRenderableCollectionRows = remember(enabledHomeItems, collectionsMap) {
@@ -1348,7 +1363,14 @@ private const val HOME_CATALOG_PREVIEW_LIMIT = 18
 private const val HOME_CONTINUE_WATCHING_SECTION_KEY = "home_continue_watching"
 private const val HOME_UPCOMING_SECTION_KEY = "home_upcoming"
 internal const val HomeContinueWatchingMaxRecentProgressItems = 300
-internal const val HomeNextUpInitialResolutionLimit = 32
+
+/**
+ * Home only needs next-up rows for recent completed series. Resolving hundreds at once
+ * downloaded hundreds of full metas (some with 900 episodes) and caused OOM force-closes.
+ * The most recent rows resolve immediately; a small batch of older rows follows.
+ */
+internal const val HomeNextUpInitialResolutionLimit = 10
+internal const val HomeNextUpDeferredResolutionLimit = 2
 private const val NEXT_UP_RESOLUTION_CONCURRENCY = 4
 private const val MAX_NEXT_UP_RESOLUTION_RETRIES = 3
 private const val NEXT_UP_RESOLUTION_RETRY_BASE_DELAY_MS = 1_500L
@@ -1366,7 +1388,9 @@ internal fun planHomeNextUpResolutionCandidates(
 ): HomeNextUpResolutionPlan =
     HomeNextUpResolutionPlan(
         initialCandidates = candidates.take(HomeNextUpInitialResolutionLimit),
-        deferredCandidates = candidates.drop(HomeNextUpInitialResolutionLimit),
+        deferredCandidates = candidates
+            .drop(HomeNextUpInitialResolutionLimit)
+            .take(HomeNextUpDeferredResolutionLimit),
     )
 
 internal fun filterEntriesForContinueWatchingWindow(
@@ -1556,9 +1580,11 @@ private suspend fun resolveHomeNextUpCandidate(
 ): HomeNextUpResolutionAttempt {
     val contentId = completedEntry.content.id
     val meta = try {
+        // Resolution is a bulk prefetch; keep the shared screen cache small.
         MetaDetailsRepository.fetch(
             type = completedEntry.content.type,
             id = contentId,
+            cacheResult = false,
         )
     } catch (error: Throwable) {
         if (error is CancellationException) throw error

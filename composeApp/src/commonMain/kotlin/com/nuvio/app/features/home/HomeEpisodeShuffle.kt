@@ -24,6 +24,7 @@ import com.nuvio.app.features.watchprogress.buildContinueWatchingEpisodeSubtitle
 import com.nuvio.app.features.watchprogress.toUpNextContinueWatchingItem
 import com.nuvio.app.features.watchprogress.toContinueWatchingItem
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun rememberShuffleHomeItems(
@@ -46,13 +47,17 @@ internal fun rememberShuffleHomeItems(
     }
     val content = remember(items, candidates, profile) {
         (items.map { it.parentMetaId to it.parentMetaType } + candidates.map { it.content.id to it.content.type })
-            .distinctBy { it.first }.filter { (id, type) -> profile.settings(id, type).enabled }
+            .distinctBy { it.first }
+            .filter { (id, type) -> profile.settings(id, type).enabled }
+            // Shuffle only needs a working set; fetching every completed series has caused OOMs.
+            .take(MAX_SHUFFLE_METADATA_ITEMS)
     }
     var metadata by remember(profileId) { mutableStateOf<Map<String, MetaDetails>>(emptyMap()) }
     LaunchedEffect(profileId, content, visit) {
+        delay(1_000)
         for ((id, type) in content) {
             val meta = MetaDetailsRepository.peek(type, id) ?: try {
-                MetaDetailsRepository.fetch(type, id)
+                MetaDetailsRepository.fetch(type, id, cacheResult = false)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 null
@@ -124,3 +129,6 @@ internal fun applyHomeShuffle(
         )
     }.distinctBy { if (it.shufflePlayback) it.parentMetaId else "${it.parentMetaId}:${it.videoId}" }
 }
+
+/** Cap for series metadata held by the Home shuffle surface. */
+private const val MAX_SHUFFLE_METADATA_ITEMS = 12

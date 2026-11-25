@@ -99,6 +99,7 @@ actual object PluginRepository {
         season: Int?,
         episode: Int?,
         timeoutMs: Long?,
+        data: String?,
     ): List<PluginRuntimeResult> = emptyList()
 
     actual suspend fun detectCloudStreamSettings(repositoryUrl: String?) = Unit

@@ -2,7 +2,9 @@ package com.nuvio.app.features.plugins.external
 
 import android.app.Activity
 import android.app.Application
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.res.Configuration
 import android.util.Log
 import com.lagradost.cloudstream3.AcraApplication
 import com.lagradost.cloudstream3.CommonActivity
@@ -163,8 +165,7 @@ internal object CloudStreamRuntime {
                 AcraApplication.setActivity(activity)
             }
             hostApplication.registerActivityLifecycleCallbacks(
-                object : Application.ActivityLifecycleCallbacks {
-                    override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) = Unit
+                object : Application.ActivityLifecycleCallbacks {                    override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) = Unit
                     override fun onActivityStarted(activity: Activity) = Unit
                     override fun onActivityResumed(activity: Activity) {
                         currentActivity = WeakReference<Activity?>(activity)
@@ -184,6 +185,22 @@ internal object CloudStreamRuntime {
                             }
                         }
                     }
+                },
+            )
+
+            hostApplication.registerComponentCallbacks(
+                object : ComponentCallbacks2 {
+                    override fun onTrimMemory(level: Int) {
+                        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+                            AndroidExternalExtensionHost.releaseAllCachedExtensions()
+                        }
+                    }
+
+                    override fun onLowMemory() {
+                        AndroidExternalExtensionHost.releaseAllCachedExtensions()
+                    }
+
+                    override fun onConfigurationChanged(newConfig: Configuration) = Unit
                 },
             )
 

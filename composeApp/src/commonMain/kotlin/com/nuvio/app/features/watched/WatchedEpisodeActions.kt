@@ -77,13 +77,19 @@ fun MetaDetails.releasedEpisodesForSeason(
 fun MetaDetails.hasWatchedAllMainSeasonEpisodes(
     todayIsoDate: String,
     isEpisodeWatched: (MetaVideo) -> Boolean,
-): Boolean = domainHasWatchedAllMainSeasonEpisodes(
-    episodes = sortedPlayableEpisodes().map(MetaVideo::toDomainReleasedEpisode),
-    todayIsoDate = todayIsoDate,
-    isEpisodeWatched = { domainEpisode ->
-        sortedPlayableEpisodes().firstOrNull { episode -> episode.id == domainEpisode.videoId }?.let(isEpisodeWatched) == true
-    },
-)
+): Boolean {
+    // Sort once and index by id. Re-sorting for every episode turns a 900-episode series into
+    // hundreds of thousands of comparisons and pegs a background thread at startup.
+    val playable = sortedPlayableEpisodes()
+    val byId = playable.associateBy { it.id }
+    return domainHasWatchedAllMainSeasonEpisodes(
+        episodes = playable.map(MetaVideo::toDomainReleasedEpisode),
+        todayIsoDate = todayIsoDate,
+        isEpisodeWatched = { domainEpisode ->
+            byId[domainEpisode.videoId]?.let(isEpisodeWatched) == true
+        },
+    )
+}
 
 fun MetaDetails.episodePlaybackId(video: MetaVideo): String =
     buildPlaybackVideoId(

@@ -12,11 +12,15 @@ import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
+import com.nuvio.app.features.plugins.PluginRepository
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlaySelector
 import com.nuvio.app.features.streams.StreamAutoPlaySource
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.watching.domain.isShortPlaceholderDuration
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.compose_player_no_streams_found
+import org.jetbrains.compose.resources.getString
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -31,7 +35,7 @@ internal fun PlayerScreenRuntime.isAtNextEpisodeThreshold(): Boolean {
         isShortPlaceholderDuration(playbackSnapshot.durationMs)
     ) return false
     // Preload: trigger source fetch before the button appears
-    if (playerSettingsUiState.preloadNextEpisodeSources && !nextEpisodePreloadTriggered && nextEpisodeInfo != null && !isNetworkOffline()) {
+    if (pluginPlaybackSession == null && playerSettingsUiState.preloadNextEpisodeSources && !nextEpisodePreloadTriggered && nextEpisodeInfo != null && !isNetworkOffline()) {
         val preloadLeadMs = maxOf(playerSettingsUiState.streamAutoPlayTimeoutSeconds.toLong() * 1_000L, 10_000L)
             .coerceAtMost(30_000L)
         val shouldPreloadByCard = PlayerNextEpisodeRules.shouldShowNextEpisodeCard(
@@ -76,6 +80,7 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     contentType: String?,
     settings: PlayerSettingsUiState,
     currentStreamBingeGroup: String?,
+    pluginSession: PluginPlaybackSession? = null,
     onDownloadedEpisodeSelected: (DownloadItem, MetaVideo) -> Unit,
     onEpisodeStreamSelected: (StreamItem, MetaVideo) -> Unit,
     onManualSelectionRequired: (MetaVideo) -> Unit,
@@ -87,6 +92,60 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     val nextVideoId = nextEpisodeInfo?.videoId ?: return null
     val nextVideo = allEpisodes.firstOrNull { video -> video.id == nextVideoId } ?: return null
     if (nextEpisodeInfo.hasAired != true) return null
+
+    pluginSession?.let { session ->
+        val nextSeason = nextVideo.season ?: return null
+        val nextNumber = nextVideo.episode ?: return null
+        val nextPluginEpisode = session.episode(nextSeason, nextNumber) ?: return null
+        return launch {
+            previousJob?.cancel()
+            onSearchingChanged(true)
+            onSourceNameChanged(null)
+            onCountdownChanged(null)
+            var selected: StreamItem? = null
+            try {
+                val results = withTimeoutOrNull(PLUGIN_NEXT_EPISODE_TIMEOUT_MS) {
+                    runCatching {
+                        PluginRepository.browseStreams(
+                            scraperId = session.scraperId,
+                            apiIndex = session.item.apiIndex,
+                            url = session.item.url,
+                            season = nextSeason,
+                            episode = nextNumber,
+                            timeoutMs = 45_000L,
+                            data = nextPluginEpisode.data,
+                        )
+                    }.getOrDefault(emptyList())
+                }.orEmpty()
+                selected = selectPluginPlaybackStream(
+                    results = results,
+                    providerName = session.providerName,
+                    providerId = session.providerId,
+                    preferredBingeGroup = currentStreamBingeGroup
+                        .takeIf { settings.streamAutoPlayPreferBingeGroup },
+                )
+            } finally {
+                onSearchingChanged(false)
+            }
+            val stream = selected
+            if (stream == null) {
+                NuvioToastController.show(getString(Res.string.compose_player_no_streams_found))
+                onNextEpisodeCardVisibleChanged(true)
+                return@launch
+            }
+            onSourceNameChanged(
+                (stream.name?.takeIf { it.isNotBlank() } ?: stream.addonName).trim(),
+            )
+            for (i in 3 downTo 1) {
+                onCountdownChanged(i)
+                delay(1_000)
+            }
+            onEpisodeStreamSelected(stream, nextVideo)
+            onNextEpisodeCardVisibleChanged(false)
+            onCountdownChanged(null)
+            onSourceNameChanged(null)
+        }
+    }
 
     val downloadedNextEpisode = DownloadsRepository.findPlayableDownload(
         parentMetaId = parentMetaId,
@@ -352,6 +411,8 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
 }
 
 internal fun PlayerScreenRuntime.preloadNextEpisodeSources() {
+    // Extension sessions resolve their own links when the card is actioned.
+    if (pluginPlaybackSession != null) return
     if (nextEpisodePreloadTriggered) return
     val nextEp = nextEpisodeInfo ?: return
     if (nextEp.hasAired != true) return
@@ -376,3 +437,6 @@ internal fun PlayerScreenRuntime.cancelNextEpisodePreload() {
     nextEpisodePreloadJob = null
     nextEpisodePreloadTriggered = false
 }
+
+/** Extension link resolution is slower than the regular source fan-out. */
+private const val PLUGIN_NEXT_EPISODE_TIMEOUT_MS = 60_000L

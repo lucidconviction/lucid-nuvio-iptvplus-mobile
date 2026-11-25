@@ -179,6 +179,10 @@ internal object AndroidExternalExtensionHost : ExternalExtensionHost {
         loader()?.releaseExtension(scraperId, profileId)
     }
 
+    fun releaseAllCachedExtensions() {
+        loaderRef?.releaseAll()
+    }
+
     /** Called from [ExtensionSettingsActivity] off the main thread. */
     fun settingsCallback(scraperId: String, profileId: Int): ((Context) -> Unit)? =
         loader()?.settingsCallback(scraperId, profileId)

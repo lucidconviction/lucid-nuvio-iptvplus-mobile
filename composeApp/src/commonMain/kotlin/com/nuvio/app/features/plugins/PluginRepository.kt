@@ -91,6 +91,8 @@ expect object PluginRepository {
         season: Int?,
         episode: Int?,
         timeoutMs: Long? = null,
+        /** The episode's own data blob, when the caller already has it. */
+        data: String? = null,
     ): List<PluginRuntimeResult>
 
     /** Load a series' episode list for Lucid TV marathons. */

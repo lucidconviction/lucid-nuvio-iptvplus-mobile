@@ -1,8 +1,5 @@
 package com.nuvio.app.features.livetv
 
-import com.nuvio.app.features.livetv.data.LiveTvPreferences
-import com.nuvio.app.features.livetv.data.LiveTvRepository
-import com.nuvio.app.features.livetv.ondemand.OnDemandRepository
 import com.nuvio.app.features.livetv.record.LiveTvRecordingScheduler
 import com.nuvio.app.features.livetv.reminders.LiveTvReminders
 import com.nuvio.app.features.livetv.sports.SportsReminders
@@ -19,13 +16,11 @@ internal object LiveTvStartup {
         if (started) return
         started = true
         VirtualChannelRepository.ensureLoaded()
-        // Nothing to do until a playlist (or a Lucid TV channel) exists; the first one starts the repository.
-        if (LiveTvPreferences.currentPlaylists().isNotEmpty() || LiveTvPreferences.currentEpgSources().isNotEmpty() || VirtualChannelRepository.hasChannels()) {
-            LiveTvRepository.ensureLoaded(updateCheckDelayMs = 8_000L)
-        }
+        // Do not preload the channel list here. Large playlists (100k+ channels) plus their
+        // guide take seconds to parse and would compete with the first Home frame. Live TV,
+        // deep links, reminders and recording alarms load the repository on demand.
         LiveTvDriveSync.start()
         LiveTvCloudSync.start()
-        OnDemandRepository.start()
         LiveTvRecordingScheduler.start()
         LiveTvReminders.start()
         // Sports: scores for followed teams, game reminders and alerts (its own loop stops when Sports is off).

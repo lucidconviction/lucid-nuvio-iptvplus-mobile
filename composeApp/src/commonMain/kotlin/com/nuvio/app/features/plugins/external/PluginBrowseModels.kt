@@ -39,6 +39,7 @@ internal data class PluginBrowseActor(
 
 internal data class PluginBrowseTrailer(
     val url: String,
+    val headers: Map<String, String> = emptyMap(),
 )
 
 internal data class PluginBrowseDetail(

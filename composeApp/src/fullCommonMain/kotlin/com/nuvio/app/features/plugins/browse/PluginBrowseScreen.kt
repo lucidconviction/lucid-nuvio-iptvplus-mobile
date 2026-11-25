@@ -707,18 +707,6 @@ private fun PluginCatalogHeroCarousel(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.18f),
-                                0.40f to Color.Black.copy(alpha = 0.44f),
-                                0.72f to Color.Black.copy(alpha = 0.82f),
-                                1f to MaterialTheme.nuvio.colors.background,
-                            ),
-                        ),
-                )
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -846,18 +834,6 @@ private fun PluginCatalogHero(
                     .size(110.dp),
             )
         }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.12f),
-                        0.40f to Color.Black.copy(alpha = 0.48f),
-                        0.76f to Color.Black.copy(alpha = 0.84f),
-                        1f to Color.Black.copy(alpha = 0.94f),
-                    ),
-                ),
-        )
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -1250,7 +1226,18 @@ private fun PluginDetailContent(
     fun openTrailer(trailer: PluginBrowseTrailer) {
         val isYouTube = trailer.url.contains("youtube.com", ignoreCase = true) ||
             trailer.url.contains("youtu.be", ignoreCase = true)
-        if (!inAppTrailer || !isYouTube) {
+        if (!inAppTrailer) {
+            runCatching { uriHandler.openUri(trailer.url) }
+            return
+        }
+        if (isDirectVideoUrl(trailer.url)) {
+            selectedTrailer = trailer
+            trailerSource = TrailerPlaybackSource(trailer.url, headers = trailer.headers)
+            trailerError = null
+            trailerLoading = false
+            return
+        }
+        if (!isYouTube) {
             runCatching { uriHandler.openUri(trailer.url) }
             return
         }
@@ -1904,6 +1891,9 @@ private fun PluginDetailContent(
             selectedTrailer = null
         },
         onRetry = selectedTrailer?.let { trailerItem -> { openTrailer(trailerItem) } },
+        onOpenExternal = selectedTrailer?.let { trailerItem ->
+            { runCatching { uriHandler.openUri(trailerItem.url) } }
+        },
     )
 }
 
@@ -2584,18 +2574,6 @@ private fun PluginDetailHero(
                 modifier = Modifier.matchParentSize(),
             )
         }
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = 0.30f),
-                        0.42f to tokens.colors.background.copy(alpha = 0.55f),
-                        0.78f to tokens.colors.background.copy(alpha = 0.92f),
-                        1f to tokens.colors.background,
-                    ),
-                ),
-        )
         NuvioBackButton(
             onClick = onBack,
             modifier = Modifier
@@ -3003,4 +2981,11 @@ private fun episodeLabel(episode: PluginBrowseEpisode): String {
     if (prefix == null) return name.orEmpty()
     if (name == null || name.equals(prefix, ignoreCase = true)) return prefix
     return "$prefix • $name"
+}
+
+/** Direct media links an extension can expose instead of a YouTube watch page. */
+private fun isDirectVideoUrl(url: String): Boolean {
+    val path = url.substringBefore('?').substringBefore('#').lowercase()
+    return path.endsWith(".mp4") || path.endsWith(".m3u8") ||
+        path.endsWith(".webm") || path.endsWith(".mkv")
 }
