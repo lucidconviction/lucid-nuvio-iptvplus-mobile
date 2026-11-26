@@ -19,7 +19,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
-import android.util.Base64
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.View
@@ -161,6 +160,7 @@ internal class AndroidWebBrowserController(
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private var fileChooserLauncher: ((Intent) -> Unit)? = null
     private var lastBlockedNoteAt = 0L
+    private var lastRedirectToastAt = 0L
     private var lastDownloadToastAt = 0L
     private var nextShieldEventId = 0L
     private var lastAdSkipAt = 0L
@@ -788,14 +788,8 @@ internal class AndroidWebBrowserController(
                 val url = request?.url?.toString() ?: return false
                 if (handleUrl(view, url)) return true
                 if (request?.isForMainFrame == true && shouldBlockMainFrame(url, request.hasGesture())) {
-                    // A blocked navigation can still carry the page the click was
-                    // actually for (an ad click-tracker's `fb=` / `url=` parameter).
-                    // Follow that, instead of leaving an empty document behind.
-                    val dest = adGateDestination(url)
-                    if (dest != null && view != null) {
-                        noteShield("redirect", "Followed the link behind ${hostOf(url)}.", hostOf(url).orEmpty())
-                        view.loadUrl(dest)
-                    }
+                    // Cancel the navigation. The current document remains on screen; no
+                    // redirect target is loaded and no app is launched.
                     return true
                 }
                 // A gesture-less shouldInterceptRequest follows the same navigation. Mark the
@@ -808,6 +802,7 @@ internal class AndroidWebBrowserController(
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                clearBlockedLink()
                 val newUrl = url.orEmpty()
                 pendingMainFrameUrl?.let { pending ->
                     if (sameUrl(pending, newUrl)) pendingMainFrameUrl = null
@@ -955,15 +950,10 @@ internal class AndroidWebBrowserController(
                         pendingMainFrameUrl = null
                         return null
                     }
-                    if (shouldBlockMainFrame(url, request.hasGesture())) {
-                        // A main frame is never answered with an empty body: that is
-                        // the white page users read as "the app broke". A gate with a
-                        // destination is followed; anything else gets a way back.
-                        val dest = adGateDestination(url)
-                        if (dest != null) {
-                            noteShield("redirect", "Followed the link behind ${hostOf(url)}.", hostOf(url).orEmpty())
-                        }
-                        return adGatePage(dest)
+                    if (shouldBlockMainFrame(url, request.hasGesture(), allowChoice = false)) {
+                        // Cancel in the background. A 204 keeps the current document instead
+                        // of replacing it with a blank page or the redirect target.
+                        return blockedNoContentResponse()
                     }
                     return null
                 }
@@ -2061,28 +2051,19 @@ internal class AndroidWebBrowserController(
                 noteShield("security", "Blocked a local-file link.", currentPageHost().orEmpty())
                 true
             }
-            url.startsWith("intent:") -> {
-                if (!recentGesture(5_000L)) {
-                    noteShield("security", "Blocked an automatic app link.", currentPageHost().orEmpty())
-                    return true
-                }
-                runCatching {
-                    val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
-                    appContext.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                }
-                true
-            }
             else -> {
-                if (!recentGesture(5_000L)) {
-                    noteShield("security", "Blocked an automatic external link.", currentPageHost().orEmpty())
+                // Every app hand-off is blocked before Android can leave the page. The
+                // blocked-link menu offers One time / Always allow / Always block.
+                val key = appLinkKey(url)
+                if (key in settings.blockedAppLinks) {
+                    noteShield("security", "Blocked app links for $key.", key)
                     return true
                 }
-                runCatching {
-                    appContext.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
+                if (key in settings.allowedAppLinks) {
+                    launchAppLink(url)
+                    return true
                 }
+                blockAppLink(url)
                 true
             }
         }
@@ -2183,67 +2164,16 @@ internal class AndroidWebBrowserController(
     private fun blockedResponse(): WebResourceResponse =
         WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
 
-    /**
-     * The real destination carried by an ad gate.
-     *
-     * Streaming sites and Rumble wrap a click in a click-tracker on an ad host
-     * (`d4.ads.rmbl.ws/c?…&fb=<base64 of the video page>`): the main frame is
-     * sent to the tracker, which then 302s to the page. Blocking the tracker
-     * outright left the WebView on an empty document — the "white page after
-     * the first click" report. The destination is in the query, so take it and
-     * load the page the click was for; only a gate with nothing usable behind
-     * it is cancelled.
-     */
-    private fun adGateDestination(raw: String): String? {
-        val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: return null
-        for (key in listOf(
-            "fb", "url", "u", "dest", "destination", "redirect", "redirect_url", "to", "target",
-        )) {
-            val v = uri.getQueryParameter(key) ?: continue
-            for (candidate in listOf(v, decodeBase64(v))) {
-                val c = candidate?.trim().orEmpty()
-                if (c.startsWith("http://") || c.startsWith("https://")) return c
-            }
-        }
-        return null
-    }
-
-    private fun decodeBase64(raw: String): String? = runCatching {
-        val t = Uri.decode(raw).trim()
-        val bytes = runCatching {
-            Base64.decode(t, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        }.recoverCatching {
-            Base64.decode(t, Base64.DEFAULT)
-        }.getOrThrow()
-        String(bytes, Charsets.UTF_8)
-    }.getOrNull()
-
-    /**
-     * What a main-frame navigation to a blocked host renders instead of a blank
-     * document. With a destination it forwards there immediately; with none it
-     * says what happened and offers the way back, because a white page reads as
-     * "the app is broken".
-     */
-    private fun adGatePage(destination: String?): WebResourceResponse {
-        val style = "html,body{background:#000;color:#fff;font:15px sans-serif;margin:0}" +
-            ".w{display:flex;height:100vh;flex-direction:column;gap:14px;align-items:center;" +
-            "justify-content:center;padding:24px;text-align:center}a{color:#7DD3FC}"
-        val html = if (destination != null) {
-            val url = destination.replace("\"", "%22")
-            "<!doctype html><meta charset=\"utf-8\">" +
-                "<meta http-equiv=\"refresh\" content=\"0;url=" + url + "\">" +
-                "<style>" + style + "</style><div class=\"w\">Opening…</div>" +
-                "<script>location.replace(" + JSONObject.quote(destination) + ")</script>"
-        } else {
-            "<!doctype html><meta charset=\"utf-8\"><style>" + style + "</style>" +
-                "<div class=\"w\"><div>This redirect was blocked.</div>" +
-                "<a href=\"javascript:history.back()\">Go back</a></div>"
-        }
-        return WebResourceResponse(
-            "text/html", "utf-8",
-            ByteArrayInputStream(html.toByteArray(Charsets.UTF_8)),
+    /** A no-content response for a blocked main frame; the current page stays visible. */
+    private fun blockedNoContentResponse(): WebResourceResponse =
+        WebResourceResponse(
+            "text/plain",
+            "utf-8",
+            204,
+            "No Content",
+            emptyMap(),
+            ByteArrayInputStream(ByteArray(0)),
         )
-    }
 
     private fun choiceDue(url: String): Boolean {
         val now = SystemClock.uptimeMillis()
@@ -2380,7 +2310,11 @@ internal class AndroidWebBrowserController(
         )
     }
 
-    private fun shouldBlockMainFrame(url: String, hasGesture: Boolean): Boolean {
+    private fun shouldBlockMainFrame(
+        url: String,
+        hasGesture: Boolean,
+        allowChoice: Boolean = true,
+    ): Boolean {
         val now = SystemClock.uptimeMillis()
         if (now < allowMainFrameUntil) return false
         val allowed = allowedRedirectUrl
@@ -2391,7 +2325,7 @@ internal class AndroidWebBrowserController(
             return false
         }
         if (url == "about:blank") return false
-        if (!settings.redirectProtection) return false
+        if (settings.redirectPolicy == WebRedirectPolicy.Allow) return false
         if (WebAdBlocker.isCloudflareInfra(url)) return false
         if (VIDEO_URL_RE.containsMatchIn(url)) return false
         val host = hostOf(url) ?: return false
@@ -2429,7 +2363,7 @@ internal class AndroidWebBrowserController(
         // viewer may still want the page it leads to. Block it and offer the same choice.
         if (videoPlaying) {
             noteShield("redirect", "Blocked a redirect to $host during playback.", host)
-            askRedirectPermission(url, host)
+            blockRedirectSilently(url, host, allowChoice)
             return true
         }
         // A short chain of ordinary redirects (http -> https, a login hop, a
@@ -2444,12 +2378,12 @@ internal class AndroidWebBrowserController(
         }
         redirectChainAt = now
         if (redirectChainCount >= 3) {
-            noteShield("redirect", "Blocked a redirect chain through $host.", host)
+            blockRedirectSilently(url, host, allowChoice = false)
             return true
         }
-        // Every other automatic cross-site navigation is blocked and offered to the viewer.
-        // Failing open here is what let ad hijacks replace the page after a tap.
-        askRedirectPermission(url, host)
+        // Every other automatic cross-site navigation is cancelled before it can load.
+        // The page the viewer is reading stays on screen; the menu carries the decision.
+        blockRedirectSilently(url, host, allowChoice)
         return true
     }
 
@@ -2482,6 +2416,129 @@ internal class AndroidWebBrowserController(
             ),
             onCancel = { noteShield("redirect", "Cancelled a redirect to $host.", host) },
         )
+    }
+
+    /**
+     * Cancels a redirect without showing the target page. The browser stays on the current
+     * document; the bottom-bar menu exposes One time / Always allow / Always block.
+     */
+    private fun blockRedirectSilently(url: String, host: String, allowChoice: Boolean) {
+        if (allowChoice && settings.redirectPolicy == WebRedirectPolicy.Ask) {
+            askRedirectPermission(url, host)
+            return
+        }
+        noteShield("redirect", "Blocked an automatic redirect to $host.", host)
+        _state.value = _state.value.copy(blockedLink = WebBlockedLink(url, host, appLink = false))
+        val now = SystemClock.uptimeMillis()
+        if (now - lastRedirectToastAt >= 5_000L) {
+            lastRedirectToastAt = now
+            showBlockedToast("Blocked redirect to $host")
+        }
+    }
+
+    private fun blockAppLink(url: String) {
+        val key = appLinkKey(url)
+        val host = Uri.parse(url).host ?: Uri.parse(url).scheme.orEmpty()
+        noteShield("security", "Blocked an automatic app link ($host).", host)
+        _state.value = _state.value.copy(blockedLink = WebBlockedLink(url, host, appLink = true))
+        val now = SystemClock.uptimeMillis()
+        if (now - lastRedirectToastAt >= 5_000L) {
+            lastRedirectToastAt = now
+            showBlockedToast("Blocked app link")
+        }
+        // Keep the key in the state's host slot so "always" decisions have a stable label.
+        if (key.isNotBlank()) {
+            _state.value = _state.value.copy(
+                blockedLink = WebBlockedLink(url, key, appLink = true),
+            )
+        }
+    }
+
+    private fun appLinkKey(url: String): String {
+        if (url.startsWith("intent:")) {
+            val intent = runCatching {
+                Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+            }.getOrNull()
+            val packageName = intent?.`package`
+            val scheme = intent?.data?.scheme
+            return "intent:${packageName ?: scheme ?: "unknown"}"
+        }
+        val uri = Uri.parse(url)
+        val scheme = uri.scheme.orEmpty().ifBlank { "app" }
+        val authority = uri.host ?: uri.authority ?: uri.path?.substringBefore('/').orEmpty()
+        return "$scheme:${authority.orEmpty()}"
+    }
+
+    private fun launchAppLink(url: String) {
+        runCatching {
+            val intent = if (url.startsWith("intent:")) {
+                Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+            } else {
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            }
+            appContext.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    private fun clearBlockedLink() {
+        if (_state.value.blockedLink != null) {
+            _state.value = _state.value.copy(blockedLink = null)
+        }
+    }
+
+    override fun allowBlockedLinkOnce() {
+        val link = _state.value.blockedLink ?: return
+        clearBlockedLink()
+        if (link.appLink) {
+            launchAppLink(link.url)
+        } else {
+            noteShield("redirect", "Allowed one redirect to ${link.host}.", link.host)
+            allowRedirectTo(link.url)
+            mainHandler.post { webView?.loadUrl(link.url) }
+        }
+    }
+
+    override fun allowBlockedLinkAlways() {
+        val link = _state.value.blockedLink ?: return
+        clearBlockedLink()
+        if (link.appLink) {
+            val key = appLinkKey(link.url)
+            saveSettings(
+                settings.copy(
+                    allowedAppLinks = settings.allowedAppLinks + key,
+                    blockedAppLinks = settings.blockedAppLinks - key,
+                ),
+            )
+            noteShield("security", "Allowed app links for $key.", link.host)
+            launchAppLink(link.url)
+        } else {
+            allowHost(link.host)
+            noteShield("redirect", "Allowed redirects to ${link.host}.", link.host)
+            allowRedirectTo(link.url)
+            mainHandler.post { webView?.loadUrl(link.url) }
+        }
+    }
+
+    override fun blockBlockedLinkAlways() {
+        val link = _state.value.blockedLink ?: return
+        clearBlockedLink()
+        if (link.appLink) {
+            val key = appLinkKey(link.url)
+            saveSettings(
+                settings.copy(
+                    blockedAppLinks = settings.blockedAppLinks + key,
+                    allowedAppLinks = settings.allowedAppLinks - key,
+                ),
+            )
+            noteShield("security", "Blocked app links for $key.", link.host)
+        } else {
+            blockRedirectHost(link.host)
+            noteShield("redirect", "Blocked redirects to ${link.host}.", link.host)
+        }
+    }
+
+    override fun dismissBlockedLink() {
+        clearBlockedLink()
     }
 
     private fun updateNavigation() {

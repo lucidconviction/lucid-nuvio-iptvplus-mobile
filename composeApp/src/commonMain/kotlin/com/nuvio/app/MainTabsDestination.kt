@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
@@ -124,6 +125,12 @@ internal fun MainTabsDestination(
                 icon = Icons.Filled.PlayCircle,
                 label = "YouTube",
             ) else null,
+            if (com.nuvio.app.features.music.MusicHost.available) FloatingNavigationItem(
+                selected = selectedTab == AppScreenTab.Music,
+                onClick = { onTabSelected(AppScreenTab.Music) },
+                icon = Icons.Filled.MusicNote,
+                label = "Music",
+            ) else null,
             if (com.nuvio.app.features.web.webAppsPlatformAvailable) FloatingNavigationItem(
                 selected = selectedTab == AppScreenTab.WebApps,
                 onClick = { onTabSelected(AppScreenTab.WebApps) },
@@ -186,6 +193,14 @@ internal fun MainTabsDestination(
                                 onClick = { onTabSelected(AppScreenTab.YouTube) },
                                 icon = Icons.Filled.PlayCircle,
                                 contentDescription = "YouTube",
+                            )
+                        }
+                        if (com.nuvio.app.features.music.MusicHost.available) {
+                            NavItem(
+                                selected = selectedTab == AppScreenTab.Music,
+                                onClick = { onTabSelected(AppScreenTab.Music) },
+                                icon = Icons.Filled.MusicNote,
+                                contentDescription = "Music",
                             )
                         }
                         if (com.nuvio.app.features.web.webAppsPlatformAvailable) {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -507,6 +508,7 @@ internal fun MainAppContent(
             }
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.YouTube -> Unit
+            AppScreenTab.Music -> Unit
             AppScreenTab.WebApps -> Unit
             AppScreenTab.LiveTv -> liveTvScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
@@ -2968,6 +2970,22 @@ internal fun MainAppContent(
                     .padding(12.dp)
                     .zIndex(17f),
             )
+
+            // Music keeps playing while the tab is gone; the floating combo opens it again.
+            val musicFloating by com.nuvio.app.features.music.MusicHost.floating.collectAsStateWithLifecycle()
+            if (selectedTab != AppScreenTab.Music || musicFloating) {
+                com.nuvio.app.features.music.MusicHost.miniPlayer?.invoke(
+                    Modifier
+                        .fillMaxSize()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 12.dp)
+                        .zIndex(19f),
+                    {
+                        com.nuvio.app.features.music.MusicHost.floating.value = false
+                        activateTab(AppScreenTab.Music)
+                    },
+                )
+            }
 
             // Live TV's channel preview floats above navigation, so it can be dragged and
             // resized anywhere over the app.

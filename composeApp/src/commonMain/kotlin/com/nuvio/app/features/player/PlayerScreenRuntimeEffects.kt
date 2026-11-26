@@ -528,7 +528,7 @@ private fun PlayerScreenRuntime.BindPlayerUiVisibilityEffects() {
         // YouTube's player buttons stay up longer; the controls are the main way to pause,
         // change quality or open the video panel and they were disappearing too quickly.
         val hideAfterMs = when {
-            contentType == "youtube" -> 7_000L
+            contentType == "youtube" -> 10_000L
             folded -> 5_000L
             else -> 3_500L
         }

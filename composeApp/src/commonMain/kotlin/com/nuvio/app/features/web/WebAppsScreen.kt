@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -92,6 +93,7 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioSafeBottomPadding
+import com.nuvio.app.features.web.market.WebAppMarketScreen
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.stringResource
 
@@ -123,9 +125,11 @@ fun WebAppsScreen(
     var showScripts by remember { mutableStateOf(false) }
     var showMedia by remember { mutableStateOf(false) }
     var showBrowserMenu by remember { mutableStateOf(false) }
+    var showBlockedLink by remember { mutableStateOf(false) }
     var showOpenPages by remember { mutableStateOf(false) }
     var openPages by remember { mutableStateOf<List<BrowserPageEntry>>(emptyList()) }
     var showShieldLog by remember { mutableStateOf(false) }
+    var showMarket by rememberSaveable { mutableStateOf(false) }
     var autoPlayDismissed by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
@@ -209,7 +213,24 @@ fun WebAppsScreen(
         }
     }
 
-    if (activeUrl == null) {
+    if (showMarket) {
+        WebAppMarketScreen(
+            savedUrls = sites.map { it.url }.toSet(),
+            onBack = { showMarket = false },
+            onOpen = { app ->
+                showMarket = false
+                openUrl(app.url)
+            },
+            onToggleSaved = { app ->
+                val existing = sites.firstOrNull { it.url.equals(app.url, ignoreCase = true) }
+                if (existing != null) {
+                    WebAppsRepository.removeSite(existing.id)
+                } else {
+                    WebAppsRepository.addSite(app.name, app.url)
+                }
+            },
+        )
+    } else if (activeUrl == null) {
         Column(
             modifier = modifier.fillMaxSize().background(tokens.colors.background).statusBarsPadding(),
         ) {
@@ -218,6 +239,13 @@ fun WebAppsScreen(
                 includeStatusBarPadding = false,
                 modifier = Modifier.padding(horizontal = NuvioTokens.Space.s8),
                 actions = {
+                    IconButton(onClick = { showMarket = true }) {
+                        Icon(
+                            Icons.Filled.Storefront,
+                            contentDescription = "Web App Market",
+                            tint = tokens.colors.accent,
+                        )
+                    }
                     IconButton(onClick = { showAddSite = true }) {
                         Icon(Icons.Filled.Add, contentDescription = "Add web app", tint = tokens.colors.textPrimary)
                     }
@@ -225,6 +253,10 @@ fun WebAppsScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = null, tint = tokens.colors.textPrimary)
                     }
                     Menu(expanded = menu, onDismissRequest = { menu = false }) {
+                        MenuItem(text = "Web App Market", onClick = {
+                            menu = false
+                            showMarket = true
+                        })
                         MenuItem(text = "Open browser", onClick = {
                             menu = false
                             openUrl(settings.homeUrl)
@@ -304,8 +336,64 @@ fun WebAppsScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding(),
         ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
+                WebBrowserHost(controller = controller, modifier = Modifier.fillMaxSize())
+                browserState.error?.let { error ->
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .padding(NuvioTokens.Space.s8),
+                        color = tokens.colors.surfaceDialog,
+                        shape = tokens.shapes.compactCard,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(
+                                horizontal = NuvioTokens.Space.s12,
+                                vertical = NuvioTokens.Space.s8,
+                            ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Page error",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = tokens.colors.textPrimary,
+                                )
+                                Text(
+                                    error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = tokens.colors.textMuted,
+                                )
+                            }
+                            IconButton(onClick = { controller.reload() }) {
+                                Icon(
+                                    Icons.Filled.Refresh,
+                                    contentDescription = "Try again",
+                                    tint = tokens.colors.accent,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (browserState.loading) {
+                LinearProgressIndicator(
+                    progress = { browserState.progress },
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    color = tokens.colors.accent,
+                )
+            }
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = NuvioTokens.Space.s4, vertical = NuvioTokens.Space.s4),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(tokens.colors.surface)
+                    .padding(horizontal = NuvioTokens.Space.s4, vertical = NuvioTokens.Space.s4),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s2),
             ) {
@@ -387,6 +475,20 @@ fun WebAppsScreen(
                     Icon(Icons.Filled.MoreVert, contentDescription = null, tint = tokens.colors.textPrimary)
                 }
                 Menu(expanded = showBrowserMenu, onDismissRequest = { showBrowserMenu = false }) {
+                    browserState.blockedLink?.let { link ->
+                        MenuItem(
+                            text = "Blocked ${if (link.appLink) "app link" else "redirect"}: ${link.host}",
+                            onClick = {
+                                showBrowserMenu = false
+                                showBlockedLink = true
+                            },
+                        )
+                    }
+                    MenuItem(text = "Web App Market", onClick = {
+                        showBrowserMenu = false
+                        activeUrl = null
+                        showMarket = true
+                    })
                     MenuItem(text = "Copy page link", onClick = {
                         showBrowserMenu = false
                         controller.copyCurrentUrl()
@@ -510,61 +612,8 @@ fun WebAppsScreen(
                     })
                 }
             }
-            if (browserState.loading) {
-                LinearProgressIndicator(
-                    progress = { browserState.progress },
-                    modifier = Modifier.fillMaxWidth().height(2.dp),
-                    color = tokens.colors.accent,
-                )
-            }
             // Saved Web-Apps stay one thumb-tap away while the browser is open. The strip sits at
             // the bottom so it never covers the site's own header or menu.
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-            ) {
-                WebBrowserHost(controller = controller, modifier = Modifier.fillMaxSize())
-                browserState.error?.let { error ->
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .fillMaxWidth()
-                            .padding(NuvioTokens.Space.s8),
-                        color = tokens.colors.surfaceDialog,
-                        shape = tokens.shapes.compactCard,
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(
-                                horizontal = NuvioTokens.Space.s12,
-                                vertical = NuvioTokens.Space.s8,
-                            ),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "Page error",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = tokens.colors.textPrimary,
-                                )
-                                Text(
-                                    error,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = tokens.colors.textMuted,
-                                )
-                            }
-                            IconButton(onClick = { controller.reload() }) {
-                                Icon(
-                                    Icons.Filled.Refresh,
-                                    contentDescription = "Try again",
-                                    tint = tokens.colors.accent,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
             WebAppBottomTabs(
                 sites = sites,
                 currentUrl = browserState.url.ifBlank { activeUrl.orEmpty() },
@@ -669,6 +718,53 @@ fun WebAppsScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    if (showBlockedLink) {
+        browserState.blockedLink?.let { link ->
+            DialogSurface(
+                onDismissRequest = {
+                    showBlockedLink = false
+                    controller.dismissBlockedLink()
+                },
+                title = if (link.appLink) "Blocked app link" else "Blocked redirect",
+            ) {
+                Text(
+                    text = if (link.appLink) {
+                        "A page tried to open another app at ${link.host}. It was stopped before anything launched."
+                    } else {
+                        "A page tried to redirect to ${link.host}. The redirect was cancelled before the target loaded."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.colors.textMuted,
+                )
+                DialogButtons {
+                    DialogButton(
+                        text = "Always block",
+                        style = DialogButtonStyle.Destructive,
+                        onClick = {
+                            controller.blockBlockedLinkAlways()
+                            showBlockedLink = false
+                        },
+                    )
+                    DialogButton(
+                        text = "One time",
+                        onClick = {
+                            controller.allowBlockedLinkOnce()
+                            showBlockedLink = false
+                        },
+                    )
+                    DialogButton(
+                        text = "Always allow",
+                        style = DialogButtonStyle.Primary,
+                        onClick = {
+                            controller.allowBlockedLinkAlways()
+                            showBlockedLink = false
+                        },
+                    )
                 }
             }
         }
@@ -1032,9 +1128,14 @@ private fun WebAppsSettingsDialog(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s8),
         ) {
-            SettingSwitch("Ask before cross-site redirects", settings.redirectProtection) {
-                onUpdate(settings.copy(redirectProtection = it))
-            }
+            ChoiceSetting(
+                label = "Automatic page & app redirects",
+                values = listOf("Always block", "Ask", "Allow"),
+                selected = settings.redirectPolicy.ordinal,
+                onSelect = {
+                    onUpdate(settings.copy(redirectPolicy = WebRedirectPolicy.entries[it]))
+                },
+            )
             SettingSwitch("Ask before cross-site popups", settings.popupProtection) {
                 onUpdate(settings.copy(popupProtection = it))
             }
@@ -1117,11 +1218,11 @@ private fun WebAppsSettingsDialog(
                 )
             }
             Text(
-                "Links you tap load normally. When a page redirects itself to another site, the " +
-                    "browser blocks the redirect and asks whether to allow it; popups from other " +
-                    "sites ask the same way. Ad blocking uses hosts lists, " +
-                    "AdGuard/EasyList/uBlock network rules and safe cosmetic filters. Ad skip is " +
-                    "a player-level fallback for ads that cannot be blocked.",
+                "Links you tap load normally. Automatic page redirects and app hand-offs are " +
+                    "cancelled in the background by default, so the target never appears. The " +
+                    "browser menu keeps the last blocked target with Always block, One time and " +
+                    "Always allow. Popups follow their own setting. Ad blocking uses hosts lists, " +
+                    "AdGuard/EasyList/uBlock network rules and safe cosmetic filters.",
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.colors.textMuted,
             )
@@ -1184,7 +1285,8 @@ private fun AllowedSitesDialog(
     val tokens = MaterialTheme.nuvio
     var input by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
-    val blockedCount = settings.blockedRedirectHosts.size + settings.blockedPopupHosts.size
+    val blockedCount = settings.blockedRedirectHosts.size + settings.blockedPopupHosts.size +
+        settings.blockedAppLinks.size
 
     fun addHost() {
         val host = normalizeWebHost(input)
@@ -1254,7 +1356,13 @@ private fun AllowedSitesDialog(
             DialogButton(
                 text = "Clear blocked sites ($blockedCount)",
                 onClick = {
-                    onUpdate(settings.copy(blockedRedirectHosts = emptySet(), blockedPopupHosts = emptySet()))
+                    onUpdate(
+                        settings.copy(
+                            blockedRedirectHosts = emptySet(),
+                            blockedPopupHosts = emptySet(),
+                            blockedAppLinks = emptySet(),
+                        )
+                    )
                 },
             )
         }

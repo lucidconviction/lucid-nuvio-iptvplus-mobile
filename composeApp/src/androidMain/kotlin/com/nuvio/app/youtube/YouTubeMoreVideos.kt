@@ -390,7 +390,7 @@ internal fun YouTubePlayerSidePanelsContent(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(panelWidth)
-                    .background(Color(0xF5111114)),
+                    .background(Color(0x4D111114)),
             ) {
                 PanelHeader(
                     mode = shownMode,

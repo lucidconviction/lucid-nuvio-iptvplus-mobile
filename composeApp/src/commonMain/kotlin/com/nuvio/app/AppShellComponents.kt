@@ -224,6 +224,10 @@ internal fun AppTabHost(
                 )
             }
 
+            AppScreenTab.Music -> {
+                com.nuvio.app.features.music.MusicHost.screen?.invoke(Modifier.fillMaxSize())
+            }
+
             AppScreenTab.WebApps -> {
                 WebAppsScreen(
                     onPlayMedia = actions.onWebPlayMedia,

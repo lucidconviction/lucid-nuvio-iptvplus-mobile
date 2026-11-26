@@ -49,11 +49,25 @@ enum class WebUserAgentProfile {
     Custom,
 }
 
+/** How the browser treats a page or app that redirects itself without a tap. */
+@Serializable
+enum class WebRedirectPolicy {
+    /** Cancel the redirect in the background; never load the target page. */
+    AlwaysBlock,
+    /** Block it, but offer the one-time / always choices. */
+    Ask,
+    /** Load automatic redirects without asking. */
+    Allow,
+}
+
 @Serializable
 data class WebAppsSettings(
     val popupProtection: Boolean = true,
-    /** Block main-frame navigations away from the current site (ad hijacks). */
-    val redirectProtection: Boolean = true,
+    /**
+     * Automatic page/app redirects are blocked in the background by default. The target page
+     * is never shown; the browser menu offers One time / Always allow / Always block.
+     */
+    val redirectPolicy: WebRedirectPolicy = WebRedirectPolicy.AlwaysBlock,
     val adBlockEnabled: Boolean = true,
     /**
      * Request desktop pages. Kept for backwards compatibility with 0.9.x settings.
@@ -66,6 +80,9 @@ data class WebAppsSettings(
     /** Hosts the user chose "Block always" for redirects/popups. */
     val blockedRedirectHosts: Set<String> = emptySet(),
     val blockedPopupHosts: Set<String> = emptySet(),
+    /** App hand-offs (intent:, market:, mailto:, …) the user allowed or blocked always. */
+    val allowedAppLinks: Set<String> = emptySet(),
+    val blockedAppLinks: Set<String> = emptySet(),
     /** Sites where ad blocking is disabled because it broke the page. */
     val adBlockWhitelist: Set<String> = emptySet(),
     /** Off, ask first, or open the best detected source automatically. */
@@ -186,6 +203,14 @@ internal fun WebMediaSource.qualityLabel(): String? {
     else if (h >= 720) "720p" else if (h >= 480) "480p" else "${h}p"
 }
 
+/** The last automatic navigation the browser stopped before it could load. */
+data class WebBlockedLink(
+    val url: String,
+    val host: String,
+    /** True for intent:/market:/mailto: hand-offs, false for page navigations. */
+    val appLink: Boolean,
+)
+
 data class WebBrowserUiState(
     val url: String = "",
     val title: String = "",
@@ -208,6 +233,8 @@ data class WebBrowserUiState(
     val fullscreen: Boolean = false,
     /** User-facing result of a download request. */
     val downloadMessage: String? = null,
+    /** The most recent automatic redirect that was cancelled before loading. */
+    val blockedLink: WebBlockedLink? = null,
 )
 
 /** What the common UI needs from the Android WebView. */
@@ -244,6 +271,14 @@ interface WebBrowserController {
     fun consumeAutoPlayCandidate() {}
     /** Clears the last download message after it is shown. */
     fun clearDownloadMessage() {}
+    /** Loads the last blocked redirect/app link exactly once. */
+    fun allowBlockedLinkOnce() {}
+    /** Remembers the last blocked link's host as always allowed, then opens it. */
+    fun allowBlockedLinkAlways() {}
+    /** Remembers the last blocked link's host as always blocked. */
+    fun blockBlockedLinkAlways() {}
+    /** Dismisses the blocked-link notice without a decision. */
+    fun dismissBlockedLink() {}
     /** Opens the local diagnostic page (debug and power-user builds). */
     fun openTestPage() {}
     /** Adds a visible shield event from the UI (for example a user block action). */
@@ -330,7 +365,7 @@ internal fun webAppFallbackName(url: String): String =
 
 internal fun webFaviconUrl(url: String): String? {
     val host = webHost(url).takeIf { it.isNotBlank() } ?: return null
-    return "https://www.google.com/s2/favicons?domain=$host&sz=128"
+    return "https://www.google.com/s2/favicons?domain=$host&sz=256"
 }
 
 /**

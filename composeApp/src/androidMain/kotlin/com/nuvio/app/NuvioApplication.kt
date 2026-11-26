@@ -66,6 +66,13 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory {
         com.nuvio.app.features.youtube.YouTubeHost.resolveVideo = { videoId, title, poster, startPositionMs ->
             com.nuvio.app.youtube.YouTubeSports.resolve(videoId, title, poster, startPositionMs)
         }
+        // Music uses the same YouTube engine and a foreground media session.
+        com.nuvio.app.features.music.MusicHost.screen = { modifier ->
+            com.nuvio.app.music.MusicScreen(modifier)
+        }
+        com.nuvio.app.features.music.MusicHost.miniPlayer = { modifier, onOpenMusic ->
+            com.nuvio.app.music.MusicMiniPlayer(modifier, onOpenMusic)
+        }
     }
 
     override fun newImageLoader(context: android.content.Context): ImageLoader {
